@@ -55,6 +55,7 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
         </View>
 
         <View style={styles.searchBar}>
+          <Text style={styles.searchIcon}>🔍</Text>
           <Text style={styles.searchPlaceholder}>Найти услугу или мастера</Text>
         </View>
 
@@ -116,17 +117,23 @@ const styles = StyleSheet.create({
   searchBar: {
     width: '100%',
     backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#e5e9f2',
+    borderColor: '#E3E8F2',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchIcon: {
+    marginTop: 1,
   },
   searchPlaceholder: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#7a869f',
-    fontWeight: '500',
+    fontWeight: '400',
   },
   grid: {
     flexDirection: 'row',
@@ -136,21 +143,21 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '48%',
-    aspectRatio: 1,
+    aspectRatio: 1.08,
     borderRadius: 12,
     backgroundColor: '#fff',
-    padding: 12,
+    padding: 10,
     justifyContent: 'space-between',
   },
   iconPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     backgroundColor: '#EEF3FF',
   },
   cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
     color: '#16213c',
   },
 });

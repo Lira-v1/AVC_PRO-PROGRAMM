@@ -56,21 +56,21 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '48%',
-    aspectRatio: 1,
+    aspectRatio: 1.08,
     borderRadius: 12,
     backgroundColor: '#fff',
-    padding: 12,
+    padding: 10,
     justifyContent: 'space-between',
   },
   iconPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     backgroundColor: '#EEF3FF',
   },
   cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
     color: '#16213c',
   },
 });
