@@ -51,7 +51,7 @@ const SplashScreen = () => {
     const timer = setTimeout(() => {
       navigation.reset({
         index: 0,
-        routes: [{ name: 'Main' }],
+        routes: [{ name: 'Main', params: { screen: 'Home' } }],
       });
     }, SPLASH_DURATION_MS);
 
