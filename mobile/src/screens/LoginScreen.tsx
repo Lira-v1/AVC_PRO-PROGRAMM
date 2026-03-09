@@ -1,43 +1,59 @@
-import React, { useEffect, useState } from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import React from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAppStore } from '../store/AppStore';
-
-const SPLASH_DURATION_MS = 1800;
 
 export const LoginScreen = () => {
   const { setRole } = useAppStore();
-  const [showSplash, setShowSplash] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-      setRole('client');
-    }, SPLASH_DURATION_MS);
-
-    return () => clearTimeout(timer);
-  }, [setRole]);
-
-  if (!showSplash) {
-    return null;
-  }
 
   return (
-    <View style={styles.splashContainer}>
-      <Image source={require('../../assets/splash.png')} style={styles.splashImage} resizeMode="contain" />
+    <View style={styles.container}>
+      <Text style={styles.title}>Вход</Text>
+      <Text style={styles.subtitle}>Выберите режим работы</Text>
+
+      <Pressable style={styles.button} onPress={() => setRole('client')}>
+        <Text style={styles.buttonText}>Войти как клиент</Text>
+      </Pressable>
+
+      <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => setRole('master')}>
+        <Text style={[styles.buttonText, styles.secondaryButtonText]}>Войти как мастер</Text>
+      </Pressable>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  splashContainer: {
+  container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 24
+    backgroundColor: '#F3F5FA',
+    padding: 16,
   },
-  splashImage: {
-    width: '100%',
-    height: '50%'
-  }
+  title: {
+    fontSize: 24,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#555',
+    marginBottom: 20,
+  },
+  button: {
+    backgroundColor: '#0E5BF2',
+    borderRadius: 10,
+    paddingVertical: 13,
+    marginTop: 8,
+  },
+  secondaryButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#0E5BF2',
+  },
+  buttonText: {
+    color: '#fff',
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  secondaryButtonText: {
+    color: '#0E5BF2',
+  },
 });
