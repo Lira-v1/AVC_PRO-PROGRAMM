@@ -11,8 +11,7 @@ import { CategoryScreen } from '../screens/CategoryScreen';
 import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
-type RootStackParamList = {
-  Splash: undefined;
+type MainStackParamList = {
   Home: undefined;
   Services: undefined;
   Category: { title: string; category: string };
@@ -29,7 +28,13 @@ type RootStackParamList = {
   Placeholder: { title: string };
 };
 
+type RootStackParamList = {
+  Splash: undefined;
+  Main: undefined;
+};
+
 const RootStack = createNativeStackNavigator<RootStackParamList>();
+const MainStack = createNativeStackNavigator<MainStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 type DrawerItem = {
@@ -46,7 +51,7 @@ const SplashScreen = () => {
     const timer = setTimeout(() => {
       navigation.reset({
         index: 0,
-        routes: [{ name: 'Home' }],
+        routes: [{ name: 'Main' }],
       });
     }, SPLASH_DURATION_MS);
 
@@ -84,7 +89,7 @@ const DrawerSheet = ({ visible, onClose, items }: { visible: boolean; onClose: (
 );
 
 const HomeContainerScreen = () => {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const openDrawer = useDrawerMenu();
 
   const onCategoryPress = (category: HomeCategory) => {
@@ -95,7 +100,7 @@ const HomeContainerScreen = () => {
 };
 
 const ServicesContainerScreen = () => {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const openDrawer = useDrawerMenu();
 
   const onCategoryPress = (category: ServiceCategory) => {
@@ -105,20 +110,54 @@ const ServicesContainerScreen = () => {
   return <ServicesScreen onMenuPress={openDrawer} onCategoryPress={onCategoryPress} />;
 };
 
+const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.SetStateAction<boolean>> }) => {
+  return (
+    <MainStack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
+      <MainStack.Screen name="Home" component={HomeContainerScreen} />
+      <MainStack.Screen name="Services" component={ServicesContainerScreen} />
+      <MainStack.Screen
+        name="Category"
+        children={({ navigation, route }) => (
+          <CategoryScreen navigation={navigation} route={route} onMenuPress={() => setDrawerOpen(true)} />
+        )}
+      />
+      <MainStack.Screen name="Emergency" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />
+      <MainStack.Screen name="Estimate" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Сметмастер' } }} />} />
+      <MainStack.Screen name="Commercial" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Коммерция' } }} />} />
+      <MainStack.Screen name="Maintenance" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Обслуживание' } }} />} />
+      <MainStack.Screen name="Vacancies" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Вакансии' } }} />} />
+      <MainStack.Screen name="Orders" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Мои заявки' } }} />} />
+      <MainStack.Screen name="Shop" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Магазин' } }} />} />
+      <MainStack.Screen name="CreateRequest" component={CreateRequestScreen} />
+      <MainStack.Screen name="Login" component={LoginScreen} />
+      <MainStack.Screen name="Registration" component={RegistrationScreen} />
+      <MainStack.Screen name="Placeholder" component={PlatformPlaceholderScreen} />
+    </MainStack.Navigator>
+  );
+};
+
 export const RootNavigator = () => {
   const [isDrawerOpen, setDrawerOpen] = useState(false);
 
-  const navigate = (name: keyof RootStackParamList, params?: RootStackParamList[keyof RootStackParamList]) => {
-    if (!navigationRef.isReady()) {
+  const navigate = (name: keyof MainStackParamList, params?: MainStackParamList[keyof MainStackParamList]) => {
+    const rootState = navigationRef.getRootState();
+    const mainRoute = rootState?.routes.find((route) => route.name === 'Main');
+
+    if (!navigationRef.isReady() || !mainRoute?.key) {
       return;
     }
 
     if (typeof params !== 'undefined') {
-      (navigationRef.navigate as any)(name, params);
+      navigationRef.navigate('Main', {
+        screen: name,
+        params,
+      } as never);
       return;
     }
 
-    (navigationRef.navigate as any)(name);
+    navigationRef.navigate('Main', {
+      screen: name,
+    } as never);
   };
 
   const drawerItems: DrawerItem[] = useMemo(
@@ -140,25 +179,9 @@ export const RootNavigator = () => {
       <NavigationContainer ref={navigationRef}>
         <RootStack.Navigator initialRouteName="Splash" screenOptions={{ headerShown: false }}>
           <RootStack.Screen name="Splash" component={SplashScreen} />
-          <RootStack.Screen name="Home" component={HomeContainerScreen} />
-          <RootStack.Screen name="Services" component={ServicesContainerScreen} />
-          <RootStack.Screen
-            name="Category"
-            children={({ navigation, route }) => (
-              <CategoryScreen navigation={navigation} route={route} onMenuPress={() => setDrawerOpen(true)} />
-            )}
-          />
-          <RootStack.Screen name="Emergency" children={({ route }) => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />
-          <RootStack.Screen name="Estimate" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Сметмастер' } }} />} />
-          <RootStack.Screen name="Commercial" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Коммерция' } }} />} />
-          <RootStack.Screen name="Maintenance" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Обслуживание' } }} />} />
-          <RootStack.Screen name="Vacancies" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Вакансии' } }} />} />
-          <RootStack.Screen name="Orders" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Мои заявки' } }} />} />
-          <RootStack.Screen name="Shop" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Магазин' } }} />} />
-          <RootStack.Screen name="CreateRequest" component={CreateRequestScreen} />
-          <RootStack.Screen name="Login" component={LoginScreen} />
-          <RootStack.Screen name="Registration" component={RegistrationScreen} />
-          <RootStack.Screen name="Placeholder" component={PlatformPlaceholderScreen} />
+          <RootStack.Screen name="Main">
+            {() => <MainNavigator setDrawerOpen={setDrawerOpen} />}
+          </RootStack.Screen>
         </RootStack.Navigator>
       </NavigationContainer>
       <DrawerSheet visible={isDrawerOpen} onClose={() => setDrawerOpen(false)} items={drawerItems} />
