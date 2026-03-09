@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { CompactCardGrid } from '../components/CompactCardGrid';
 import { AppHeader } from '../components/AppHeader';
+import { QuickAccessItem, QuickAccessRibbon } from '../components/QuickAccessRibbon';
 
 export type HomeCategory = {
   id: string;
@@ -37,6 +38,20 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
     []
   );
 
+  const quickAccessItems = useMemo<QuickAccessItem[]>(
+    () => [
+      { id: 'qa-emergency', label: 'Экстренный мастер', icon: '🚨' },
+      { id: 'qa-estimate', label: 'Сметмастер', icon: '📐' },
+      { id: 'qa-navigation', label: 'Навигация', icon: '🧭' },
+      { id: 'qa-electrician', label: 'Электрик', icon: '💡' },
+      { id: 'qa-plumber', label: 'Сантехник', icon: '🚿' },
+      { id: 'qa-welder', label: 'Сварщик', icon: '🛠️' },
+      { id: 'qa-handyman', label: 'Handyman', icon: '🔧' },
+      { id: 'qa-cleaning', label: 'Cleaning', icon: '🧹' },
+    ],
+    []
+  );
+
   return (
     <View style={styles.root}>
       <AppHeader onMenuPress={onMenuPress} />
@@ -61,6 +76,13 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
         </View>
 
         <CompactCardGrid items={categories} onItemPress={onCategoryPress} />
+
+        <QuickAccessRibbon
+          items={quickAccessItems}
+          onItemPress={(item) => {
+            console.log('[HomeScreen] Quick access pressed:', item.id);
+          }}
+        />
       </ScrollView>
     </View>
   );
