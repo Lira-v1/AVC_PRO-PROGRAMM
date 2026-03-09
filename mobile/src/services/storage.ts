@@ -4,7 +4,9 @@ import { Offer, RequestOrder } from '../types';
 const KEYS = {
   requests: 'avc.requests',
   offers: 'avc.offers',
-  masterOnline: 'avc.master.online'
+  masterOnline: 'avc.master.online',
+  userRegistered: 'avc.user.registered',
+  registrationPromptSeen: 'avc.registration.prompt.seen'
 };
 
 const parse = async <T>(key: string, fallback: T): Promise<T> => {
@@ -25,5 +27,11 @@ export const storageService = {
   saveOffers: (offers: Offer[]) => AsyncStorage.setItem(KEYS.offers, JSON.stringify(offers)),
 
   getMasterOnline: async () => (await parse<boolean>(KEYS.masterOnline, false)),
-  saveMasterOnline: (online: boolean) => AsyncStorage.setItem(KEYS.masterOnline, JSON.stringify(online))
+  saveMasterOnline: (online: boolean) => AsyncStorage.setItem(KEYS.masterOnline, JSON.stringify(online)),
+
+  getUserRegistered: async () => (await parse<boolean>(KEYS.userRegistered, false)),
+  saveUserRegistered: (registered: boolean) => AsyncStorage.setItem(KEYS.userRegistered, JSON.stringify(registered)),
+
+  getRegistrationPromptSeen: async () => (await parse<boolean>(KEYS.registrationPromptSeen, false)),
+  saveRegistrationPromptSeen: (seen: boolean) => AsyncStorage.setItem(KEYS.registrationPromptSeen, JSON.stringify(seen))
 };

@@ -1,13 +1,41 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ServiceCard } from '../components/ServiceCard';
 import { groupByCategory } from '../services/pricing';
 import { useAppStore } from '../store/AppStore';
+import { useNavigation } from '@react-navigation/native';
 
 const grouped = groupByCategory();
 
 export const ClientCatalogScreen = () => {
-  const { addToCart, policy } = useAppStore();
+  const navigation = useNavigation();
+  const { addToCart, policy, isRegistered, registrationPromptSeen, markRegistrationPromptSeen } = useAppStore();
+
+  useEffect(() => {
+    if (isRegistered || registrationPromptSeen) {
+      return;
+    }
+
+    Alert.alert(
+      'Внимание',
+      'Зарегистрируйтесь, чтобы оформлять заказы и пользоваться всеми возможностями приложения',
+      [
+        {
+          text: 'Позже',
+          onPress: () => {
+            void markRegistrationPromptSeen();
+          }
+        },
+        {
+          text: 'Регистрация',
+          onPress: () => {
+            void markRegistrationPromptSeen();
+            (navigation as any).navigate('Registration');
+          }
+        }
+      ]
+    );
+  }, [isRegistered, registrationPromptSeen, markRegistrationPromptSeen, navigation]);
 
   return (
     <ScrollView style={styles.container}>
