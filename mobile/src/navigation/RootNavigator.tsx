@@ -1,15 +1,28 @@
-import React, { useEffect, useState } from 'react';
-import { NavigationContainer, useNavigation } from '@react-navigation/native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { NavigationContainer, createNavigationContainerRef, useNavigation } from '@react-navigation/native';
 import { createNativeStackNavigator, NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CreateRequestScreen } from '../screens/CreateRequestScreen';
 import { HomeCategory, HomeScreen } from '../screens/HomeScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegistrationScreen } from '../screens/RegistrationScreen';
+import { ServicesScreen, ServiceCategory } from '../screens/ServicesScreen';
+import { CategoryScreen } from '../screens/CategoryScreen';
+import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
+import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
 type RootStackParamList = {
   Splash: undefined;
   Home: undefined;
+  Services: undefined;
+  Category: { title: string; category: string };
+  Emergency: undefined;
+  Estimate: undefined;
+  Commercial: undefined;
+  Maintenance: undefined;
+  Vacancies: undefined;
+  Orders: undefined;
+  Shop: undefined;
   CreateRequest: undefined;
   Login: undefined;
   Registration: undefined;
@@ -17,10 +30,11 @@ type RootStackParamList = {
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 type DrawerItem = {
   label: string;
-  action: (navigation: NativeStackNavigationProp<RootStackParamList>) => void;
+  action: () => void;
 };
 
 const SPLASH_DURATION_MS = 1800;
@@ -46,17 +60,7 @@ const SplashScreen = () => {
   );
 };
 
-const DrawerSheet = ({
-  visible,
-  onClose,
-  items,
-  navigation,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  items: DrawerItem[];
-  navigation: NativeStackNavigationProp<RootStackParamList>;
-}) => (
+const DrawerSheet = ({ visible, onClose, items }: { visible: boolean; onClose: () => void; items: DrawerItem[] }) => (
   <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
     <View style={styles.drawerOverlay}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
@@ -68,7 +72,7 @@ const DrawerSheet = ({
             style={styles.drawerItem}
             onPress={() => {
               onClose();
-              item.action(navigation);
+              item.action();
             }}
           >
             <Text style={styles.drawerItemText}>{item.label}</Text>
@@ -81,55 +85,86 @@ const DrawerSheet = ({
 
 const HomeContainerScreen = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [isDrawerOpen, setDrawerOpen] = useState(false);
-
-  const drawerItems: DrawerItem[] = [
-    { label: 'Профиль / Войти', action: (nav) => nav.navigate('Login') },
-    { label: 'Мои заказы', action: (nav) => nav.navigate('Placeholder', { title: 'Мои заказы' }) },
-    { label: 'Сметмастер', action: (nav) => nav.navigate('Placeholder', { title: 'Сметмастер' }) },
-    { label: 'Договоры', action: (nav) => nav.navigate('Placeholder', { title: 'Договоры' }) },
-    { label: 'Гарантия', action: (nav) => nav.navigate('Placeholder', { title: 'Гарантия' }) },
-    { label: 'Стать мастером', action: (nav) => nav.navigate('Registration') },
-    { label: 'Помощь', action: (nav) => nav.navigate('Placeholder', { title: 'Помощь' }) },
-    { label: 'Настройки', action: (nav) => nav.navigate('Placeholder', { title: 'Настройки' }) },
-  ];
+  const openDrawer = useDrawerMenu();
 
   const onCategoryPress = (category: HomeCategory) => {
-    if (category.route === 'CreateRequest') {
-      navigation.navigate('CreateRequest');
+    navigation.navigate(category.route);
+  };
+
+  return <HomeScreen onMenuPress={openDrawer} onCategoryPress={onCategoryPress} />;
+};
+
+const ServicesContainerScreen = () => {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const openDrawer = useDrawerMenu();
+
+  const onCategoryPress = (category: ServiceCategory) => {
+    navigation.navigate('Category', { title: category.title, category: category.category });
+  };
+
+  return <ServicesScreen onMenuPress={openDrawer} onCategoryPress={onCategoryPress} />;
+};
+
+export const RootNavigator = () => {
+  const [isDrawerOpen, setDrawerOpen] = useState(false);
+
+  const navigate = (name: keyof RootStackParamList, params?: RootStackParamList[keyof RootStackParamList]) => {
+    if (!navigationRef.isReady()) {
       return;
     }
 
-    navigation.navigate('Placeholder', { title: category.placeholderTitle ?? category.title });
+    if (typeof params !== 'undefined') {
+      (navigationRef.navigate as any)(name, params);
+      return;
+    }
+
+    (navigationRef.navigate as any)(name);
   };
 
+  const drawerItems: DrawerItem[] = useMemo(
+    () => [
+      { label: 'Профиль / Войти', action: () => navigate('Login') },
+      { label: 'Мои заказы', action: () => navigate('Orders') },
+      { label: 'Сметмастер', action: () => navigate('Estimate') },
+      { label: 'Договоры', action: () => navigate('Placeholder', { title: 'Договоры' }) },
+      { label: 'Гарантия', action: () => navigate('Placeholder', { title: 'Гарантия' }) },
+      { label: 'Стать мастером', action: () => navigate('Registration') },
+      { label: 'Помощь', action: () => navigate('Placeholder', { title: 'Помощь' }) },
+      { label: 'Настройки', action: () => navigate('Placeholder', { title: 'Настройки' }) },
+    ],
+    []
+  );
+
   return (
-    <>
-      <HomeScreen onMenuPress={() => setDrawerOpen(true)} onCategoryPress={onCategoryPress} />
-      <DrawerSheet visible={isDrawerOpen} onClose={() => setDrawerOpen(false)} items={drawerItems} navigation={navigation} />
-    </>
+    <DrawerMenuProvider value={() => setDrawerOpen(true)}>
+      <NavigationContainer ref={navigationRef}>
+        <RootStack.Navigator initialRouteName="Splash" screenOptions={{ headerShown: false }}>
+          <RootStack.Screen name="Splash" component={SplashScreen} />
+          <RootStack.Screen name="Home" component={HomeContainerScreen} />
+          <RootStack.Screen name="Services" component={ServicesContainerScreen} />
+          <RootStack.Screen
+            name="Category"
+            children={({ navigation, route }) => (
+              <CategoryScreen navigation={navigation} route={route} onMenuPress={() => setDrawerOpen(true)} />
+            )}
+          />
+          <RootStack.Screen name="Emergency" children={({ route }) => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />
+          <RootStack.Screen name="Estimate" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Сметмастер' } }} />} />
+          <RootStack.Screen name="Commercial" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Коммерция' } }} />} />
+          <RootStack.Screen name="Maintenance" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Обслуживание' } }} />} />
+          <RootStack.Screen name="Vacancies" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Вакансии' } }} />} />
+          <RootStack.Screen name="Orders" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Мои заявки' } }} />} />
+          <RootStack.Screen name="Shop" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Магазин' } }} />} />
+          <RootStack.Screen name="CreateRequest" component={CreateRequestScreen} />
+          <RootStack.Screen name="Login" component={LoginScreen} />
+          <RootStack.Screen name="Registration" component={RegistrationScreen} />
+          <RootStack.Screen name="Placeholder" component={PlatformPlaceholderScreen} />
+        </RootStack.Navigator>
+      </NavigationContainer>
+      <DrawerSheet visible={isDrawerOpen} onClose={() => setDrawerOpen(false)} items={drawerItems} />
+    </DrawerMenuProvider>
   );
 };
-
-const PlaceholderScreen = ({ route }: { route: { params: { title: string } } }) => (
-  <View style={styles.centered}>
-    <Text style={styles.title}>{route.params.title}</Text>
-    <Text style={styles.subtitle}>Экран в разработке</Text>
-  </View>
-);
-
-export const RootNavigator = () => (
-  <NavigationContainer>
-    <RootStack.Navigator initialRouteName="Splash">
-      <RootStack.Screen name="Splash" component={SplashScreen} options={{ headerShown: false }} />
-      <RootStack.Screen name="Home" component={HomeContainerScreen} options={{ headerShown: false }} />
-      <RootStack.Screen name="CreateRequest" component={CreateRequestScreen} options={{ title: 'Создать заявку' }} />
-      <RootStack.Screen name="Login" component={LoginScreen} options={{ title: 'Вход' }} />
-      <RootStack.Screen name="Registration" component={RegistrationScreen} options={{ title: 'Регистрация' }} />
-      <RootStack.Screen name="Placeholder" component={PlaceholderScreen} options={({ route }) => ({ title: route.params.title })} />
-    </RootStack.Navigator>
-  </NavigationContainer>
-);
 
 const styles = StyleSheet.create({
   splashContainer: {
@@ -143,22 +178,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '50%',
   },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    backgroundColor: '#F3F5FA',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  subtitle: {
-    marginTop: 8,
-    fontSize: 16,
-    color: '#555',
-  },
   drawerOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',
@@ -171,22 +190,26 @@ const styles = StyleSheet.create({
     height: '100%',
     paddingTop: 52,
     paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
   },
   drawerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    marginBottom: 10,
+    marginBottom: 18,
+    color: '#101623',
   },
   drawerItem: {
-    borderRadius: 10,
     paddingVertical: 12,
-    paddingHorizontal: 10,
-    marginTop: 8,
-    backgroundColor: '#f4f6fb',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF1F7',
   },
   drawerItemText: {
     fontSize: 16,
+    color: '#202a3f',
     fontWeight: '500',
-    color: '#17213b',
   },
 });
