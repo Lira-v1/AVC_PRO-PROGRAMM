@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer, useNavigation } from '@react-navigation/native';
 import { createNativeStackNavigator, NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CreateRequestScreen } from '../screens/CreateRequestScreen';
 import { HomeCategory, HomeScreen } from '../screens/HomeScreen';
 import { LoginScreen } from '../screens/LoginScreen';
@@ -23,6 +23,8 @@ type DrawerItem = {
   action: (navigation: NativeStackNavigationProp<RootStackParamList>) => void;
 };
 
+const SPLASH_DURATION_MS = 1800;
+
 const SplashScreen = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -32,14 +34,14 @@ const SplashScreen = () => {
         index: 0,
         routes: [{ name: 'Home' }],
       });
-    }, 1000);
+    }, SPLASH_DURATION_MS);
 
     return () => clearTimeout(timer);
   }, [navigation]);
 
   return (
-    <View style={styles.centered}>
-      <Text style={styles.title}>Splash Screen</Text>
+    <View style={styles.splashContainer}>
+      <Image source={require('../../assets/splash.png')} style={styles.splashImage} resizeMode="contain" />
     </View>
   );
 };
@@ -130,6 +132,17 @@ export const RootNavigator = () => (
 );
 
 const styles = StyleSheet.create({
+  splashContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 24,
+  },
+  splashImage: {
+    width: '100%',
+    height: '50%',
+  },
   centered: {
     flex: 1,
     alignItems: 'center',
