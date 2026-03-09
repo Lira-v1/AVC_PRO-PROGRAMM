@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { CompactCardGrid } from '../components/CompactCardGrid';
 import { AppHeader } from '../components/AppHeader';
 
 export type HomeCategory = {
@@ -59,14 +60,7 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
           <Text style={styles.searchPlaceholder}>Найти услугу или мастера</Text>
         </View>
 
-        <View style={styles.grid}>
-          {categories.map((item) => (
-            <Pressable key={item.id} style={styles.card} onPress={() => onCategoryPress(item)}>
-              <View style={styles.iconPlaceholder} />
-              <Text style={styles.cardTitle}>{item.title}</Text>
-            </Pressable>
-          ))}
-        </View>
+        <CompactCardGrid items={categories} onItemPress={onCategoryPress} />
       </ScrollView>
     </View>
   );
@@ -134,36 +128,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#7a869f',
     fontWeight: '400',
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 8,
-  },
-  card: {
-    width: '48%',
-    aspectRatio: 1.7,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    padding: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  iconPlaceholder: {
-    width: 18,
-    height: 18,
-    borderRadius: 6,
-    backgroundColor: '#EEF3FF',
-    position: 'absolute',
-    top: 8,
-    right: 8,
-  },
-  cardTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#16213c',
-    textAlign: 'center',
   },
 });
