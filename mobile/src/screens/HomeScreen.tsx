@@ -46,6 +46,18 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
           <Text style={styles.locationValue}>Москва, определяем ближайших мастеров</Text>
         </View>
 
+        <Pressable
+          style={styles.searchBar}
+          onPress={() => {
+            console.log('Search pressed');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Найти услугу или мастера"
+        >
+          <Text style={styles.searchIcon}>🔍</Text>
+          <Text style={styles.searchPlaceholder}>Найти услугу или мастера</Text>
+        </Pressable>
+
         <View style={styles.grid}>
           {categories.map((item) => (
             <Pressable key={item.id} style={styles.card} onPress={() => onCategoryPress(item)}>
@@ -113,6 +125,32 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#1b263b',
     fontWeight: '600',
+  },
+  searchBar: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e5e9f2',
+    shadowColor: '#1a1f2b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  searchIcon: {
+    fontSize: 16,
+    marginRight: 10,
+  },
+  searchPlaceholder: {
+    fontSize: 15,
+    color: '#7a869f',
+    fontWeight: '500',
   },
   grid: {
     flexDirection: 'row',
