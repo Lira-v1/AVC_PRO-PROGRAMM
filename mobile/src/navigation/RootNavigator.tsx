@@ -7,6 +7,7 @@ import { ClientCatalogScreen } from '../screens/ClientCatalogScreen';
 import { CreateRequestScreen } from '../screens/CreateRequestScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { MasterDashboardScreen } from '../screens/MasterDashboardScreen';
+import { RegistrationScreen } from '../screens/RegistrationScreen';
 import { useAppStore } from '../store/AppStore';
 
 const Stack = createNativeStackNavigator();
@@ -35,7 +36,10 @@ export const RootNavigator = () => {
         {!role ? (
           <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
         ) : role === 'client' ? (
-          <Stack.Screen name="ClientTabs" component={ClientTabs} options={{ title: 'Клиент' }} />
+          <>
+            <Stack.Screen name="ClientTabs" component={ClientTabs} options={{ title: 'Главная' }} />
+            <Stack.Screen name="Registration" component={RegistrationScreen} options={{ title: 'Регистрация' }} />
+          </>
         ) : (
           <Stack.Screen name="MasterTabs" component={MasterTabs} options={{ title: 'Мастер' }} />
         )}

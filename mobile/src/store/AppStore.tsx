@@ -6,6 +6,10 @@ import { CartItem, Offer, PricingPolicy, RequestContact, RequestOrder, Role } fr
 type AppStoreValue = {
   role: Role | null;
   setRole: (role: Role) => void;
+  isRegistered: boolean;
+  completeRegistration: () => Promise<void>;
+  registrationPromptSeen: boolean;
+  markRegistrationPromptSeen: () => Promise<void>;
   policy: PricingPolicy;
   setPolicy: (policy: PricingPolicy) => void;
   cart: CartItem[];
@@ -27,14 +31,32 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
   const [cart, setCart] = useState<CartItem[]>([]);
   const [requests, setRequests] = useState<RequestOrder[]>([]);
   const [masterOnline, setMasterOnline] = useState(false);
+  const [isRegistered, setIsRegistered] = useState(false);
+  const [registrationPromptSeen, setRegistrationPromptSeen] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       setRequests(await storageService.getRequests());
       setMasterOnline(await storageService.getMasterOnline());
+      setIsRegistered(await storageService.getUserRegistered());
+      setRegistrationPromptSeen(await storageService.getRegistrationPromptSeen());
     };
     void load();
   }, []);
+
+  const completeRegistration = async () => {
+    setIsRegistered(true);
+    setRegistrationPromptSeen(true);
+    await Promise.all([
+      storageService.saveUserRegistered(true),
+      storageService.saveRegistrationPromptSeen(true)
+    ]);
+  };
+
+  const markRegistrationPromptSeen = async () => {
+    setRegistrationPromptSeen(true);
+    await storageService.saveRegistrationPromptSeen(true);
+  };
 
   const addToCart = (serviceId: string) => {
     setCart((prev) => {
@@ -98,6 +120,10 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
     () => ({
       role,
       setRole,
+      isRegistered,
+      completeRegistration,
+      registrationPromptSeen,
+      markRegistrationPromptSeen,
       policy,
       setPolicy,
       cart,
@@ -110,7 +136,7 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
       toggleMasterOnline,
       createOffer
     }),
-    [role, policy, cart, requests, masterOnline]
+    [role, isRegistered, registrationPromptSeen, policy, cart, requests, masterOnline]
   );
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;

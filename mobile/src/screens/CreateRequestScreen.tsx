@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useAppStore } from '../store/AppStore';
 
 export const CreateRequestScreen = () => {
-  const { cart, createRequest } = useAppStore();
+  const navigation = useNavigation();
+  const { cart, createRequest, isRegistered } = useAppStore();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -11,6 +13,11 @@ export const CreateRequestScreen = () => {
   const [preferredTime, setPreferredTime] = useState('');
 
   const submit = async () => {
+    if (!isRegistered) {
+      (navigation as any).navigate('Registration');
+      return;
+    }
+
     if (!name || !phone || !address) {
       Alert.alert('Заполните обязательные поля');
       return;
