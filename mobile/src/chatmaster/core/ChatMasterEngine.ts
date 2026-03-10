@@ -1,11 +1,9 @@
 import { requestSmetMasterEstimate } from '../adapters/smetMasterAdapter';
 import { resolveIntent } from '../intents/intentResolver';
+import { language } from '../language';
 import type { ChatMasterResponse } from '../types/ChatMasterTypes';
 
-const UNKNOWN_REPLY = 'Пока не удалось точно определить работу. Попробуйте описать задачу подробнее.';
-
-const formatEstimateReply = (title: string, finalPrice: number): string =>
-  `Похоже, это электрика. Подходит работа: ${title}. Предварительная стоимость: ${finalPrice} KZT.`;
+const UNKNOWN_REPLY = language.systemMessages.unknownRequest;
 
 export class ChatMasterEngine {
   public static processUserMessage(userMessage: string): ChatMasterResponse {
@@ -33,8 +31,7 @@ export class ChatMasterEngine {
     const adapterResult = requestSmetMasterEstimate(userMessage);
 
     if (!adapterResult.response || !adapterResult.category || !adapterResult.workType) {
-      const missingReply =
-        'Запрос распознан как смета, но я пока не смог точно подобрать вид работ. Добавьте больше деталей, например тип работы и проблему.';
+      const missingReply = language.clarificationTemplates.notEnoughInfo();
 
       return {
         reply: missingReply,
@@ -54,7 +51,11 @@ export class ChatMasterEngine {
       };
     }
 
-    const finalReply = formatEstimateReply(adapterResult.response.estimate.title, adapterResult.response.finalPrice);
+    const finalReply = language.replyTemplates.estimateReply({
+      category: adapterResult.category,
+      workTitle: adapterResult.response.estimate.title,
+      price: adapterResult.response.finalPrice,
+    });
 
     return {
       reply: finalReply,
