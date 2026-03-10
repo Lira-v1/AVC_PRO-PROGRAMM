@@ -24,6 +24,8 @@ export type EstimateCalculationInput = {
 
 export type EstimateCalculationResult = {
   estimate: EstimateRecord;
+  basePrice: number;
+  tariffMultiplier: number;
   workPrice: number;
   masterVisitFee: number;
   finalPrice: number;
