@@ -46,8 +46,6 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
       { id: 'qa-electrician', label: 'Электрик', icon: '💡' },
       { id: 'qa-plumber', label: 'Сантехник', icon: '🚿' },
       { id: 'qa-welder', label: 'Сварщик', icon: '🛠️' },
-      { id: 'qa-handyman', label: 'Handyman', icon: '🔧' },
-      { id: 'qa-cleaning', label: 'Cleaning', icon: '🧹' },
     ],
     []
   );
