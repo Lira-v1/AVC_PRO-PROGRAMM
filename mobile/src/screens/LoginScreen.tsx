@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppHeader } from '../components/AppHeader';
 import { useAppStore } from '../store/AppStore';
 
 export const LoginScreen = () => {
@@ -7,16 +8,19 @@ export const LoginScreen = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Вход</Text>
-      <Text style={styles.subtitle}>Выберите режим работы</Text>
+      <AppHeader title="Вход" />
+      <View style={styles.content}>
+        <Text style={styles.title}>Вход</Text>
+        <Text style={styles.subtitle}>Выберите режим работы</Text>
 
-      <Pressable style={styles.button} onPress={() => setRole('client')}>
-        <Text style={styles.buttonText}>Войти как клиент</Text>
-      </Pressable>
+        <Pressable style={styles.button} onPress={() => setRole('client')}>
+          <Text style={styles.buttonText}>Войти как клиент</Text>
+        </Pressable>
 
-      <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => setRole('master')}>
-        <Text style={[styles.buttonText, styles.secondaryButtonText]}>Войти как мастер</Text>
-      </Pressable>
+        <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => setRole('master')}>
+          <Text style={[styles.buttonText, styles.secondaryButtonText]}>Войти как мастер</Text>
+        </Pressable>
+      </View>
     </View>
   );
 };
@@ -25,6 +29,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F5FA',
+  },
+  content: {
     padding: 16,
   },
   title: {

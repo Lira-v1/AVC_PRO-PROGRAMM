@@ -64,7 +64,7 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
 
   return (
     <View style={styles.root}>
-      <AppHeader onMenuPress={onMenuPress} />
+      <AppHeader onMenuPress={onMenuPress} isHome />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.locationBlock}>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { AppHeader } from '../components/AppHeader';
 import { useAppStore } from '../store/AppStore';
 
 export const RegistrationScreen = () => {
@@ -33,35 +34,38 @@ export const RegistrationScreen = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Регистрация</Text>
+      <AppHeader title="Регистрация" />
+      <View style={styles.content}>
+        <Text style={styles.title}>Регистрация</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Номер телефона"
-        value={phone}
-        onChangeText={setPhone}
-        keyboardType="phone-pad"
-      />
-
-      {isCodeStep && (
         <TextInput
           style={styles.input}
-          placeholder="SMS-код"
-          value={code}
-          onChangeText={setCode}
-          keyboardType="number-pad"
+          placeholder="Номер телефона"
+          value={phone}
+          onChangeText={setPhone}
+          keyboardType="phone-pad"
         />
-      )}
 
-      {!isCodeStep ? (
-        <Pressable style={styles.button} onPress={requestSmsCode}>
-          <Text style={styles.buttonText}>Получить SMS-код</Text>
-        </Pressable>
-      ) : (
-        <Pressable style={styles.button} onPress={() => void confirmRegistration()}>
-          <Text style={styles.buttonText}>Подтвердить</Text>
-        </Pressable>
-      )}
+        {isCodeStep && (
+          <TextInput
+            style={styles.input}
+            placeholder="SMS-код"
+            value={code}
+            onChangeText={setCode}
+            keyboardType="number-pad"
+          />
+        )}
+
+        {!isCodeStep ? (
+          <Pressable style={styles.button} onPress={requestSmsCode}>
+            <Text style={styles.buttonText}>Получить SMS-код</Text>
+          </Pressable>
+        ) : (
+          <Pressable style={styles.button} onPress={() => void confirmRegistration()}>
+            <Text style={styles.buttonText}>Подтвердить</Text>
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 };
@@ -70,6 +74,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F5FA',
+  },
+  content: {
     padding: 16
   },
   title: {

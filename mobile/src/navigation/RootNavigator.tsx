@@ -101,13 +101,12 @@ const HomeContainerScreen = () => {
 
 const ServicesContainerScreen = () => {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const openDrawer = useDrawerMenu();
 
   const onCategoryPress = (category: ServiceCategory) => {
     navigation.navigate('Category', { title: category.title, category: category.category });
   };
 
-  return <ServicesScreen onMenuPress={openDrawer} onCategoryPress={onCategoryPress} />;
+  return <ServicesScreen onCategoryPress={onCategoryPress} />;
 };
 
 const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.SetStateAction<boolean>> }) => {
@@ -117,8 +116,8 @@ const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.
       <MainStack.Screen name="Services" component={ServicesContainerScreen} />
       <MainStack.Screen
         name="Category"
-        children={({ navigation, route }) => (
-          <CategoryScreen navigation={navigation} route={route} onMenuPress={() => setDrawerOpen(true)} />
+        children={({ route }) => (
+          <CategoryScreen route={route} />
         )}
       />
       <MainStack.Screen name="Emergency" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />

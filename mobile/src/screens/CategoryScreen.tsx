@@ -14,22 +14,16 @@ const categoryDescriptions: Record<string, string> = {
 };
 
 type CategoryScreenProps = {
-  navigation: { goBack: () => void };
   route: { params: { title: string; category: string } };
-  onMenuPress: () => void;
 };
 
-export const CategoryScreen = ({ navigation, route, onMenuPress }: CategoryScreenProps) => {
+export const CategoryScreen = ({ route }: CategoryScreenProps) => {
   const { title, category } = route.params;
 
   return (
     <View style={styles.root}>
-      <AppHeader onMenuPress={onMenuPress} />
+      <AppHeader title={title} />
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable style={styles.backButton} onPress={navigation.goBack}>
-          <Text style={styles.backButtonText}>Назад</Text>
-        </Pressable>
-
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.description}>{categoryDescriptions[category] ?? 'Категория услуг платформы MasterPro.'}</Text>
 
@@ -58,15 +52,6 @@ export const CategoryScreen = ({ navigation, route, onMenuPress }: CategoryScree
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F3F5FA' },
   content: { padding: 14, paddingBottom: 32 },
-  backButton: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    marginBottom: 12,
-  },
-  backButtonText: { fontWeight: '600', color: '#21304d' },
   title: { fontSize: 24, fontWeight: '800', color: '#121a2f' },
   description: { marginTop: 8, fontSize: 14, color: '#5f6c87', lineHeight: 20 },
   bannerPlaceholder: {
