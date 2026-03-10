@@ -1,14 +1,30 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
+import { SmetMasterEngine } from '../smetmaster';
 
 export const PlatformPlaceholderScreen = ({ route }: { route: { params: { title: string } } }) => {
+  const smetmasterReady = useMemo(() => {
+    if (route.params.title !== 'Сметмастер') {
+      return false;
+    }
+
+    const probe = SmetMasterEngine.calculateEstimate({
+      category: 'electrician',
+      workType: 'diagnostics',
+      tariff: 'economy',
+    });
+
+    return Boolean(probe);
+  }, [route.params.title]);
+
   return (
     <View style={styles.root}>
       <AppHeader title={route.params.title} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{route.params.title}</Text>
         <Text style={styles.subtitle}>Экран в разработке</Text>
+        {smetmasterReady ? <Text style={styles.caption}>Базовый движок Сметмастера подключён</Text> : null}
       </ScrollView>
     </View>
   );
@@ -33,5 +49,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 16,
     color: '#6a768f',
+  },
+  caption: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#0E5BF2',
   },
 });
