@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { LayoutChangeEvent, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
 import { calculateEstimatePrice, TariffType } from '../services/estimates';
 
@@ -118,7 +118,7 @@ export const ServicesScreen = () => {
   const [materialsList, setMaterialsList] = useState('');
   const [materialsComment, setMaterialsComment] = useState('');
   const [materialsBudget, setMaterialsBudget] = useState('');
-  const [isMaterialsSheetVisible, setMaterialsSheetVisible] = useState(false);
+  const [footerHeight, setFooterHeight] = useState(0);
   const [selectedTariff, setSelectedTariff] = useState<TariffType>('economy');
 
   const categorySuggestions = useMemo(() => {
@@ -189,17 +189,21 @@ export const ServicesScreen = () => {
   };
 
   const onToggleNeedMaterials = () => {
-    const nextValue = !needMaterialPickup;
-    setNeedMaterialPickup(nextValue);
-    if (nextValue) {
-      setMaterialsSheetVisible(true);
-    }
+    setNeedMaterialPickup((prev) => !prev);
+  };
+
+  const onCloseMaterialsCard = () => {
+    setNeedMaterialPickup(false);
+  };
+
+  const onFooterLayout = (event: LayoutChangeEvent) => {
+    setFooterHeight(event.nativeEvent.layout.height);
   };
 
   return (
     <View style={styles.root}>
       <AppHeader title="Вызвать мастера" />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: footerHeight + 20 }]}>
         <View style={styles.formCard}>
           <Text style={styles.blockTitle}>Категория</Text>
           <Pressable style={styles.field} onPress={() => setActivePicker('category')}>
@@ -279,10 +283,48 @@ export const ServicesScreen = () => {
             </View>
             <Text style={styles.materialPickupText}>Необходимо заехать за материалами</Text>
           </Pressable>
+
+          {orderMaterialsPayload.need_material_pickup ? (
+            <View style={styles.materialsCard}>
+              <View style={styles.materialsCardHeader}>
+                <Text style={styles.materialsCardTitle}>Материалы</Text>
+                <Pressable onPress={onCloseMaterialsCard} hitSlop={10}>
+                  <Text style={styles.materialsClose}>×</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.materialsFieldLabel}>Что нужно купить</Text>
+              <TextInput
+                value={materialsList}
+                onChangeText={setMaterialsList}
+                style={styles.materialsInput}
+                placeholder="Например: розетка 2 шт, автомат 16А"
+                placeholderTextColor="#91A0BB"
+              />
+
+              <Text style={styles.materialsFieldLabel}>Комментарий</Text>
+              <TextInput
+                value={materialsComment}
+                onChangeText={setMaterialsComment}
+                style={styles.materialsInput}
+                placeholder="Например: среднее качество"
+                placeholderTextColor="#91A0BB"
+              />
+
+              <Text style={styles.materialsFieldLabel}>Примерный бюджет</Text>
+              <TextInput
+                value={materialsBudget}
+                onChangeText={setMaterialsBudget}
+                style={styles.materialsInput}
+                placeholder="Например: до 10000 KZT"
+                placeholderTextColor="#91A0BB"
+              />
+            </View>
+          ) : null}
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={styles.footer} onLayout={onFooterLayout}>
         <Text style={styles.footerBlockTitle}>Тариф</Text>
         <View style={styles.tariffRow}>
           {[
@@ -402,45 +444,13 @@ export const ServicesScreen = () => {
         </View>
       </Modal>
 
-      <Modal transparent visible={isMaterialsSheetVisible} animationType="slide" onRequestClose={() => setMaterialsSheetVisible(false)}>
-        <View style={styles.sheetOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setMaterialsSheetVisible(false)} />
-          <View style={styles.sheetContainer}>
-            <Text style={styles.sheetTitle}>Материалы</Text>
-            <TextInput
-              value={materialsList}
-              onChangeText={setMaterialsList}
-              style={styles.sheetSearchInput}
-              placeholder="Например: розетка 2 шт, автомат 16А"
-              placeholderTextColor="#91A0BB"
-            />
-            <TextInput
-              value={materialsComment}
-              onChangeText={setMaterialsComment}
-              style={styles.sheetSearchInput}
-              placeholder="Например: среднее качество"
-              placeholderTextColor="#91A0BB"
-            />
-            <TextInput
-              value={materialsBudget}
-              onChangeText={setMaterialsBudget}
-              style={styles.sheetSearchInput}
-              placeholder="Например: до 10000 KZT"
-              placeholderTextColor="#91A0BB"
-            />
-            <Pressable style={styles.sheetDoneButton} onPress={() => setMaterialsSheetVisible(false)}>
-              <Text style={styles.sheetDoneButtonText}>Готово</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F3F5FA' },
-  scrollContent: { padding: 14, paddingBottom: 120 },
+  scrollContent: { padding: 14 },
   formCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14 },
   blockTitle: { marginTop: 14, marginBottom: 8, color: '#1b263b', fontSize: 15, fontWeight: '700' },
   field: {
@@ -516,6 +526,27 @@ const styles = StyleSheet.create({
   checkboxActive: { borderColor: '#0E5BF2', backgroundColor: '#EEF3FF' },
   checkboxTick: { color: '#0E5BF2', fontSize: 12, fontWeight: '700' },
   materialPickupText: { marginLeft: 8, color: '#33415C', fontSize: 14, fontWeight: '500' },
+  materialsCard: {
+    marginTop: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    backgroundColor: '#FAFCFF',
+    padding: 12,
+  },
+  materialsCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  materialsCardTitle: { color: '#1B2A45', fontSize: 16, fontWeight: '700' },
+  materialsClose: { color: '#45536E', fontSize: 24, lineHeight: 24 },
+  materialsFieldLabel: { marginTop: 10, marginBottom: 6, color: '#33415C', fontSize: 13, fontWeight: '600' },
+  materialsInput: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    color: '#1B2A45',
+    backgroundColor: '#fff',
+  },
   footer: {
     position: 'absolute',
     left: 0,
