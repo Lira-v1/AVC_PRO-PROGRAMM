@@ -22,12 +22,16 @@ export class SmetMasterEngine {
       return null;
     }
 
-    const workPrice = Math.round(estimate.base_price * TARIFF_MULTIPLIERS[tariff]);
+    const basePrice = estimate.base_price;
+    const tariffMultiplier = TARIFF_MULTIPLIERS[tariff];
+    const workPrice = Math.round(basePrice * tariffMultiplier);
     const masterVisitFee = workPrice < 10000 ? 2500 : 0;
     const finalPrice = workPrice + masterVisitFee;
 
     return {
       estimate,
+      basePrice,
+      tariffMultiplier,
       workPrice,
       masterVisitFee,
       finalPrice,
