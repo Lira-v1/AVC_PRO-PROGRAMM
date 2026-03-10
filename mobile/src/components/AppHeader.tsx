@@ -23,7 +23,11 @@ export const AppHeader = ({ onMenuPress, title = 'MasterPro', isHome = false }: 
 
   const headerActions = (
     <View style={styles.headerActions}>
-      <Pressable style={styles.headerIcon} accessibilityLabel="Открыть чат">
+      <Pressable
+        style={styles.headerIcon}
+        accessibilityLabel="Открыть чат"
+        onPress={() => navigation.navigate('ChatMaster')}
+      >
         <Text>💬</Text>
       </Pressable>
       <Pressable style={styles.headerIcon} accessibilityLabel="Открыть корзину">
