@@ -9,3 +9,5 @@ export type {
 
 export { chatMasterKnowledgeBase } from './knowledge';
 export { language } from './language';
+
+export * from './resolver';
