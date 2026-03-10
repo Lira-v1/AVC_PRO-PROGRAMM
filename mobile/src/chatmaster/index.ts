@@ -6,3 +6,5 @@ export type {
   ChatMessage,
   ChatRole,
 } from './types/ChatMasterTypes';
+
+export { chatMasterKnowledgeBase } from './knowledge';
