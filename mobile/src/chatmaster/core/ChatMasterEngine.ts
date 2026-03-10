@@ -2,10 +2,22 @@ import { requestSmetMasterEstimate } from '../adapters/smetMasterAdapter';
 import { resolveIntent } from '../intents/intentResolver';
 import { language } from '../language';
 import { WorkRequestResolver } from '../resolver';
+import type { WorkRequestResult } from '../resolver/types';
 import type { ChatMasterResponse } from '../types/ChatMasterTypes';
 
 const UNKNOWN_REPLY = language.systemMessages.unknownRequest;
 const workRequestResolver = new WorkRequestResolver();
+
+const buildResolverDebug = (userMessage: string, resolvedWorkRequest: WorkRequestResult) => ({
+  inputText: userMessage,
+  exactMatch: resolvedWorkRequest.debug?.exactMatch ?? null,
+  fuzzyMatch: resolvedWorkRequest.debug?.fuzzyMatch ?? null,
+  finalSelectedResult: {
+    matchType: resolvedWorkRequest.debug?.matchType ?? 'none',
+    workType: resolvedWorkRequest.workType,
+    confidence: resolvedWorkRequest.confidence,
+  },
+});
 
 export class ChatMasterEngine {
   public static processUserMessage(userMessage: string): ChatMasterResponse {
@@ -23,6 +35,16 @@ export class ChatMasterEngine {
           resolvedIntent,
           resolvedCategory: null,
           resolvedWorkType: null,
+          resolver: {
+            inputText: userMessage,
+            exactMatch: null,
+            fuzzyMatch: null,
+            finalSelectedResult: {
+              matchType: 'none',
+              workType: null,
+              confidence: 0,
+            },
+          },
           smetMasterRequest: null,
           smetMasterResponse: null,
           finalChatReply: UNKNOWN_REPLY,
@@ -32,6 +54,7 @@ export class ChatMasterEngine {
 
     const resolvedWorkRequest = workRequestResolver.resolveRequest(userMessage);
     const adapterResult = requestSmetMasterEstimate(resolvedWorkRequest);
+    const resolverDebug = buildResolverDebug(userMessage, resolvedWorkRequest);
 
     if (!adapterResult.response || !adapterResult.category || !adapterResult.workType) {
       const missingReply = language.clarificationTemplates.notEnoughInfo();
@@ -47,6 +70,7 @@ export class ChatMasterEngine {
           resolvedIntent,
           resolvedCategory: adapterResult.category,
           resolvedWorkType: adapterResult.workType,
+          resolver: resolverDebug,
           smetMasterRequest: adapterResult.request,
           smetMasterResponse: adapterResult.response,
           finalChatReply: missingReply,
@@ -71,6 +95,7 @@ export class ChatMasterEngine {
         resolvedIntent,
         resolvedCategory: adapterResult.category,
         resolvedWorkType: adapterResult.workType,
+        resolver: resolverDebug,
         smetMasterRequest: adapterResult.request,
         smetMasterResponse: adapterResult.response,
         finalChatReply: finalReply,
