@@ -4,6 +4,8 @@ export type {
   ChatMasterDebugTrace,
   ChatMasterResponse,
   ChatMessage,
+  ChatMasterContext,
+  OrderAssistantPayload,
   ChatRole,
 } from './types/ChatMasterTypes';
 

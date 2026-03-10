@@ -1,661 +1,424 @@
-import React, { useMemo, useState } from 'react';
-import { LayoutChangeEvent, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
+import { ChatMasterEngine, type ChatMasterDebugTrace, type ChatMessage, type OrderAssistantPayload } from '../chatmaster';
 import { calculateEstimatePrice, TariffType } from '../services/estimates';
 
-type PickerType = 'category' | 'workType' | 'photoSource' | null;
+type ArrivalOption = 'now' | 'hour' | 'today' | 'scheduled' | null;
 
-type CategoryItem = {
-  id: string;
+type DraftWork = {
+  category: string;
+  workType: string;
   title: string;
-  icon: string;
-  keywords: string[];
+  confirmed: boolean;
 };
 
-type WorkTypeItem = {
-  id: string;
-  title: string;
-  icon: string;
+type OrderDraft = {
+  works: DraftWork[];
+  categorySuggestions: string[];
+  comment: string;
+  needMaterials: boolean;
+  materialsComment: string;
+  arrivalTime: string | null;
+  tariff: TariffType;
+  photos: Array<{ id: string; source: 'camera' | 'gallery' }>;
+  estimatedPrice: number | null;
 };
 
-type ArrivalOption = {
-  id: 'now' | 'hour' | 'today' | 'scheduled';
-  label: string;
+const createMessage = (role: ChatMessage['role'], text: string): ChatMessage => ({
+  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  role,
+  text,
+  createdAt: new Date().toISOString(),
+});
+
+const INITIAL_DRAFT: OrderDraft = {
+  works: [],
+  categorySuggestions: [],
+  comment: '',
+  needMaterials: false,
+  materialsComment: '',
+  arrivalTime: null,
+  tariff: 'economy',
+  photos: [],
+  estimatedPrice: null,
 };
 
-const CATEGORIES: CategoryItem[] = [
-  {
-    id: 'electrician',
-    title: 'Электрик',
-    icon: '💡',
-    keywords: ['электрик', 'розетк', 'автомат', 'свет', 'люстр', 'выключател', 'подключить свет'],
-  },
-  {
-    id: 'plumber',
-    title: 'Сантехник',
-    icon: '🚿',
-    keywords: ['сантехник', 'кран', 'засор', 'смесител', 'теч', 'труба', 'унитаз', 'стиральн'],
-  },
-  {
-    id: 'universal',
-    title: 'Мастер-универсал',
-    icon: '🧰',
-    keywords: ['мелкий ремонт', 'починить', 'прикрутить', 'повесить', 'собрать', 'подклеить'],
-  },
-  { id: 'handyman', title: 'Handyman', icon: '🔧', keywords: ['handyman'] },
-  {
-    id: 'welder',
-    title: 'Сварщик',
-    icon: '🛠️',
-    keywords: ['свар', 'ворота', 'решетк', 'металл', 'навес', 'каркас'],
-  },
-  {
-    id: 'crew',
-    title: 'Бригада',
-    icon: '👷',
-    keywords: ['несколько мастеров', 'бригада', 'большой объем', 'ремонт помещения'],
-  },
-  { id: 'cleaning', title: 'Клининг', icon: '🧼', keywords: ['уборк', 'помыть', 'чистк', 'генеральная уборка'] },
-  {
-    id: 'urgent',
-    title: 'Срочный мастер 24/7',
-    icon: '🚨',
-    keywords: ['срочно', 'авария', 'ночью', 'срочный вызов', 'срочно приехать'],
-  },
-];
+const buildWorkKey = (work: Pick<DraftWork, 'category' | 'workType'>) => `${work.category}:${work.workType}`;
 
-const WORK_TYPES: WorkTypeItem[] = [
-  { id: 'diagnostics', title: 'Диагностика', icon: '🔍' },
-  { id: 'repair', title: 'Ремонт', icon: '🔧' },
-  { id: 'replacement', title: 'Замена', icon: '♻️' },
-  { id: 'installation', title: 'Монтаж', icon: '📦' },
-  { id: 'emergency', title: 'Авария', icon: '⚠️' },
-  { id: 'other', title: 'Другое', icon: '📝' },
-];
+const applyChatSuggestionsToOrderDraft = (draft: OrderDraft, payload: OrderAssistantPayload): OrderDraft => {
+  const nextWorks = [...draft.works];
+  const suggestionKeys = new Set(payload.suggestions.map((item) => `${item.category}:${item.workType}`));
 
-const ARRIVAL_OPTIONS: ArrivalOption[] = [
-  { id: 'now', label: 'Сейчас' },
-  { id: 'hour', label: 'В течение часа' },
-  { id: 'today', label: 'Сегодня' },
-  { id: 'scheduled', label: 'К назначенному времени' },
-];
+  if (payload.action === 'remove') {
+    const filtered = nextWorks.filter((work) => !suggestionKeys.has(buildWorkKey(work)));
 
-const normalize = (value: string) => value.toLowerCase().trim();
-
-const getCategoryScore = (query: string, category: CategoryItem) => {
-  const normalized = normalize(query);
-  if (!normalized) {
-    return 0;
+    return {
+      ...draft,
+      works: filtered,
+      categorySuggestions: Array.from(new Set([...draft.categorySuggestions, ...payload.categorySuggestions])),
+    };
   }
 
-  let score = 0;
+  payload.suggestions.forEach((suggestion) => {
+    const key = `${suggestion.category}:${suggestion.workType}`;
+    const exists = nextWorks.some((work) => buildWorkKey(work) === key);
 
-  if (normalize(category.title).includes(normalized)) {
-    score += 5;
-  }
-
-  category.keywords.forEach((keyword) => {
-    if (normalized.includes(normalize(keyword))) {
-      score += 3;
+    if (!exists) {
+      nextWorks.push({
+        category: suggestion.category,
+        workType: suggestion.workType,
+        title: suggestion.title,
+        confirmed: true,
+      });
     }
   });
 
-  return score;
+  return {
+    ...draft,
+    works: nextWorks,
+    categorySuggestions: Array.from(new Set([...draft.categorySuggestions, ...payload.categorySuggestions])),
+  };
 };
 
+const formatTime = (dateString: string) => new Date(dateString).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
 export const ServicesScreen = () => {
-  const [activePicker, setActivePicker] = useState<PickerType>(null);
-  const [categoryQuery, setCategoryQuery] = useState('');
-  const [workTypeQuery, setWorkTypeQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<CategoryItem | null>(null);
-  const [selectedWorkType, setSelectedWorkType] = useState<WorkTypeItem | null>(null);
-  const [arrivalOption, setArrivalOption] = useState<ArrivalOption['id'] | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    createMessage('assistant', 'Опишите задачу, и я помогу собрать заявку. Например: «нужно поменять розетку и смеситель».')
+  ]);
+  const [input, setInput] = useState('');
+  const [pendingSuggestions, setPendingSuggestions] = useState<OrderAssistantPayload | null>(null);
+  const [orderDraft, setOrderDraft] = useState<OrderDraft>(INITIAL_DRAFT);
+  const [arrivalOption, setArrivalOption] = useState<ArrivalOption>(null);
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
-  const [comment, setComment] = useState('');
-  const [photos, setPhotos] = useState<Array<{ id: string; source: 'camera' | 'gallery' }>>([]);
-  const [needMaterialPickup, setNeedMaterialPickup] = useState(false);
-  const [materialsList, setMaterialsList] = useState('');
-  const [materialsComment, setMaterialsComment] = useState('');
-  const [materialsBudget, setMaterialsBudget] = useState('');
-  const [footerHeight, setFooterHeight] = useState(0);
-  const [selectedTariff, setSelectedTariff] = useState<TariffType>('economy');
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [debugHistory, setDebugHistory] = useState<ChatMasterDebugTrace[]>([]);
+  const scrollRef = useRef<ScrollView | null>(null);
 
-  const categorySuggestions = useMemo(() => {
-    const withScore = CATEGORIES.map((category) => ({
-      category,
-      score: getCategoryScore(categoryQuery, category),
-    }));
+  const canSend = useMemo(() => input.trim().length > 0, [input]);
 
-    return withScore
-      .filter((entry) => !categoryQuery || entry.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((entry) => entry.category);
-  }, [categoryQuery]);
-
-  const primaryCategorySuggestion = categorySuggestions[0] ?? null;
-
-  const workTypeSuggestions = useMemo(() => {
-    const query = normalize(workTypeQuery);
-    if (!query) {
-      return WORK_TYPES;
-    }
-
-    return WORK_TYPES.filter((item) => normalize(item.title).includes(query));
-  }, [workTypeQuery]);
-
-  const pricing = useMemo(() => {
-    if (!selectedCategory || !selectedWorkType) {
+  const estimatedPrice = useMemo(() => {
+    if (orderDraft.works.length === 0) {
       return null;
     }
 
-    return calculateEstimatePrice({
-      category: selectedCategory.id,
-      workType: selectedWorkType.id,
-      tariff: selectedTariff,
-    });
-  }, [selectedCategory, selectedWorkType, selectedTariff]);
+    return orderDraft.works.reduce((sum, work) => {
+      const estimate = calculateEstimatePrice({ category: work.category, workType: work.workType, tariff: orderDraft.tariff });
+      return sum + (estimate?.finalPrice ?? 0);
+    }, 0);
+  }, [orderDraft.tariff, orderDraft.works]);
 
-  const orderMaterialsPayload = useMemo(
-    () => ({
-      need_material_pickup: needMaterialPickup,
-      materials_list: materialsList,
-      materials_comment: materialsComment,
-      materials_budget: materialsBudget,
-    }),
-    [needMaterialPickup, materialsList, materialsComment, materialsBudget]
-  );
-
-  const onSelectCategory = (item: CategoryItem) => {
-    setSelectedCategory(item);
-    if (categoryQuery && !comment) {
-      setComment(categoryQuery);
-    }
-    setActivePicker(null);
-  };
-
-  const onSelectWorkType = (item: WorkTypeItem) => {
-    setSelectedWorkType(item);
-    setActivePicker(null);
-  };
-
-  const addPhoto = (source: 'camera' | 'gallery') => {
-    if (photos.length >= 3) {
+  const onSend = () => {
+    const userText = input.trim();
+    if (!userText) {
       return;
     }
 
-    setPhotos((prev) => [...prev, { id: `${source}-${Date.now()}`, source }]);
-    setActivePicker(null);
+    const userMessage = createMessage('user', userText);
+    const response = ChatMasterEngine.processUserMessage(userText, { context: 'order_assistant' });
+    const assistantMessage = createMessage('assistant', response.reply);
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setPendingSuggestions(response.orderAssistantPayload);
+    setDebugHistory((prev) => [...prev, response.debug]);
+    setInput('');
+
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   };
 
-  const onToggleNeedMaterials = () => {
-    setNeedMaterialPickup((prev) => !prev);
+  const onConfirmSuggestions = (confirmed: boolean) => {
+    if (!pendingSuggestions) {
+      return;
+    }
+
+    if (confirmed) {
+      setOrderDraft((prev) => applyChatSuggestionsToOrderDraft(prev, pendingSuggestions));
+      setMessages((prev) => [...prev, createMessage('assistant', 'Отлично, добавил в черновик. Когда нужен мастер? Нужны материалы?')]);
+    } else {
+      setMessages((prev) => [...prev, createMessage('assistant', 'Понял. Уточните, пожалуйста, какие работы оставить или добавить.')]);
+    }
+
+    setPendingSuggestions(null);
   };
 
-  const onCloseMaterialsCard = () => {
-    setNeedMaterialPickup(false);
+  const updateWorkTitle = (index: number, title: string) => {
+    setOrderDraft((prev) => ({
+      ...prev,
+      works: prev.works.map((work, workIndex) => (workIndex === index ? { ...work, title } : work)),
+    }));
   };
 
-  const onFooterLayout = (event: LayoutChangeEvent) => {
-    setFooterHeight(event.nativeEvent.layout.height);
+  const removeWork = (index: number) => {
+    setOrderDraft((prev) => ({
+      ...prev,
+      works: prev.works.filter((_, workIndex) => workIndex !== index),
+    }));
+  };
+
+  const addPhoto = (source: 'camera' | 'gallery') => {
+    if (orderDraft.photos.length >= 3) {
+      return;
+    }
+
+    setOrderDraft((prev) => ({
+      ...prev,
+      photos: [...prev.photos, { id: `${source}-${Date.now()}`, source }],
+    }));
   };
 
   return (
     <View style={styles.root}>
-      <AppHeader title="Вызвать мастера" />
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: footerHeight + 20 }]}>
-        <View style={styles.formCard}>
-          <Text style={styles.blockTitle}>Категория</Text>
-          <Pressable style={styles.field} onPress={() => setActivePicker('category')}>
-            <Text style={selectedCategory ? styles.fieldValue : styles.fieldPlaceholder}>
-              {selectedCategory?.title ?? 'Выбрать категорию'}
-            </Text>
-          </Pressable>
+      <AppHeader title="Создать заказ" />
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
+        <View style={styles.chatCard}>
+          <Text style={styles.cardTitle}>ChatMaster</Text>
+          {messages.map((message) => (
+            <View key={message.id} style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
+              <Text style={styles.messageText}>{message.text}</Text>
+              <Text style={styles.messageTime}>{formatTime(message.createdAt)}</Text>
+            </View>
+          ))}
 
-          <Text style={styles.blockTitle}>Вид работ</Text>
-          <Pressable style={styles.field} onPress={() => setActivePicker('workType')}>
-            <Text style={selectedWorkType ? styles.fieldValue : styles.fieldPlaceholder}>
-              {selectedWorkType?.title ?? 'Выбрать вид работ'}
-            </Text>
-          </Pressable>
+          {pendingSuggestions ? (
+            <View style={styles.quickActions}>
+              <Pressable style={[styles.quickButton, styles.quickButtonPrimary]} onPress={() => onConfirmSuggestions(true)}>
+                <Text style={styles.quickButtonPrimaryText}>Да</Text>
+              </Pressable>
+              <Pressable style={styles.quickButton} onPress={() => onConfirmSuggestions(false)}>
+                <Text style={styles.quickButtonText}>Нет</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
-          <Text style={styles.blockTitle}>Фото проблемы</Text>
-          <Pressable style={styles.field} onPress={() => setActivePicker('photoSource')}>
-            <Text style={styles.fieldValue}>Добавить фото</Text>
-          </Pressable>
-          <View style={styles.photoRow}>
-            {photos.map((photo) => (
-              <View key={photo.id} style={styles.photoPreview}>
-                <Text style={styles.photoIcon}>{photo.source === 'camera' ? '📷' : '🖼️'}</Text>
-                <Text style={styles.photoLabel}>{photo.source === 'camera' ? 'Камера' : 'Галерея'}</Text>
-              </View>
-            ))}
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.input}
+              value={input}
+              onChangeText={setInput}
+              placeholder="Напишите задачу..."
+              placeholderTextColor="#8A94A6"
+              multiline
+            />
+            <Pressable style={[styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={onSend} disabled={!canSend}>
+              <Text style={styles.sendText}>Отправить</Text>
+            </Pressable>
           </View>
+        </View>
+
+        <View style={styles.formCard}>
+          <Text style={styles.cardTitle}>Черновик заказа</Text>
+
+          <Text style={styles.blockTitle}>Работы</Text>
+          {orderDraft.works.length === 0 ? <Text style={styles.placeholderText}>Работы пока не добавлены.</Text> : null}
+          {orderDraft.works.map((work, index) => (
+            <View key={`${work.category}-${work.workType}-${index}`} style={styles.workRow}>
+              <View style={styles.workMeta}>
+                <Text style={styles.workCategory}>{work.category}</Text>
+                <Text style={styles.workType}>{work.workType}</Text>
+              </View>
+              <TextInput value={work.title} onChangeText={(value) => updateWorkTitle(index, value)} style={styles.workInput} />
+              <Pressable onPress={() => removeWork(index)}>
+                <Text style={styles.removeText}>Удалить</Text>
+              </Pressable>
+            </View>
+          ))}
+
+          <Text style={styles.blockTitle}>Комментарий</Text>
+          <TextInput
+            style={styles.fieldInput}
+            value={orderDraft.comment}
+            onChangeText={(value) => setOrderDraft((prev) => ({ ...prev, comment: value }))}
+            placeholder="Дополнительные детали"
+            placeholderTextColor="#91A0BB"
+          />
 
           <Text style={styles.blockTitle}>Когда нужен мастер</Text>
-          <View style={styles.arrivalOptions}>
-            {ARRIVAL_OPTIONS.map((option) => {
-              const isActive = arrivalOption === option.id;
+          <View style={styles.rowWrap}>
+            {[
+              { id: 'now', label: 'Сейчас' },
+              { id: 'hour', label: 'В течение часа' },
+              { id: 'today', label: 'Сегодня' },
+              { id: 'scheduled', label: 'К назначенному времени' },
+            ].map((item) => {
+              const active = arrivalOption === item.id;
               return (
-                <Pressable
-                  key={option.id}
-                  style={[styles.arrivalButton, isActive && styles.arrivalButtonActive]}
-                  onPress={() => setArrivalOption(option.id)}
-                >
-                  <Text style={[styles.arrivalButtonText, isActive && styles.arrivalButtonTextActive]}>{option.label}</Text>
+                <Pressable key={item.id} style={[styles.chip, active && styles.chipActive]} onPress={() => setArrivalOption(item.id as ArrivalOption)}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{item.label}</Text>
                 </Pressable>
               );
             })}
           </View>
 
           {arrivalOption === 'scheduled' ? (
-            <View style={styles.scheduledRow}>
-              <TextInput
-                value={scheduledDate}
-                onChangeText={setScheduledDate}
-                placeholder="Дата (дд.мм.гггг)"
-                style={styles.scheduledInput}
-                placeholderTextColor="#91A0BB"
-              />
-              <TextInput
-                value={scheduledTime}
-                onChangeText={setScheduledTime}
-                placeholder="Время (чч:мм)"
-                style={styles.scheduledInput}
-                placeholderTextColor="#91A0BB"
-              />
+            <View style={styles.rowWrap}>
+              <TextInput style={styles.halfInput} value={scheduledDate} onChangeText={setScheduledDate} placeholder="Дата" placeholderTextColor="#91A0BB" />
+              <TextInput style={styles.halfInput} value={scheduledTime} onChangeText={setScheduledTime} placeholder="Время" placeholderTextColor="#91A0BB" />
             </View>
           ) : null}
 
-          <Text style={styles.blockTitle}>Опишите проблему</Text>
-          <TextInput
-            value={comment}
-            onChangeText={setComment}
-            multiline
-            style={styles.commentInput}
-            placeholder="Например: течёт кран, нет света, нужно подключить стиральную машину."
-            placeholderTextColor="#91A0BB"
-          />
-
-          <Pressable style={styles.materialPickupRow} onPress={onToggleNeedMaterials}>
-            <View style={[styles.checkbox, orderMaterialsPayload.need_material_pickup && styles.checkboxActive]}>
-              {orderMaterialsPayload.need_material_pickup ? <Text style={styles.checkboxTick}>✓</Text> : null}
-            </View>
-            <Text style={styles.materialPickupText}>Необходимо заехать за материалами</Text>
+          <Text style={styles.blockTitle}>Материалы</Text>
+          <Pressable
+            style={styles.toggleRow}
+            onPress={() => setOrderDraft((prev) => ({ ...prev, needMaterials: !prev.needMaterials }))}
+          >
+            <View style={[styles.checkbox, orderDraft.needMaterials && styles.checkboxActive]}>{orderDraft.needMaterials ? <Text>✓</Text> : null}</View>
+            <Text>Нужно закупить материалы</Text>
           </Pressable>
-
-          {orderMaterialsPayload.need_material_pickup ? (
-            <View style={styles.materialsCard}>
-              <View style={styles.materialsCardHeader}>
-                <Text style={styles.materialsCardTitle}>Материалы</Text>
-                <Pressable onPress={onCloseMaterialsCard} hitSlop={10}>
-                  <Text style={styles.materialsClose}>×</Text>
-                </Pressable>
-              </View>
-
-              <Text style={styles.materialsFieldLabel}>Что нужно купить</Text>
-              <TextInput
-                value={materialsList}
-                onChangeText={setMaterialsList}
-                style={styles.materialsInput}
-                placeholder="Например: розетка 2 шт, автомат 16А"
-                placeholderTextColor="#91A0BB"
-              />
-
-              <Text style={styles.materialsFieldLabel}>Комментарий</Text>
-              <TextInput
-                value={materialsComment}
-                onChangeText={setMaterialsComment}
-                style={styles.materialsInput}
-                placeholder="Например: среднее качество"
-                placeholderTextColor="#91A0BB"
-              />
-
-              <Text style={styles.materialsFieldLabel}>Примерный бюджет</Text>
-              <TextInput
-                value={materialsBudget}
-                onChangeText={setMaterialsBudget}
-                style={styles.materialsInput}
-                placeholder="Например: до 10000 KZT"
-                placeholderTextColor="#91A0BB"
-              />
-            </View>
+          {orderDraft.needMaterials ? (
+            <TextInput
+              style={styles.fieldInput}
+              value={orderDraft.materialsComment}
+              onChangeText={(value) => setOrderDraft((prev) => ({ ...prev, materialsComment: value }))}
+              placeholder="Какие материалы нужны"
+              placeholderTextColor="#91A0BB"
+            />
           ) : null}
-        </View>
-      </ScrollView>
 
-      <View style={styles.footer} onLayout={onFooterLayout}>
-        <Text style={styles.footerBlockTitle}>Тариф</Text>
-        <View style={styles.tariffRow}>
-          {[
-            { id: 'economy', label: 'Эконом' },
-            { id: 'comfort', label: 'Комфорт' },
-            { id: 'business', label: 'Бизнес' },
-          ].map((tariff) => {
-            const isActive = selectedTariff === tariff.id;
-            return (
-              <Pressable
-                key={tariff.id}
-                style={[styles.tariffButton, isActive && styles.tariffButtonActive]}
-                onPress={() => setSelectedTariff(tariff.id as TariffType)}
-              >
-                <Text style={[styles.tariffButtonText, isActive && styles.tariffButtonTextActive]}>{tariff.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <Text style={styles.footerBlockTitle}>Цена</Text>
-        {pricing ? (
-          <View style={styles.priceCard}>
-            <View style={styles.priceRow}>
-              <Text style={styles.priceLabel}>Работа</Text>
-              <Text style={styles.priceValue}>{pricing.workPrice} KZT</Text>
-            </View>
-            <View style={styles.priceRow}>
-              <Text style={styles.priceLabel}>Выезд мастера</Text>
-              <Text style={styles.priceValue}>{pricing.masterVisitFee > 0 ? `${pricing.masterVisitFee} KZT` : 'включён'}</Text>
-            </View>
-            <View style={[styles.priceRow, styles.priceTotalRow]}>
-              <Text style={styles.priceTotalLabel}>Итого</Text>
-              <Text style={styles.priceTotalValue}>{pricing.finalPrice} KZT</Text>
-            </View>
+          <Text style={styles.blockTitle}>Фото</Text>
+          <View style={styles.rowWrap}>
+            <Pressable style={styles.chip} onPress={() => addPhoto('camera')}>
+              <Text style={styles.chipText}>Камера</Text>
+            </Pressable>
+            <Pressable style={styles.chip} onPress={() => addPhoto('gallery')}>
+              <Text style={styles.chipText}>Галерея</Text>
+            </Pressable>
           </View>
-        ) : (
-          <View style={styles.priceCard}>
-            <Text style={styles.priceUnknown}>Цена уточняется</Text>
-          </View>
-        )}
+          <Text style={styles.placeholderText}>Добавлено фото: {orderDraft.photos.length}/3</Text>
 
-        <Pressable style={styles.submitButton}>
-          <Text style={styles.submitButtonText}>Создать заказ</Text>
+          <Text style={styles.blockTitle}>Тариф</Text>
+          <View style={styles.rowWrap}>
+            {(['economy', 'comfort', 'business'] as TariffType[]).map((tariff) => {
+              const active = orderDraft.tariff === tariff;
+              return (
+                <Pressable key={tariff} style={[styles.chip, active && styles.chipActive]} onPress={() => setOrderDraft((prev) => ({ ...prev, tariff }))}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{tariff}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.blockTitle}>Предварительная цена</Text>
+          <Text style={styles.priceText}>{estimatedPrice ? `${estimatedPrice} KZT` : 'Цена уточняется'}</Text>
+
+          <Pressable style={styles.submitButton}>
+            <Text style={styles.submitButtonText}>Создать заказ</Text>
+          </Pressable>
+        </View>
+
+        <Pressable style={[styles.devToggle, developerMode && styles.devToggleActive]} onPress={() => setDeveloperMode((value) => !value)}>
+          <Text style={styles.devToggleText}>{developerMode ? 'Developer mode: ВКЛ' : 'Developer mode: ВЫКЛ'}</Text>
         </Pressable>
-      </View>
 
-      <Modal transparent visible={activePicker !== null} animationType="slide" onRequestClose={() => setActivePicker(null)}>
-        <View style={styles.sheetOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setActivePicker(null)} />
-          <View style={styles.sheetContainer}>
-            {activePicker === 'category' ? (
-              <>
-                <Text style={styles.sheetTitle}>Категория</Text>
-                <TextInput
-                  value={categoryQuery}
-                  onChangeText={setCategoryQuery}
-                  style={styles.sheetSearchInput}
-                  placeholder="Опишите проблему или выберите категорию"
-                  placeholderTextColor="#91A0BB"
-                />
-                {categoryQuery && primaryCategorySuggestion ? (
-                  <Pressable style={styles.primarySuggestion} onPress={() => onSelectCategory(primaryCategorySuggestion)}>
-                    <Text style={styles.primarySuggestionLabel}>Подходит лучше всего</Text>
-                    <Text style={styles.primarySuggestionText}>
-                      {primaryCategorySuggestion.icon} {primaryCategorySuggestion.title}
-                    </Text>
-                  </Pressable>
-                ) : null}
-                <ScrollView style={styles.sheetList}>
-                  {(categorySuggestions.length > 0 ? categorySuggestions : CATEGORIES).map((item) => (
-                    <Pressable key={item.id} style={styles.sheetItem} onPress={() => onSelectCategory(item)}>
-                      <Text style={styles.sheetItemIcon}>{item.icon}</Text>
-                      <Text style={styles.sheetItemText}>{item.title}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </>
-            ) : null}
-
-            {activePicker === 'workType' ? (
-              <>
-                <Text style={styles.sheetTitle}>Вид работ</Text>
-                <TextInput
-                  value={workTypeQuery}
-                  onChangeText={setWorkTypeQuery}
-                  style={styles.sheetSearchInput}
-                  placeholder="Поиск по видам работ"
-                  placeholderTextColor="#91A0BB"
-                />
-                <ScrollView style={styles.sheetList}>
-                  {workTypeSuggestions.map((item) => (
-                    <Pressable key={item.id} style={styles.sheetItem} onPress={() => onSelectWorkType(item)}>
-                      <Text style={styles.sheetItemIcon}>{item.icon}</Text>
-                      <Text style={styles.sheetItemText}>{item.title}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </>
-            ) : null}
-
-            {activePicker === 'photoSource' ? (
-              <>
-                <Text style={styles.sheetTitle}>Добавить фото</Text>
-                <Pressable style={styles.sheetItem} onPress={() => addPhoto('camera')}>
-                  <Text style={styles.sheetItemIcon}>📷</Text>
-                  <Text style={styles.sheetItemText}>Камера</Text>
-                </Pressable>
-                <Pressable style={styles.sheetItem} onPress={() => addPhoto('gallery')}>
-                  <Text style={styles.sheetItemIcon}>🖼️</Text>
-                  <Text style={styles.sheetItemText}>Галерея</Text>
-                </Pressable>
-                <Text style={styles.sheetHint}>Можно прикрепить до 3 фото.</Text>
-              </>
-            ) : null}
+        {developerMode ? (
+          <View style={styles.devPanel}>
+            <Text style={styles.devPanelTitle}>Отладка order_assistant</Text>
+            <Text style={styles.devLine}>categorySuggestions: {JSON.stringify(orderDraft.categorySuggestions)}</Text>
+            <Text style={styles.devLine}>pendingSuggestions: {JSON.stringify(pendingSuggestions)}</Text>
+            {debugHistory.slice(-3).map((trace, index) => (
+              <Text key={`${trace.userMessage}-${index}`} style={styles.devLine}>
+                {index + 1}. {trace.userMessage} → {trace.resolvedCategory ?? 'unknown'} / {trace.resolvedWorkType ?? 'unknown'}
+              </Text>
+            ))}
           </View>
-        </View>
-      </Modal>
-
+        ) : null}
+      </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F3F5FA' },
-  scrollContent: { padding: 14 },
-  formCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14 },
-  blockTitle: { marginTop: 14, marginBottom: 8, color: '#1b263b', fontSize: 15, fontWeight: '700' },
-  field: {
-    minHeight: 52,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    backgroundColor: '#FAFCFF',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  fieldValue: { color: '#1B2A45', fontSize: 15, fontWeight: '500' },
-  fieldPlaceholder: { color: '#91A0BB', fontSize: 15 },
-  photoRow: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
-  photoPreview: {
-    width: 88,
-    height: 88,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F6F9FF',
-  },
-  photoIcon: { fontSize: 22 },
-  photoLabel: { marginTop: 4, fontSize: 11, color: '#45536E' },
-  arrivalOptions: { marginTop: 4, gap: 8 },
-  arrivalButton: {
-    minHeight: 44,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    backgroundColor: '#fff',
-  },
-  arrivalButtonActive: { backgroundColor: '#EEF3FF', borderColor: '#0E5BF2' },
-  arrivalButtonText: { color: '#33415C', fontSize: 14, fontWeight: '500' },
-  arrivalButtonTextActive: { color: '#0E5BF2', fontWeight: '700' },
-  scheduledRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  scheduledInput: {
+  content: { padding: 14, gap: 12, paddingBottom: 30 },
+  chatCard: { backgroundColor: '#fff', borderRadius: 12, padding: 12, gap: 8 },
+  formCard: { backgroundColor: '#fff', borderRadius: 12, padding: 12 },
+  cardTitle: { fontSize: 18, fontWeight: '700', color: '#1B2A45' },
+  messageBubble: { borderRadius: 10, padding: 10, maxWidth: '90%' },
+  assistantBubble: { backgroundColor: '#F5F8FF', alignSelf: 'flex-start' },
+  userBubble: { backgroundColor: '#DCE9FF', alignSelf: 'flex-end' },
+  messageText: { color: '#1B2A45', fontSize: 14 },
+  messageTime: { marginTop: 4, fontSize: 11, color: '#74819A' },
+  quickActions: { flexDirection: 'row', gap: 8 },
+  quickButton: { borderWidth: 1, borderColor: '#C7D4EC', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  quickButtonPrimary: { backgroundColor: '#0E5BF2', borderColor: '#0E5BF2' },
+  quickButtonText: { color: '#33415C', fontWeight: '600' },
+  quickButtonPrimaryText: { color: '#fff', fontWeight: '700' },
+  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end' },
+  input: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    borderRadius: 10,
-    paddingHorizontal: 12,
     minHeight: 44,
-    color: '#1B2A45',
-    backgroundColor: '#FAFCFF',
-  },
-  commentInput: {
+    maxHeight: 120,
     borderWidth: 1,
     borderColor: '#DCE3F2',
     borderRadius: 10,
-    minHeight: 110,
-    textAlignVertical: 'top',
     paddingHorizontal: 12,
-    paddingTop: 12,
+    paddingVertical: 10,
     color: '#1B2A45',
     backgroundColor: '#FAFCFF',
   },
-  materialPickupRow: { marginTop: 12, flexDirection: 'row', alignItems: 'center' },
+  sendButton: { backgroundColor: '#0E5BF2', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12 },
+  sendButtonDisabled: { opacity: 0.5 },
+  sendText: { color: '#fff', fontWeight: '700' },
+  blockTitle: { marginTop: 12, marginBottom: 8, fontSize: 15, fontWeight: '700', color: '#1B2A45' },
+  placeholderText: { color: '#74819A' },
+  workRow: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 10, padding: 10, marginBottom: 8, gap: 6 },
+  workMeta: { flexDirection: 'row', justifyContent: 'space-between' },
+  workCategory: { color: '#1B2A45', fontWeight: '700', textTransform: 'capitalize' },
+  workType: { color: '#61708D' },
+  workInput: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 8, paddingHorizontal: 10, minHeight: 38, color: '#1B2A45' },
+  removeText: { color: '#C63E3E', fontWeight: '600' },
+  fieldInput: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    color: '#1B2A45',
+    backgroundColor: '#FAFCFF',
+  },
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#fff' },
+  chipActive: { borderColor: '#0E5BF2', backgroundColor: '#EEF3FF' },
+  chipText: { color: '#45536E', fontWeight: '600' },
+  chipTextActive: { color: '#0E5BF2' },
+  halfInput: {
+    flex: 1,
+    minWidth: 120,
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    color: '#1B2A45',
+    backgroundColor: '#FAFCFF',
+  },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checkbox: {
     width: 20,
     height: 20,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#DCE3F2',
+    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
   },
-  checkboxActive: { borderColor: '#0E5BF2', backgroundColor: '#EEF3FF' },
-  checkboxTick: { color: '#0E5BF2', fontSize: 12, fontWeight: '700' },
-  materialPickupText: { marginLeft: 8, color: '#33415C', fontSize: 14, fontWeight: '500' },
-  materialsCard: {
-    marginTop: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    backgroundColor: '#FAFCFF',
-    padding: 12,
-  },
-  materialsCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  materialsCardTitle: { color: '#1B2A45', fontSize: 16, fontWeight: '700' },
-  materialsClose: { color: '#45536E', fontSize: 24, lineHeight: 24 },
-  materialsFieldLabel: { marginTop: 10, marginBottom: 6, color: '#33415C', fontSize: 13, fontWeight: '600' },
-  materialsInput: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    color: '#1B2A45',
-    backgroundColor: '#fff',
-  },
-  footer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopWidth: 1,
-    borderTopColor: '#E1E7F2',
-    backgroundColor: '#fff',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  footerBlockTitle: { color: '#1B2A45', fontSize: 14, fontWeight: '700', marginBottom: 8 },
-  tariffRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  tariffButton: {
-    flex: 1,
-    minHeight: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  tariffButtonActive: { borderColor: '#0E5BF2', backgroundColor: '#EEF3FF' },
-  tariffButtonText: { color: '#45536E', fontSize: 13, fontWeight: '600' },
-  tariffButtonTextActive: { color: '#0E5BF2' },
-  priceCard: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E1E7F2',
-    backgroundColor: '#FAFCFF',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 10,
-    gap: 5,
-  },
-  priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  priceLabel: { color: '#45536E', fontSize: 13 },
-  priceValue: { color: '#1B2A45', fontSize: 13, fontWeight: '600' },
-  priceTotalRow: { paddingTop: 4, borderTopWidth: 1, borderTopColor: '#E1E7F2', marginTop: 2 },
-  priceTotalLabel: { color: '#1B2A45', fontSize: 14, fontWeight: '700' },
-  priceTotalValue: { color: '#1B2A45', fontSize: 14, fontWeight: '700' },
-  priceUnknown: { color: '#6A7895', fontSize: 14, textAlign: 'center' },
+  checkboxActive: { backgroundColor: '#EEF3FF', borderColor: '#0E5BF2' },
+  priceText: { color: '#1B2A45', fontSize: 18, fontWeight: '700' },
   submitButton: {
+    marginTop: 14,
     minHeight: 52,
     borderRadius: 12,
-    backgroundColor: '#0E5BF2',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#0E5BF2',
   },
   submitButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  sheetOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
-  },
-  sheetContainer: {
-    maxHeight: '80%',
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 20,
-  },
-  sheetTitle: { fontSize: 18, fontWeight: '700', color: '#111C30', marginBottom: 10 },
-  sheetSearchInput: {
-    minHeight: 48,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    color: '#1B2A45',
-    backgroundColor: '#FAFCFF',
-    marginBottom: 10,
-  },
-  primarySuggestion: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#BFD2FF',
-    backgroundColor: '#EEF3FF',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 10,
-  },
-  primarySuggestionLabel: { fontSize: 12, color: '#3A5CA8', marginBottom: 3 },
-  primarySuggestionText: { fontSize: 15, color: '#10316B', fontWeight: '700' },
-  sheetList: { maxHeight: 380 },
-  sheetItem: {
-    minHeight: 56,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E4EAF6',
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    backgroundColor: '#fff',
-  },
-  sheetItemIcon: { fontSize: 20, marginRight: 10 },
-  sheetItemText: { fontSize: 15, color: '#1B2A45', fontWeight: '500' },
-  sheetHint: { marginTop: 4, color: '#6A7895', fontSize: 13 },
-  sheetDoneButton: {
-    minHeight: 44,
-    borderRadius: 10,
-    backgroundColor: '#0E5BF2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-  },
-  sheetDoneButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  devToggle: { backgroundColor: '#D9E6FF', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  devToggleActive: { backgroundColor: '#B9D0FF' },
+  devToggleText: { color: '#15305E', fontWeight: '600' },
+  devPanel: { backgroundColor: '#0F172A', borderRadius: 12, padding: 10, gap: 6 },
+  devPanelTitle: { color: '#DDE7FF', fontWeight: '700' },
+  devLine: { color: '#DDE7FF', fontSize: 12 },
 });
