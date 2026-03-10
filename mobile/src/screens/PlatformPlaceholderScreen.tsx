@@ -9,7 +9,8 @@ export const PlatformPlaceholderScreen = ({ route }: { route: { params: { title:
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [expandedEstimates, setExpandedEstimates] = useState<Record<string, boolean>>({});
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedEstimateId, setSelectedEstimateId] = useState<string | null>(null);
 
   const smetmasterReady = useMemo(() => {
     if (route.params.title !== 'Сметмастер') {
@@ -65,15 +66,12 @@ export const PlatformPlaceholderScreen = ({ route }: { route: { params: { title:
     setPasswordVisible(false);
     setPassword('');
     setError('');
-    setExpandedEstimates({});
+    setSelectedCategory(null);
+    setSelectedEstimateId(null);
   };
 
-  const toggleEstimate = (estimateId: string) => {
-    setExpandedEstimates((prevState) => ({
-      ...prevState,
-      [estimateId]: !prevState[estimateId],
-    }));
-  };
+  const selectedCategoryEstimates = selectedCategory ? estimatesByCategory[selectedCategory] ?? [] : [];
+  const selectedEstimate = selectedCategoryEstimates.find((estimate) => estimate.estimate_id === selectedEstimateId) ?? null;
 
   const renderDefaultState = () => (
     <View style={styles.centeredBlock}>
@@ -124,38 +122,77 @@ export const PlatformPlaceholderScreen = ({ route }: { route: { params: { title:
         <Text style={styles.statsLine}>Операций: {operationsCount}</Text>
       </View>
 
-      {Object.entries(estimatesByCategory).map(([category, estimates]) => (
-        <View key={category} style={styles.categoryBlock}>
-          <Text style={styles.categoryTitle}>Категория: {category}</Text>
-          {estimates.map((estimate) => {
-            const expanded = Boolean(expandedEstimates[estimate.estimate_id]);
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Категории</Text>
+        {Object.keys(estimatesByCategory).map((category) => (
+          <Pressable
+            key={category}
+            style={[styles.listButton, selectedCategory === category ? styles.listButtonActive : null]}
+            onPress={() => {
+              setSelectedCategory(category);
+              setSelectedEstimateId(null);
+            }}
+          >
+            <Text style={[styles.listButtonLabel, selectedCategory === category ? styles.listButtonLabelActive : null]}>
+              {category}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
 
-            return (
-              <View key={estimate.estimate_id} style={styles.estimateCard}>
-                <Text style={styles.estimateLine}>work_type: {estimate.work_type}</Text>
-                <Text style={styles.estimateLine}>title: {estimate.title}</Text>
-                <Text style={styles.estimateLine}>base_price: {estimate.base_price}</Text>
+      {selectedCategory ? (
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Сметы: {selectedCategory}</Text>
+            <Pressable
+              style={styles.backButton}
+              onPress={() => {
+                setSelectedCategory(null);
+                setSelectedEstimateId(null);
+              }}
+            >
+              <Text style={styles.backButtonLabel}>← К категориям</Text>
+            </Pressable>
+          </View>
 
-                <Pressable style={styles.secondaryButton} onPress={() => toggleEstimate(estimate.estimate_id)}>
-                  <Text style={styles.secondaryButtonLabel}>
-                    {expanded ? 'Скрыть операции' : 'Показать операции'}
-                  </Text>
-                </Pressable>
-
-                {expanded ? (
-                  <View style={styles.itemsBlock}>
-                    {estimate.items.map((item, index) => (
-                      <Text key={`${estimate.estimate_id}-${item.name}-${index}`} style={styles.itemLine}>
-                        - {item.name} | {item.unit} | {item.price} x {item.quantity}
-                      </Text>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
+          {selectedCategoryEstimates.map((estimate) => (
+            <Pressable
+              key={estimate.estimate_id}
+              style={[styles.compactEstimateRow, selectedEstimateId === estimate.estimate_id ? styles.compactEstimateRowActive : null]}
+              onPress={() => setSelectedEstimateId(estimate.estimate_id)}
+            >
+              <Text style={styles.compactEstimateText}>{estimate.work_type}</Text>
+              <Text style={styles.compactEstimatePrice}>{estimate.base_price} KZT</Text>
+            </Pressable>
+          ))}
         </View>
-      ))}
+      ) : null}
+
+      {selectedEstimate ? (
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Подробная смета</Text>
+            <Pressable style={styles.backButton} onPress={() => setSelectedEstimateId(null)}>
+              <Text style={styles.backButtonLabel}>← К списку смет</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.estimateCard}>
+            <Text style={styles.estimateLine}>title: {selectedEstimate.title}</Text>
+            <Text style={styles.estimateLine}>work_type: {selectedEstimate.work_type}</Text>
+            <Text style={styles.estimateLine}>base_price: {selectedEstimate.base_price}</Text>
+
+            <View style={styles.itemsBlock}>
+              <Text style={styles.itemsTitle}>items:</Text>
+              {selectedEstimate.items.map((item, index) => (
+                <Text key={`${selectedEstimate.estimate_id}-${item.name}-${index}`} style={styles.itemLine}>
+                  {item.name} | {item.unit} | {item.price} x {item.quantity}
+                </Text>
+              ))}
+            </View>
+          </View>
+        </View>
+      ) : null}
 
       <Pressable style={styles.exitButton} onPress={handleExitDeveloperMode}>
         <Text style={styles.exitButtonLabel}>Выйти из режима разработчика</Text>
@@ -276,15 +313,6 @@ const styles = StyleSheet.create({
     color: '#1D2942',
     marginBottom: 4,
   },
-  categoryBlock: {
-    marginTop: 6,
-  },
-  categoryTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1A2540',
-    marginBottom: 8,
-  },
   estimateCard: {
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
@@ -308,6 +336,88 @@ const styles = StyleSheet.create({
   itemLine: {
     fontSize: 13,
     color: '#3D4B6B',
+  },
+  itemsTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#24324F',
+  },
+  sectionCard: {
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DFE5F2',
+    padding: 12,
+    gap: 8,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A2540',
+  },
+  listButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D8E1F0',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FBFF',
+  },
+  listButtonActive: {
+    borderColor: '#0E5BF2',
+    backgroundColor: '#E9F0FF',
+  },
+  listButtonLabel: {
+    fontSize: 14,
+    color: '#2B3652',
+    fontWeight: '600',
+  },
+  listButtonLabelActive: {
+    color: '#0E5BF2',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  backButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#EFF4FF',
+  },
+  backButtonLabel: {
+    color: '#0E5BF2',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  compactEstimateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D8E1F0',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FBFF',
+    gap: 12,
+  },
+  compactEstimateRowActive: {
+    borderColor: '#0E5BF2',
+    backgroundColor: '#E9F0FF',
+  },
+  compactEstimateText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#2B3652',
+    fontWeight: '600',
+  },
+  compactEstimatePrice: {
+    fontSize: 14,
+    color: '#101A33',
+    fontWeight: '700',
   },
   exitButton: {
     marginTop: 8,
