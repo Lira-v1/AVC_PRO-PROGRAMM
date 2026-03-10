@@ -1,9 +1,11 @@
 import { requestSmetMasterEstimate } from '../adapters/smetMasterAdapter';
 import { resolveIntent } from '../intents/intentResolver';
 import { language } from '../language';
+import { WorkRequestResolver } from '../resolver';
 import type { ChatMasterResponse } from '../types/ChatMasterTypes';
 
 const UNKNOWN_REPLY = language.systemMessages.unknownRequest;
+const workRequestResolver = new WorkRequestResolver();
 
 export class ChatMasterEngine {
   public static processUserMessage(userMessage: string): ChatMasterResponse {
@@ -28,7 +30,8 @@ export class ChatMasterEngine {
       };
     }
 
-    const adapterResult = requestSmetMasterEstimate(userMessage);
+    const resolvedWorkRequest = workRequestResolver.resolveRequest(userMessage);
+    const adapterResult = requestSmetMasterEstimate(resolvedWorkRequest);
 
     if (!adapterResult.response || !adapterResult.category || !adapterResult.workType) {
       const missingReply = language.clarificationTemplates.notEnoughInfo();
