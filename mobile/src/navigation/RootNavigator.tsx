@@ -8,6 +8,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { RegistrationScreen } from '../screens/RegistrationScreen';
 import { ServicesScreen } from '../screens/ServicesScreen';
 import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
+import { ChatMasterScreen } from '../screens/ChatMasterScreen';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
 type MainStackParamList = {
@@ -24,6 +25,7 @@ type MainStackParamList = {
   Login: undefined;
   Registration: undefined;
   Placeholder: { title: string };
+  ChatMaster: undefined;
 };
 
 type RootStackParamList = {
@@ -113,6 +115,7 @@ const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.
       <MainStack.Screen name="Login" component={LoginScreen} />
       <MainStack.Screen name="Registration" component={RegistrationScreen} />
       <MainStack.Screen name="Placeholder" component={PlatformPlaceholderScreen} />
+      <MainStack.Screen name="ChatMaster" component={ChatMasterScreen} />
     </MainStack.Navigator>
   );
 };
