@@ -2,24 +2,36 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
 import { ChatMasterEngine, type ChatMessage } from '../chatmaster';
+import { LocationPicker } from '../components/LocationPicker';
 import { SmetMasterEngine } from '../smetmaster';
 import { getAvailableCategories, getEstimatesByCategory } from '../smetmaster/repositories/estimateRepository';
 import type { TariffType } from '../smetmaster/types/SmetMasterTypes';
+import { EMPTY_LOCATION, type GeoLocation } from '../types/location';
 
 type ArrivalOption = 'now' | 'today' | 'tomorrow' | 'date' | null;
+
+type OrderWork = {
+  id: string;
+  category: string;
+  workType: string;
+  title: string;
+  quantity: number;
+  unit: string;
+  price: number;
+};
 
 type OrderDraft = {
   category: string;
   workType: string;
   workTitle: string;
-  works: Array<{ id: string; category: string; workType: string; title: string }>;
-  quantity: number;
+  works: OrderWork[];
   arrivalOption: ArrivalOption;
   arrivalDate: string;
   needMaterials: boolean;
   tariff: TariffType;
   photos: Array<{ id: string; source: 'camera' | 'gallery' }>;
   comment: string;
+  location: GeoLocation;
 };
 
 type SelectorState = 'category' | 'workType' | 'arrival' | 'confirm' | 'attachment' | null;
@@ -60,14 +72,16 @@ const INITIAL_DRAFT: OrderDraft = {
   workType: '',
   workTitle: '',
   works: [],
-  quantity: 1,
   arrivalOption: null,
   arrivalDate: '',
   needMaterials: false,
   tariff: 'economy',
   photos: [],
   comment: '',
+  location: EMPTY_LOCATION,
 };
+
+const formatMoney = (amount: number) => `${amount.toLocaleString('ru-RU')} ₸`;
 
 export const ServicesScreen = () => {
   const [orderDraft, setOrderDraft] = useState<OrderDraft>(INITIAL_DRAFT);
@@ -82,17 +96,6 @@ export const ServicesScreen = () => {
   const availableCategories = useMemo(() => getAvailableCategories(), []);
   const availableWorks = useMemo(() => getEstimatesByCategory(orderDraft.category), [orderDraft.category]);
 
-  const calculated = useMemo(() => {
-    if (!orderDraft.category || !orderDraft.workType) {
-      return null;
-    }
-    return SmetMasterEngine.calculateEstimate({
-      category: orderDraft.category,
-      workType: orderDraft.workType,
-      tariff: orderDraft.tariff,
-    });
-  }, [orderDraft.category, orderDraft.workType, orderDraft.tariff]);
-
   const worksWithPrice = useMemo(
     () =>
       orderDraft.works.map((work) => {
@@ -101,13 +104,18 @@ export const ServicesScreen = () => {
           workType: work.workType,
           tariff: orderDraft.tariff,
         });
-        return { ...work, price: estimate?.finalPrice ?? 0 };
+        const unitPrice = estimate?.finalPrice ?? work.price;
+        return {
+          ...work,
+          unit: estimate?.estimate.items[0]?.unit ?? work.unit,
+          price: unitPrice,
+          linePrice: unitPrice * Math.max(1, work.quantity),
+        };
       }),
     [orderDraft.tariff, orderDraft.works],
   );
 
-  const unit = calculated?.estimate.items[0]?.unit ?? 'ед.';
-  const totalPrice = worksWithPrice.reduce((sum, work) => sum + work.price, 0) * orderDraft.quantity;
+  const totalPrice = worksWithPrice.reduce((sum, work) => sum + work.linePrice, 0);
   const canSubmit = orderDraft.works.length > 0;
 
   const resetOrder = () => {
@@ -119,12 +127,47 @@ export const ServicesScreen = () => {
   };
 
   const appendWork = (work: { category: string; workType: string; title: string }) => {
+    const calculated = SmetMasterEngine.calculateEstimate({
+      category: work.category,
+      workType: work.workType,
+      tariff: orderDraft.tariff,
+    });
+
     setOrderDraft((prev) => ({
       ...prev,
       category: work.category,
       workType: work.workType,
       workTitle: work.title,
-      works: [...prev.works, { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, ...work }],
+      works: [
+        ...prev.works,
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          category: work.category,
+          workType: work.workType,
+          title: work.title,
+          quantity: 1,
+          unit: calculated?.estimate.items[0]?.unit ?? 'услуга',
+          price: calculated?.finalPrice ?? 0,
+        },
+      ],
+    }));
+  };
+
+  const removeWork = (id: string) => {
+    setOrderDraft((prev) => ({ ...prev, works: prev.works.filter((work) => work.id !== id) }));
+  };
+
+  const updateWorkQuantity = (id: string, delta: number) => {
+    setOrderDraft((prev) => ({
+      ...prev,
+      works: prev.works.map((work) =>
+        work.id === id
+          ? {
+              ...work,
+              quantity: Math.max(1, work.quantity + delta),
+            }
+          : work,
+      ),
     }));
   };
 
@@ -145,10 +188,7 @@ export const ServicesScreen = () => {
     }
 
     const response = ChatMasterEngine.processUserMessage(userText, { context: 'order_assistant' });
-    const nextMessages: ChatMessage[] = [
-      createMessage('user', userText),
-      createMessage('assistant', response.reply),
-    ];
+    const nextMessages: ChatMessage[] = [createMessage('user', userText), createMessage('assistant', response.reply)];
 
     setMessages((prev) => [...prev, ...nextMessages]);
     setInput('');
@@ -179,7 +219,7 @@ export const ServicesScreen = () => {
 
   const onCreateOrder = () => {
     if (!canSubmit) {
-      Alert.alert('Заполните карточку', 'Выберите категорию и работу.');
+      Alert.alert('Заполните карточку', 'Добавьте хотя бы одну услугу.');
       return;
     }
     setSelectorState('confirm');
@@ -203,43 +243,44 @@ export const ServicesScreen = () => {
               <Text style={styles.selectorValue}>{orderDraft.category ? CATEGORY_LABELS[orderDraft.category] : 'Выбрать категорию'}</Text>
             </Pressable>
 
-            <Pressable style={styles.selectorField} onPress={() => setSelectorState('workType')}>
-              <Text style={styles.selectorLabel}>Работа / услуга</Text>
-              <Text style={styles.selectorValue}>{orderDraft.workTitle || (orderDraft.category ? 'Выбрать работу' : 'Сначала выберите категорию')}</Text>
-            </Pressable>
-
             <View style={styles.selectorField}>
               <Text style={styles.selectorLabel}>Состав заказа</Text>
-              {orderDraft.works.length ? (
-                orderDraft.works.map((work) => (
-                  <Text key={work.id} style={styles.workLine}>• {work.title}</Text>
+              {worksWithPrice.length ? (
+                worksWithPrice.map((work) => (
+                  <View key={work.id} style={styles.workRow}>
+                    <View style={styles.workMeta}>
+                      <Text style={styles.workTitle}>{work.title}</Text>
+                      <View style={styles.quantityRow}>
+                        <Pressable style={styles.qtyButton} onPress={() => updateWorkQuantity(work.id, -1)}>
+                          <Text style={styles.qtyButtonText}>−</Text>
+                        </Pressable>
+                        <Text style={styles.qtyValue}>{work.quantity}</Text>
+                        <Pressable style={styles.qtyButton} onPress={() => updateWorkQuantity(work.id, 1)}>
+                          <Text style={styles.qtyButtonText}>+</Text>
+                        </Pressable>
+                        <Text style={styles.unitText}>{work.unit}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.workPrice}>{formatMoney(work.linePrice)}</Text>
+                    <Pressable onPress={() => removeWork(work.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteButtonText}>✕</Text>
+                    </Pressable>
+                  </View>
                 ))
               ) : (
-                <Text style={styles.selectorValue}>Работы пока не добавлены</Text>
+                <Text style={styles.selectorValue}>Добавьте первую услугу</Text>
               )}
+              <Pressable style={styles.addWorkButton} onPress={() => setSelectorState('workType')}>
+                <Text style={styles.addWorkText}>+ Добавить услугу</Text>
+              </Pressable>
+              <Text style={styles.totalLine}>Итого: {formatMoney(totalPrice)}</Text>
             </View>
 
-            <View style={styles.selectorField}>
-              <Text style={styles.selectorLabel}>Количество</Text>
-              <View style={styles.quantityRow}>
-                <Pressable style={styles.qtyButton} onPress={() => setOrderDraft((prev) => ({ ...prev, quantity: Math.max(1, prev.quantity - 1) }))}>
-                  <Text style={styles.qtyButtonText}>−</Text>
-                </Pressable>
-                <TextInput
-                  style={styles.quantityInput}
-                  keyboardType="number-pad"
-                  value={String(orderDraft.quantity)}
-                  onChangeText={(value) => {
-                    const parsed = Number.parseInt(value.replace(/[^0-9]/g, ''), 10);
-                    setOrderDraft((prev) => ({ ...prev, quantity: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed }));
-                  }}
-                />
-                <Text style={styles.unitText}>{unit}</Text>
-                <Pressable style={styles.qtyButton} onPress={() => setOrderDraft((prev) => ({ ...prev, quantity: prev.quantity + 1 }))}>
-                  <Text style={styles.qtyButtonText}>+</Text>
-                </Pressable>
-              </View>
-            </View>
+            <LocationPicker
+              title="Адрес"
+              value={orderDraft.location}
+              onChange={(location: GeoLocation) => setOrderDraft((prev) => ({ ...prev, location }))}
+            />
 
             <Pressable style={styles.selectorField} onPress={() => setSelectorState('arrival')}>
               <Text style={styles.selectorLabel}>Когда нужен мастер</Text>
@@ -271,11 +312,6 @@ export const ServicesScreen = () => {
                   </Pressable>
                 );
               })}
-            </View>
-
-            <View style={styles.selectorField}>
-              <Text style={styles.selectorLabel}>Цена</Text>
-              <Text style={styles.priceText}>{totalPrice} KZT</Text>
             </View>
 
             <TextInput
@@ -347,7 +383,7 @@ export const ServicesScreen = () => {
                       style={styles.modalOption}
                       onPress={() => {
                         setOrderDraft((prev) => ({ ...prev, category, workType: '', workTitle: '' }));
-                        setSelectorState(null);
+                        setSelectorState('workType');
                       }}
                     >
                       <Text style={styles.modalOptionText}>{CATEGORY_LABELS[category] ?? category}</Text>
@@ -413,23 +449,14 @@ export const ServicesScreen = () => {
       <Modal visible={selectorState === 'confirm'} transparent animationType="fade" onRequestClose={() => setSelectorState(null)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.confirmCard}>
-            <Text style={styles.modalTitle}>Подтверждение заказа</Text>
+            <Text style={styles.modalTitle}>Проверьте заказ</Text>
             <Text style={styles.confirmLine}>Категория: {CATEGORY_LABELS[orderDraft.category] ?? '—'}</Text>
             <Text style={styles.confirmLine}>Работы: {orderDraft.works.length || '—'}</Text>
-            {orderDraft.works.map((work) => (
-              <Text key={work.id} style={styles.confirmLine}>• {work.title}</Text>
+            {worksWithPrice.map((work) => (
+              <Text key={work.id} style={styles.confirmLine}>• {work.title} — {work.quantity} {work.unit}, {formatMoney(work.linePrice)}</Text>
             ))}
-            <View style={styles.quantityRow}>
-              <Text style={styles.confirmLine}>Количество:</Text>
-              <Pressable style={styles.qtyButton} onPress={() => setOrderDraft((prev) => ({ ...prev, quantity: Math.max(1, prev.quantity - 1) }))}>
-                <Text style={styles.qtyButtonText}>−</Text>
-              </Pressable>
-              <Text style={styles.qtyValue}>{orderDraft.quantity} {unit}</Text>
-              <Pressable style={styles.qtyButton} onPress={() => setOrderDraft((prev) => ({ ...prev, quantity: prev.quantity + 1 }))}>
-                <Text style={styles.qtyButtonText}>+</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.confirmLine}>Стоимость: {totalPrice} KZT</Text>
+            <Text style={styles.confirmLine}>Стоимость: {formatMoney(totalPrice)}</Text>
+            <Text style={styles.confirmLine}>Адрес: {orderDraft.location.address || 'Не указан'}</Text>
             <Text style={styles.confirmLine}>Когда нужен мастер: {arrivalLabel}</Text>
             <Text style={styles.confirmLine}>Материалы: {orderDraft.needMaterials ? 'Нужны' : 'Не нужны'}</Text>
             <Text style={styles.confirmLine}>Фото: {orderDraft.photos.length ? `${orderDraft.photos.length} шт.` : 'Нет'}</Text>
@@ -456,11 +483,10 @@ const styles = StyleSheet.create({
   content: { padding: 14, paddingBottom: 20 },
   formCard: { backgroundColor: '#fff', borderRadius: 12, padding: 12, gap: 10 },
   cardTitle: { fontSize: 18, fontWeight: '700', color: '#1B2A45' },
-
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   resetButton: { borderWidth: 1, borderColor: '#F2C4C4', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: '#FFF5F5' },
   resetButtonText: { color: '#BA3030', fontWeight: '600', fontSize: 12 },
-  selectorField: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 10, padding: 10, backgroundColor: '#FAFCFF' },
+  selectorField: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 10, padding: 10, backgroundColor: '#FAFCFF', gap: 8 },
   selectorLabel: { color: '#61708D', fontSize: 12, marginBottom: 4 },
   selectorValue: { color: '#1B2A45', fontWeight: '600' },
   fieldInput: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 10, paddingHorizontal: 12, minHeight: 44, backgroundColor: '#FAFCFF', color: '#1B2A45' },
@@ -469,11 +495,18 @@ const styles = StyleSheet.create({
   chipActive: { borderColor: '#0E5BF2', backgroundColor: '#EEF3FF' },
   chipText: { color: '#45536E', fontWeight: '600' },
   chipTextActive: { color: '#0E5BF2' },
-  priceText: { color: '#1B2A45', fontSize: 22, fontWeight: '700' },
   submitButton: { marginTop: 4, minHeight: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E5BF2', paddingHorizontal: 14 },
   submitDisabled: { opacity: 0.5 },
   submitButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  workLine: { color: '#33415C' },
+  workRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  workMeta: { flex: 1 },
+  workTitle: { color: '#33415C', fontWeight: '600' },
+  workPrice: { color: '#1B2A45', fontWeight: '700' },
+  addWorkButton: { marginTop: 4, borderWidth: 1, borderColor: '#D1DDF7', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
+  addWorkText: { color: '#0E5BF2', fontWeight: '700' },
+  deleteButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF0F0' },
+  deleteButtonText: { color: '#BA3030', fontWeight: '700' },
+  totalLine: { color: '#1B2A45', fontSize: 18, fontWeight: '700', marginTop: 4 },
   chatDock: { height: '42%', borderTopWidth: 1, borderTopColor: '#DCE3F2', backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 10, gap: 8 },
   chatDockCollapsed: { height: 108 },
   chatHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -505,7 +538,6 @@ const styles = StyleSheet.create({
   quantityRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   qtyButton: { borderRadius: 8, borderWidth: 1, borderColor: '#D1DDF7', paddingHorizontal: 10, paddingVertical: 4 },
   qtyButtonText: { color: '#0E5BF2', fontWeight: '700', fontSize: 16 },
-  quantityInput: { minWidth: 48, textAlign: 'center', borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 8, paddingVertical: 4, color: '#1B2A45' },
   unitText: { color: '#61708D' },
-  qtyValue: { color: '#1B2A45', fontWeight: '700' },
+  qtyValue: { color: '#1B2A45', fontWeight: '700', minWidth: 20, textAlign: 'center' },
 });
