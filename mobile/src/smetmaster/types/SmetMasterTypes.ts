@@ -22,6 +22,11 @@ export type EstimateCalculationInput = {
   tariff: TariffType;
 };
 
+export type EstimateCalculationBreakdownItem = {
+  label: string;
+  value: string | number;
+};
+
 export type EstimateCalculationResult = {
   estimate: EstimateRecord;
   basePrice: number;
@@ -29,4 +34,11 @@ export type EstimateCalculationResult = {
   workPrice: number;
   masterVisitFee: number;
   finalPrice: number;
+  breakdown: EstimateCalculationBreakdownItem[];
+};
+
+export type EstimateCatalogStats = {
+  categoriesCount: number;
+  estimatesCount: number;
+  workTypesCount: number;
 };
