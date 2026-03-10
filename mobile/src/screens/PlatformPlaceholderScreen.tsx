@@ -1,14 +1,11 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
-import { useDrawerMenu } from '../navigation/DrawerMenuContext';
 
 export const PlatformPlaceholderScreen = ({ route }: { route: { params: { title: string } } }) => {
-  const openDrawer = useDrawerMenu();
-
   return (
     <View style={styles.root}>
-      <AppHeader onMenuPress={openDrawer} />
+      <AppHeader title={route.params.title} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{route.params.title}</Text>
         <Text style={styles.subtitle}>Экран в разработке</Text>

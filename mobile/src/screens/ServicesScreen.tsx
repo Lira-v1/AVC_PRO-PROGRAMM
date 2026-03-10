@@ -10,11 +10,10 @@ export type ServiceCategory = {
 };
 
 type ServicesScreenProps = {
-  onMenuPress: () => void;
   onCategoryPress: (category: ServiceCategory) => void;
 };
 
-export const ServicesScreen = ({ onMenuPress, onCategoryPress }: ServicesScreenProps) => {
+export const ServicesScreen = ({ onCategoryPress }: ServicesScreenProps) => {
   const categories = useMemo<ServiceCategory[]>(
     () => [
       { id: 'electrician', title: 'Электрик', category: 'electrician' },
@@ -31,7 +30,7 @@ export const ServicesScreen = ({ onMenuPress, onCategoryPress }: ServicesScreenP
 
   return (
     <View style={styles.root}>
-      <AppHeader onMenuPress={onMenuPress} />
+      <AppHeader title="Услуги" />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <CompactCardGrid items={categories} onItemPress={onCategoryPress} />
       </ScrollView>

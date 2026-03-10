@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { AppHeader } from '../components/AppHeader';
 import { useAppStore } from '../store/AppStore';
 
 export const CreateRequestScreen = () => {
@@ -37,22 +38,26 @@ export const CreateRequestScreen = () => {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 14 }}>
-      <TextInput style={styles.input} placeholder="Имя" value={name} onChangeText={setName} />
-      <TextInput style={styles.input} placeholder="Телефон" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-      <TextInput style={styles.input} placeholder="Адрес" value={address} onChangeText={setAddress} />
-      <TextInput style={styles.input} placeholder="Комментарий" value={comment} onChangeText={setComment} multiline />
-      <TextInput style={styles.input} placeholder="Удобное время (опционально)" value={preferredTime} onChangeText={setPreferredTime} />
+    <View style={styles.container}>
+      <AppHeader title="Создать заявку" />
+      <ScrollView contentContainerStyle={styles.content}>
+        <TextInput style={styles.input} placeholder="Имя" value={name} onChangeText={setName} />
+        <TextInput style={styles.input} placeholder="Телефон" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+        <TextInput style={styles.input} placeholder="Адрес" value={address} onChangeText={setAddress} />
+        <TextInput style={styles.input} placeholder="Комментарий" value={comment} onChangeText={setComment} multiline />
+        <TextInput style={styles.input} placeholder="Удобное время (опционально)" value={preferredTime} onChangeText={setPreferredTime} />
 
-      <Pressable style={styles.button} onPress={() => void submit()}>
-        <Text style={styles.buttonText}>Создать заявку</Text>
-      </Pressable>
-    </ScrollView>
+        <Pressable style={styles.button} onPress={() => void submit()}>
+          <Text style={styles.buttonText}>Создать заявку</Text>
+        </Pressable>
+      </ScrollView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F3F5FA' },
+  content: { padding: 14 },
   input: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 10 },
   button: { backgroundColor: '#0E5BF2', borderRadius: 10, paddingVertical: 13, marginTop: 12 },
   buttonText: { color: '#fff', textAlign: 'center', fontWeight: '700' }
