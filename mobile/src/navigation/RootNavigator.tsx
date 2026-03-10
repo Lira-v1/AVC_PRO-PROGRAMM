@@ -6,15 +6,13 @@ import { CreateRequestScreen } from '../screens/CreateRequestScreen';
 import { HomeCategory, HomeScreen } from '../screens/HomeScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegistrationScreen } from '../screens/RegistrationScreen';
-import { ServicesScreen, ServiceCategory } from '../screens/ServicesScreen';
-import { CategoryScreen } from '../screens/CategoryScreen';
+import { ServicesScreen } from '../screens/ServicesScreen';
 import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
 type MainStackParamList = {
   Home: undefined;
   Services: undefined;
-  Category: { title: string; category: string };
   Emergency: undefined;
   Estimate: undefined;
   Commercial: undefined;
@@ -99,27 +97,11 @@ const HomeContainerScreen = () => {
   return <HomeScreen onMenuPress={openDrawer} onCategoryPress={onCategoryPress} />;
 };
 
-const ServicesContainerScreen = () => {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-
-  const onCategoryPress = (category: ServiceCategory) => {
-    navigation.navigate('Category', { title: category.title, category: category.category });
-  };
-
-  return <ServicesScreen onCategoryPress={onCategoryPress} />;
-};
-
 const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.SetStateAction<boolean>> }) => {
   return (
     <MainStack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
       <MainStack.Screen name="Home" component={HomeContainerScreen} />
-      <MainStack.Screen name="Services" component={ServicesContainerScreen} />
-      <MainStack.Screen
-        name="Category"
-        children={({ route }) => (
-          <CategoryScreen route={route} />
-        )}
-      />
+      <MainStack.Screen name="Services" component={ServicesScreen} />
       <MainStack.Screen name="Emergency" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />
       <MainStack.Screen name="Estimate" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Сметмастер' } }} />} />
       <MainStack.Screen name="Commercial" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Коммерция' } }} />} />

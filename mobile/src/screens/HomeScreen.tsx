@@ -26,7 +26,7 @@ type HomeScreenProps = {
 export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) => {
   const categories = useMemo<HomeCategory[]>(
     () => [
-      { id: 'services', title: 'Услуги', route: 'Services' },
+      { id: 'services', title: 'Вызвать мастера', route: 'Services' },
       { id: 'emergency', title: 'Экстренный мастер', route: 'Emergency' },
       { id: 'estimate', title: 'Сметмастер', route: 'Estimate' },
       { id: 'commercial', title: 'Коммерция', route: 'Commercial' },
