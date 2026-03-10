@@ -21,6 +21,17 @@ export const AppHeader = ({ onMenuPress, title = 'MasterPro', isHome = false }: 
     navigation.navigate('Home');
   };
 
+  const headerActions = (
+    <View style={styles.headerActions}>
+      <Pressable style={styles.headerIcon} accessibilityLabel="Открыть чат">
+        <Text>💬</Text>
+      </Pressable>
+      <Pressable style={styles.headerIcon} accessibilityLabel="Открыть корзину">
+        <Text>🛒</Text>
+      </Pressable>
+    </View>
+  );
+
   if (isHome) {
     return (
       <View style={styles.header}>
@@ -30,7 +41,7 @@ export const AppHeader = ({ onMenuPress, title = 'MasterPro', isHome = false }: 
           <View style={styles.menuLine} />
         </Pressable>
         <Text style={styles.headerTitle}>MasterPro</Text>
-        <View style={styles.headerRightSpacer} />
+        {headerActions}
       </View>
     );
   }
@@ -47,7 +58,7 @@ export const AppHeader = ({ onMenuPress, title = 'MasterPro', isHome = false }: 
       <Text style={styles.screenTitle} numberOfLines={1}>
         {title}
       </Text>
-      <View style={styles.headerRightSpacer} />
+      {headerActions}
     </View>
   );
 };
@@ -82,10 +93,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#101623',
   },
-  headerRightSpacer: {
-    width: 44,
-    height: 44,
-  },
   leftArea: {
     width: 44,
     height: 44,
@@ -111,5 +118,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#101623',
     textAlign: 'left',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerIcon: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
