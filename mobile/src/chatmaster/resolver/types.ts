@@ -4,6 +4,17 @@ export type WorkRequestResolverDebug = {
   matchedWords: string[];
   normalizedText: string;
   selectedWorkType: string | null;
+  exactMatch?: {
+    workType: string;
+    confidence: number;
+    matchedWords: string[];
+  } | null;
+  fuzzyMatch?: {
+    workType: string;
+    confidence: number;
+    matchedWords: string[];
+    normalizedText: string;
+  } | null;
 };
 
 export type WorkRequestResult = {

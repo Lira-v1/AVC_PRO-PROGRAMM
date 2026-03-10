@@ -1,4 +1,5 @@
 import type { EstimateCalculationInput, EstimateCalculationResult } from '../../smetmaster';
+import type { WorkRequestResolverDebug } from '../resolver/types';
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -16,6 +17,16 @@ export type ChatMasterDebugTrace = {
   resolvedIntent: ChatIntent;
   resolvedCategory: string | null;
   resolvedWorkType: string | null;
+  resolver: {
+    inputText: string;
+    exactMatch: WorkRequestResolverDebug['exactMatch'];
+    fuzzyMatch: WorkRequestResolverDebug['fuzzyMatch'];
+    finalSelectedResult: {
+      matchType: WorkRequestResolverDebug['matchType'];
+      workType: string | null;
+      confidence: number;
+    };
+  };
   smetMasterRequest: EstimateCalculationInput | null;
   smetMasterResponse: EstimateCalculationResult | null;
   finalChatReply: string;
