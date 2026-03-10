@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { calculateTotal } from '../services/pricing';
 import { storageService } from '../services/storage';
+import { EMPTY_LOCATION, type GeoLocation } from '../types/location';
 import { CartItem, Offer, PricingPolicy, RequestContact, RequestOrder, Role } from '../types';
 
 type AppStoreValue = {
@@ -21,6 +22,8 @@ type AppStoreValue = {
   masterOnline: boolean;
   toggleMasterOnline: () => Promise<void>;
   createOffer: (requestId: string) => Promise<void>;
+  userLocation: GeoLocation;
+  setUserLocation: (location: GeoLocation) => Promise<void>;
 };
 
 const AppStoreContext = createContext<AppStoreValue | undefined>(undefined);
@@ -33,6 +36,7 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
   const [masterOnline, setMasterOnline] = useState(false);
   const [isRegistered, setIsRegistered] = useState(false);
   const [registrationPromptSeen, setRegistrationPromptSeen] = useState(false);
+  const [userLocation, setUserLocationState] = useState<GeoLocation>(EMPTY_LOCATION);
 
   useEffect(() => {
     const load = async () => {
@@ -40,6 +44,7 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
       setMasterOnline(await storageService.getMasterOnline());
       setIsRegistered(await storageService.getUserRegistered());
       setRegistrationPromptSeen(await storageService.getRegistrationPromptSeen());
+      setUserLocationState(await storageService.getUserLocation());
     };
     void load();
   }, []);
@@ -116,6 +121,11 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
     await storageService.saveRequests(nextRequests);
   };
 
+  const setUserLocation = async (location: GeoLocation) => {
+    setUserLocationState(location);
+    await storageService.saveUserLocation(location);
+  };
+
   const value = useMemo(
     () => ({
       role,
@@ -134,9 +144,11 @@ export const AppStoreProvider = ({ children }: { children: React.ReactNode }) =>
       createRequest,
       masterOnline,
       toggleMasterOnline,
-      createOffer
+      createOffer,
+      userLocation,
+      setUserLocation,
     }),
-    [role, isRegistered, registrationPromptSeen, policy, cart, requests, masterOnline]
+    [role, isRegistered, registrationPromptSeen, policy, cart, requests, masterOnline, userLocation]
   );
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;

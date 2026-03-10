@@ -1,12 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Offer, RequestOrder } from '../types';
+import { EMPTY_LOCATION, type GeoLocation } from '../types/location';
 
 const KEYS = {
   requests: 'avc.requests',
   offers: 'avc.offers',
   masterOnline: 'avc.master.online',
   userRegistered: 'avc.user.registered',
-  registrationPromptSeen: 'avc.registration.prompt.seen'
+  registrationPromptSeen: 'avc.registration.prompt.seen',
+  userLocation: 'avc.user.location',
 };
 
 const parse = async <T>(key: string, fallback: T): Promise<T> => {
@@ -33,5 +35,8 @@ export const storageService = {
   saveUserRegistered: (registered: boolean) => AsyncStorage.setItem(KEYS.userRegistered, JSON.stringify(registered)),
 
   getRegistrationPromptSeen: async () => (await parse<boolean>(KEYS.registrationPromptSeen, false)),
-  saveRegistrationPromptSeen: (seen: boolean) => AsyncStorage.setItem(KEYS.registrationPromptSeen, JSON.stringify(seen))
+  saveRegistrationPromptSeen: (seen: boolean) => AsyncStorage.setItem(KEYS.registrationPromptSeen, JSON.stringify(seen)),
+
+  getUserLocation: () => parse<GeoLocation>(KEYS.userLocation, EMPTY_LOCATION),
+  saveUserLocation: (location: GeoLocation) => AsyncStorage.setItem(KEYS.userLocation, JSON.stringify(location)),
 };

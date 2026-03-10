@@ -2,7 +2,9 @@ import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { CompactCardGrid } from '../components/CompactCardGrid';
 import { AppHeader } from '../components/AppHeader';
+import { LocationPicker } from '../components/LocationPicker';
 import { QuickAccessItem, QuickAccessRibbon } from '../components/QuickAccessRibbon';
+import { useAppStore } from '../store/AppStore';
 
 export type HomeCategory = {
   id: string;
@@ -24,6 +26,7 @@ type HomeScreenProps = {
 };
 
 export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) => {
+  const { userLocation, setUserLocation } = useAppStore();
   const categories = useMemo<HomeCategory[]>(
     () => [
       { id: 'services', title: 'Вызвать мастера', route: 'Services' },
@@ -70,14 +73,7 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
         <View style={styles.locationBlock}>
           <Text style={styles.locationTitle}>Укажите местоположение</Text>
           <Text style={styles.locationSubtitle}>Чтобы найти мастеров рядом</Text>
-          <View style={styles.locationActions}>
-            <Pressable style={[styles.locationButton, styles.locationButtonPrimary]}>
-              <Text style={styles.locationButtonPrimaryText}>Ввести адрес</Text>
-            </Pressable>
-            <Pressable style={[styles.locationButton, styles.locationButtonSecondary]}>
-              <Text style={styles.locationButtonSecondaryText}>Определить автоматически</Text>
-            </Pressable>
-          </View>
+          <LocationPicker title="Местоположение" value={userLocation} onChange={(next) => void setUserLocation(next)} />
         </View>
 
         <View style={styles.searchBar}>
@@ -174,26 +170,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#5f6c87',
   },
-  locationActions: {
-    flexDirection: 'row',
-    marginTop: 12,
-    gap: 8,
-  },
-  locationButton: {
-    flex: 1,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-  },
-  locationButtonPrimary: { backgroundColor: '#0E5BF2' },
-  locationButtonSecondary: {
-    backgroundColor: '#EEF3FF',
-    borderWidth: 1,
-    borderColor: '#D6E2FF',
-  },
-  locationButtonPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  locationButtonSecondaryText: { color: '#1A4EB5', fontWeight: '600', fontSize: 13 },
   searchBar: {
     width: '100%',
     backgroundColor: '#fff',
