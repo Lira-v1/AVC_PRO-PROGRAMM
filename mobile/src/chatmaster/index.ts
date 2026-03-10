@@ -8,3 +8,4 @@ export type {
 } from './types/ChatMasterTypes';
 
 export { chatMasterKnowledgeBase } from './knowledge';
+export { language } from './language';
