@@ -12,6 +12,7 @@ type OrderDraft = {
   category: string;
   workType: string;
   workTitle: string;
+  works: Array<{ id: string; category: string; workType: string; title: string }>;
   quantity: number;
   arrivalOption: ArrivalOption;
   arrivalDate: string;
@@ -58,6 +59,7 @@ const INITIAL_DRAFT: OrderDraft = {
   category: '',
   workType: '',
   workTitle: '',
+  works: [],
   quantity: 1,
   arrivalOption: null,
   arrivalDate: '',
@@ -74,6 +76,7 @@ export const ServicesScreen = () => {
     createMessage('assistant', 'Опишите задачу, и я помогу заполнить карточку заказа.'),
   ]);
   const [input, setInput] = useState('');
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const scrollRef = useRef<ScrollView | null>(null);
 
   const availableCategories = useMemo(() => getAvailableCategories(), []);
@@ -90,9 +93,40 @@ export const ServicesScreen = () => {
     });
   }, [orderDraft.category, orderDraft.workType, orderDraft.tariff]);
 
+  const worksWithPrice = useMemo(
+    () =>
+      orderDraft.works.map((work) => {
+        const estimate = SmetMasterEngine.calculateEstimate({
+          category: work.category,
+          workType: work.workType,
+          tariff: orderDraft.tariff,
+        });
+        return { ...work, price: estimate?.finalPrice ?? 0 };
+      }),
+    [orderDraft.tariff, orderDraft.works],
+  );
+
   const unit = calculated?.estimate.items[0]?.unit ?? 'ед.';
-  const totalPrice = (calculated?.finalPrice ?? 0) * orderDraft.quantity;
-  const canSubmit = Boolean(orderDraft.category && orderDraft.workType);
+  const totalPrice = worksWithPrice.reduce((sum, work) => sum + work.price, 0) * orderDraft.quantity;
+  const canSubmit = orderDraft.works.length > 0;
+
+  const resetOrder = () => {
+    setOrderDraft(INITIAL_DRAFT);
+    setSelectorState(null);
+    setInput('');
+    setMessages([createMessage('assistant', 'Опишите задачу, и я помогу заполнить карточку заказа.')]);
+    setIsChatCollapsed(false);
+  };
+
+  const appendWork = (work: { category: string; workType: string; title: string }) => {
+    setOrderDraft((prev) => ({
+      ...prev,
+      category: work.category,
+      workType: work.workType,
+      workTitle: work.title,
+      works: [...prev.works, { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, ...work }],
+    }));
+  };
 
   const arrivalLabel = useMemo(() => {
     if (!orderDraft.arrivalOption) {
@@ -121,12 +155,11 @@ export const ServicesScreen = () => {
 
     const suggestion = response.orderAssistantPayload?.suggestions[0];
     if (suggestion) {
-      setOrderDraft((prev) => ({
-        ...prev,
+      appendWork({
         category: suggestion.category,
         workType: suggestion.workType,
-        workTitle: suggestion.title,
-      }));
+        title: suggestion.title,
+      });
     }
 
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -158,7 +191,12 @@ export const ServicesScreen = () => {
       <View style={styles.layout}>
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.formCard}>
-            <Text style={styles.cardTitle}>Карточка заказа</Text>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Карточка заказа</Text>
+              <Pressable style={styles.resetButton} onPress={resetOrder}>
+                <Text style={styles.resetButtonText}>Сбросить заказ</Text>
+              </Pressable>
+            </View>
 
             <Pressable style={styles.selectorField} onPress={() => setSelectorState('category')}>
               <Text style={styles.selectorLabel}>Категория</Text>
@@ -169,6 +207,17 @@ export const ServicesScreen = () => {
               <Text style={styles.selectorLabel}>Работа / услуга</Text>
               <Text style={styles.selectorValue}>{orderDraft.workTitle || (orderDraft.category ? 'Выбрать работу' : 'Сначала выберите категорию')}</Text>
             </Pressable>
+
+            <View style={styles.selectorField}>
+              <Text style={styles.selectorLabel}>Состав заказа</Text>
+              {orderDraft.works.length ? (
+                orderDraft.works.map((work) => (
+                  <Text key={work.id} style={styles.workLine}>• {work.title}</Text>
+                ))
+              ) : (
+                <Text style={styles.selectorValue}>Работы пока не добавлены</Text>
+              )}
+            </View>
 
             <View style={styles.selectorField}>
               <Text style={styles.selectorLabel}>Количество</Text>
@@ -243,15 +292,22 @@ export const ServicesScreen = () => {
           </View>
         </ScrollView>
 
-        <View style={styles.chatDock}>
-          <Text style={styles.chatTitle}>ChatMaster</Text>
-          <ScrollView ref={scrollRef} style={styles.chatMessages} contentContainerStyle={styles.chatMessagesContent}>
-            {messages.map((message) => (
-              <View key={message.id} style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
-                <Text style={styles.messageText}>{message.text}</Text>
-              </View>
-            ))}
-          </ScrollView>
+        <View style={[styles.chatDock, isChatCollapsed && styles.chatDockCollapsed]}>
+          <View style={styles.chatHeaderRow}>
+            <Text style={styles.chatTitle}>ChatMaster</Text>
+            <Pressable style={styles.collapseButton} onPress={() => setIsChatCollapsed(true)}>
+              <Text style={styles.collapseButtonText}>Свернуть</Text>
+            </Pressable>
+          </View>
+          {!isChatCollapsed ? (
+            <ScrollView ref={scrollRef} style={styles.chatMessages} contentContainerStyle={styles.chatMessagesContent}>
+              {messages.map((message) => (
+                <View key={message.id} style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
+                  <Text style={styles.messageText}>{message.text}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
 
           <View style={styles.inputRow}>
             <Pressable style={styles.iconButton} onPress={() => setSelectorState('attachment')}>
@@ -260,7 +316,13 @@ export const ServicesScreen = () => {
             <TextInput
               style={styles.input}
               value={input}
-              onChangeText={setInput}
+              onChangeText={(value) => {
+                if (isChatCollapsed && value) {
+                  setIsChatCollapsed(false);
+                }
+                setInput(value);
+              }}
+              onFocus={() => setIsChatCollapsed(false)}
               placeholder="Напишите сообщение..."
               placeholderTextColor="#8A94A6"
               multiline
@@ -304,7 +366,7 @@ export const ServicesScreen = () => {
                       key={estimate.estimate_id}
                       style={styles.modalOption}
                       onPress={() => {
-                        setOrderDraft((prev) => ({ ...prev, workType: estimate.work_type, workTitle: estimate.title }));
+                        appendWork({ category: estimate.category, workType: estimate.work_type, title: estimate.title });
                         setSelectorState(null);
                       }}
                     >
@@ -353,7 +415,10 @@ export const ServicesScreen = () => {
           <View style={styles.confirmCard}>
             <Text style={styles.modalTitle}>Подтверждение заказа</Text>
             <Text style={styles.confirmLine}>Категория: {CATEGORY_LABELS[orderDraft.category] ?? '—'}</Text>
-            <Text style={styles.confirmLine}>Работа: {orderDraft.workTitle || '—'}</Text>
+            <Text style={styles.confirmLine}>Работы: {orderDraft.works.length || '—'}</Text>
+            {orderDraft.works.map((work) => (
+              <Text key={work.id} style={styles.confirmLine}>• {work.title}</Text>
+            ))}
             <View style={styles.quantityRow}>
               <Text style={styles.confirmLine}>Количество:</Text>
               <Pressable style={styles.qtyButton} onPress={() => setOrderDraft((prev) => ({ ...prev, quantity: Math.max(1, prev.quantity - 1) }))}>
@@ -391,6 +456,10 @@ const styles = StyleSheet.create({
   content: { padding: 14, paddingBottom: 20 },
   formCard: { backgroundColor: '#fff', borderRadius: 12, padding: 12, gap: 10 },
   cardTitle: { fontSize: 18, fontWeight: '700', color: '#1B2A45' },
+
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  resetButton: { borderWidth: 1, borderColor: '#F2C4C4', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: '#FFF5F5' },
+  resetButtonText: { color: '#BA3030', fontWeight: '600', fontSize: 12 },
   selectorField: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 10, padding: 10, backgroundColor: '#FAFCFF' },
   selectorLabel: { color: '#61708D', fontSize: 12, marginBottom: 4 },
   selectorValue: { color: '#1B2A45', fontWeight: '600' },
@@ -404,7 +473,12 @@ const styles = StyleSheet.create({
   submitButton: { marginTop: 4, minHeight: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E5BF2', paddingHorizontal: 14 },
   submitDisabled: { opacity: 0.5 },
   submitButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  workLine: { color: '#33415C' },
   chatDock: { height: '42%', borderTopWidth: 1, borderTopColor: '#DCE3F2', backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 10, gap: 8 },
+  chatDockCollapsed: { height: 108 },
+  chatHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  collapseButton: { borderWidth: 1, borderColor: '#DCE3F2', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  collapseButtonText: { color: '#45536E', fontWeight: '600', fontSize: 12 },
   chatTitle: { fontSize: 17, fontWeight: '700', color: '#1B2A45' },
   chatMessages: { flex: 1 },
   chatMessagesContent: { gap: 6, paddingBottom: 4 },
