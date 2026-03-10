@@ -50,6 +50,18 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
     []
   );
 
+  const bannerCards = useMemo(
+    () => ({
+      hero: { title: 'Сезонные акции', subtitle: 'Скидки до 30% на монтаж', icon: '🔥', color: '#DCE7FF' },
+      square: { title: 'Популярные мастера', subtitle: 'Проверенные профи рядом', icon: '⭐', color: '#FFE8D9' },
+      small: { title: 'Быстро', subtitle: 'Выезд за 30 минут', icon: '⚡', color: '#DBF5EA' },
+      vertical: { title: 'Рассрочка', subtitle: 'Удобная оплата услуг', icon: '💳', color: '#F0E6FF' },
+      leftBottom: { title: 'Дом', subtitle: 'Умные решения', icon: '🏠', color: '#E1F0FF' },
+      rightBottom: { title: 'Офис', subtitle: 'Сервис для бизнеса', icon: '🏢', color: '#FDEBD7' },
+    }),
+    []
+  );
+
   return (
     <View style={styles.root}>
       <AppHeader onMenuPress={onMenuPress} />
@@ -81,6 +93,60 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
             console.log('[HomeScreen] Quick access pressed:', item.id);
           }}
         />
+
+        <View style={styles.bannerSection}>
+          <Pressable style={[styles.bannerCard, styles.bannerHero, { backgroundColor: bannerCards.hero.color }]}>
+            <Text style={styles.bannerIcon}>{bannerCards.hero.icon}</Text>
+            <Text style={styles.bannerTitle}>{bannerCards.hero.title}</Text>
+            <Text style={styles.bannerSubtitle}>{bannerCards.hero.subtitle}</Text>
+          </Pressable>
+
+          <View style={styles.bannerSecondRow}>
+            <Pressable
+              style={[styles.bannerCard, styles.bannerSquare, { backgroundColor: bannerCards.square.color }]}
+            >
+              <Text style={styles.bannerIcon}>{bannerCards.square.icon}</Text>
+              <Text style={styles.bannerTitle}>{bannerCards.square.title}</Text>
+              <Text style={styles.bannerSubtitle}>{bannerCards.square.subtitle}</Text>
+            </Pressable>
+
+            <View style={styles.bannerRightColumn}>
+              <Pressable
+                style={[styles.bannerCard, styles.bannerSmall, { backgroundColor: bannerCards.small.color }]}
+              >
+                <Text style={styles.bannerIcon}>{bannerCards.small.icon}</Text>
+                <Text style={styles.bannerTitle}>{bannerCards.small.title}</Text>
+                <Text style={styles.bannerSubtitle}>{bannerCards.small.subtitle}</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.bannerCard, styles.bannerVertical, { backgroundColor: bannerCards.vertical.color }]}
+              >
+                <Text style={styles.bannerIcon}>{bannerCards.vertical.icon}</Text>
+                <Text style={styles.bannerTitle}>{bannerCards.vertical.title}</Text>
+                <Text style={styles.bannerSubtitle}>{bannerCards.vertical.subtitle}</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.bannerThirdRow}>
+            <Pressable
+              style={[styles.bannerCard, styles.bannerThirdItem, { backgroundColor: bannerCards.leftBottom.color }]}
+            >
+              <Text style={styles.bannerIcon}>{bannerCards.leftBottom.icon}</Text>
+              <Text style={styles.bannerTitle}>{bannerCards.leftBottom.title}</Text>
+              <Text style={styles.bannerSubtitle}>{bannerCards.leftBottom.subtitle}</Text>
+            </Pressable>
+
+            <Pressable
+              style={[styles.bannerCard, styles.bannerThirdItem, { backgroundColor: bannerCards.rightBottom.color }]}
+            >
+              <Text style={styles.bannerIcon}>{bannerCards.rightBottom.icon}</Text>
+              <Text style={styles.bannerTitle}>{bannerCards.rightBottom.title}</Text>
+              <Text style={styles.bannerSubtitle}>{bannerCards.rightBottom.subtitle}</Text>
+            </Pressable>
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -148,5 +214,59 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#7a869f',
     fontWeight: '400',
+  },
+  bannerSection: {
+    marginTop: 14,
+    gap: 10,
+  },
+  bannerSecondRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  bannerThirdRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  bannerRightColumn: {
+    flex: 1,
+    aspectRatio: 1,
+    gap: 10,
+  },
+  bannerCard: {
+    borderRadius: 16,
+    padding: 12,
+    justifyContent: 'flex-end',
+  },
+  bannerHero: {
+    width: '100%',
+    minHeight: 130,
+  },
+  bannerSquare: {
+    flex: 1,
+    aspectRatio: 1,
+  },
+  bannerSmall: {
+    flex: 0.42,
+  },
+  bannerVertical: {
+    flex: 0.58,
+  },
+  bannerThirdItem: {
+    flex: 1,
+    minHeight: 118,
+  },
+  bannerIcon: {
+    fontSize: 20,
+    marginBottom: 8,
+  },
+  bannerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1D2A44',
+  },
+  bannerSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#445577',
   },
 });
