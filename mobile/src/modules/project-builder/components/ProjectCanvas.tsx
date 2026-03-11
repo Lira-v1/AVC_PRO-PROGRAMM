@@ -45,7 +45,7 @@ export const ProjectCanvas = ({
 
   return (
     <View style={styles.canvas}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={handleTap} />
+      <Pressable style={StyleSheet.absoluteFill} onPress={handleTap} pointerEvents={selectMode ? 'box-none' : 'auto'} />
       <CanvasGrid />
 
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
