@@ -48,19 +48,21 @@ export const ELEMENT_TYPES = [
 
 export type ElementType = (typeof ELEMENT_TYPES)[number];
 
+export const HEIGHT_MODES = ['from_floor', 'from_ceiling', 'custom'] as const;
+export type HeightMode = (typeof HEIGHT_MODES)[number];
+
 export type ElementNode = {
   id: string;
   type: ElementType;
-  roomId: string;
-  wallId: string | null;
+  roomId?: string;
+  wallId?: string | null;
   x: number;
   y: number;
   rotation?: number;
-  // reserved for future stages
-  // heightMode?: 'preset' | 'custom';
-  // heightValueMm?: number;
-  // preset?: string;
-  // note?: string;
+  preset?: string;
+  heightMode?: HeightMode;
+  heightValueMm?: number;
+  note?: string;
 };
 
 export type Project = {

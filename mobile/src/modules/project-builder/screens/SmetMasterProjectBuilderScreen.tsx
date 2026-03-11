@@ -1,6 +1,8 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { ElementParametersSheet } from '../components/ElementParametersSheet';
+import { ElementQuickCard } from '../components/ElementQuickCard';
 import { ProjectCanvas } from '../components/ProjectCanvas';
 import { Toolbar } from '../components/Toolbar';
 import { useProjectBuilder } from '../hooks/useProjectBuilder';
@@ -31,8 +33,11 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
     rooms,
     elements,
     selectedRoom,
+    selectedElement,
     selectedRoomId,
     selectedElementId,
+    isQuickCardOpen,
+    isParametersSheetOpen,
     tool,
     setTool,
     addRoom,
@@ -45,6 +50,11 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
     selectElement,
     moveElement,
     deleteElement,
+    duplicateElement,
+    updateElementParameters,
+    openParametersSheet,
+    closeParametersSheet,
+    closeElementPanels,
     handleCanvasTap,
   } = useProjectBuilder();
 
@@ -59,6 +69,8 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
       height: field === 'height' ? parsedValue : selectedRoom.height,
     });
   };
+
+  const selectedElementRoom = selectedElement ? rooms.find((room) => room.id === selectedElement.roomId) ?? null : null;
 
   return (
     <View style={styles.root}>
@@ -97,6 +109,27 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
           onMoveElement={moveElement}
         />
       </View>
+
+      {selectedElement && isQuickCardOpen ? (
+        <ElementQuickCard
+          element={selectedElement}
+          room={selectedElementRoom}
+          onOpenParameters={openParametersSheet}
+          onDuplicate={() => duplicateElement(selectedElement.id)}
+          onDelete={() => deleteElement(selectedElement.id)}
+          onClose={closeElementPanels}
+        />
+      ) : null}
+
+      {selectedElement && isParametersSheetOpen ? (
+        <ElementParametersSheet
+          element={selectedElement}
+          isOpen={isParametersSheetOpen}
+          onSave={(patch) => updateElementParameters(selectedElement.id, patch)}
+          onDelete={() => deleteElement(selectedElement.id)}
+          onClose={closeParametersSheet}
+        />
+      ) : null}
 
       {selectedRoom ? (
         <View style={styles.editorCard}>
