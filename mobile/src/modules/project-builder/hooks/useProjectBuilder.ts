@@ -318,6 +318,8 @@ export const useProjectBuilder = () => {
 
   const handleCanvasTap = (point: { x: number; y: number }) => {
     if (tool === 'select') {
+      setSelectedRoomId(null);
+      setSelectedElementId(null);
       closeElementPanels();
       return;
     }

@@ -66,7 +66,13 @@ export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove,
       onPress={handlePress}
       style={[styles.room, isSelected ? styles.roomSelected : null, { left: room.x, top: room.y, width: room.width, height: room.height }]}
     >
-      <Text style={styles.roomName}>{ROOM_TYPE_LABELS[room.type]}</Text>
+      <View pointerEvents="none" style={styles.roomHeader}>
+        <Text style={styles.roomName}>{room.name || ROOM_TYPE_LABELS[room.type]}</Text>
+      </View>
+      <View pointerEvents="none" style={styles.wallHintTop} />
+      <View pointerEvents="none" style={styles.wallHintRight} />
+      <View pointerEvents="none" style={styles.wallHintBottom} />
+      <View pointerEvents="none" style={styles.wallHintLeft} />
       {canInteract ? <View style={styles.resizeHandle} {...resizeResponder.panHandlers} /> : null}
     </Pressable>
   );
@@ -79,19 +85,63 @@ const styles = StyleSheet.create({
     borderColor: '#2A3756',
     borderWidth: 2,
     borderRadius: 4,
-    padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
   roomSelected: {
     borderColor: '#2D5ED2',
     backgroundColor: '#EDF3FF',
+    shadowColor: '#2D5ED2',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  roomHeader: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
   },
   roomName: {
     fontSize: 12,
     fontWeight: '700',
     color: '#1E2A46',
     textAlign: 'center',
+  },
+  wallHintTop: {
+    position: 'absolute',
+    top: 6,
+    left: 18,
+    right: 18,
+    borderTopWidth: 1,
+    borderColor: 'rgba(37, 57, 103, 0.25)',
+  },
+  wallHintRight: {
+    position: 'absolute',
+    right: 6,
+    top: 18,
+    bottom: 18,
+    borderRightWidth: 1,
+    borderColor: 'rgba(37, 57, 103, 0.25)',
+  },
+  wallHintBottom: {
+    position: 'absolute',
+    bottom: 6,
+    left: 18,
+    right: 18,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(37, 57, 103, 0.25)',
+  },
+  wallHintLeft: {
+    position: 'absolute',
+    left: 6,
+    top: 18,
+    bottom: 18,
+    borderLeftWidth: 1,
+    borderColor: 'rgba(37, 57, 103, 0.25)',
   },
   resizeHandle: {
     position: 'absolute',

@@ -1,6 +1,7 @@
 import React from 'react';
 import { GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ElementNode, Room, ToolType } from '../types';
+import { CanvasGrid } from './CanvasGrid';
 import { CanvasLayerElements } from './CanvasLayerElements';
 import { RoomRectangle } from './RoomRectangle';
 
@@ -43,20 +44,25 @@ export const ProjectCanvas = ({
   const selectMode = tool === 'select';
 
   return (
-    <Pressable style={styles.canvas} onPress={handleTap}>
-      {rooms.length === 0 ? <Text style={styles.hint}>Добавьте комнату, чтобы начать проект</Text> : null}
-      {rooms.map((room) => (
-        <RoomRectangle
-          key={room.id}
-          room={room}
-          isSelected={selectedRoomId === room.id}
-          canInteract={selectMode}
-          onSelect={onSelectRoom}
-          onDoublePress={onOpenRoom}
-          onMove={onMoveRoom}
-          onResize={onResizeRoom}
-        />
-      ))}
+    <View style={styles.canvas}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={handleTap} />
+      <CanvasGrid />
+
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        {rooms.map((room) => (
+          <RoomRectangle
+            key={room.id}
+            room={room}
+            isSelected={selectedRoomId === room.id}
+            canInteract={selectMode}
+            onSelect={onSelectRoom}
+            onDoublePress={onOpenRoom}
+            onMove={onMoveRoom}
+            onResize={onResizeRoom}
+          />
+        ))}
+      </View>
+
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         <CanvasLayerElements
           elements={elements}
@@ -67,7 +73,9 @@ export const ProjectCanvas = ({
           onMoveElement={onMoveElement}
         />
       </View>
-    </Pressable>
+
+      {rooms.length === 0 ? <Text style={styles.hint}>Добавьте комнату, чтобы начать проект</Text> : null}
+    </View>
   );
 };
 
@@ -81,8 +89,11 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
     minHeight: 360,
+    elevation: 0,
   },
   hint: {
+    position: 'absolute',
+    alignSelf: 'center',
     marginTop: 20,
     textAlign: 'center',
     color: '#8190B2',
