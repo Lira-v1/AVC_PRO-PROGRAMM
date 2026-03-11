@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-export type RoomViewMode = 'plan' | 'walls';
+import { ROOM_VIEW_MODE_LABELS, ROOM_VIEW_MODES, RoomViewMode } from '../model/roomViewMode';
 
 type RoomModeSwitchProps = {
   mode: RoomViewMode;
@@ -10,12 +10,14 @@ type RoomModeSwitchProps = {
 
 export const RoomModeSwitch = ({ mode, onChange }: RoomModeSwitchProps) => (
   <View style={styles.root}>
-    <Pressable style={[styles.button, mode === 'plan' ? styles.buttonActive : null]} onPress={() => onChange('plan')}>
-      <Text style={[styles.text, mode === 'plan' ? styles.textActive : null]}>План</Text>
-    </Pressable>
-    <Pressable style={[styles.button, mode === 'walls' ? styles.buttonActive : null]} onPress={() => onChange('walls')}>
-      <Text style={[styles.text, mode === 'walls' ? styles.textActive : null]}>Стены</Text>
-    </Pressable>
+    {ROOM_VIEW_MODES.map((roomMode) => {
+      const isActive = mode === roomMode;
+      return (
+        <Pressable key={roomMode} style={[styles.button, isActive ? styles.buttonActive : null]} onPress={() => onChange(roomMode)}>
+          <Text style={[styles.text, isActive ? styles.textActive : null]}>{ROOM_VIEW_MODE_LABELS[roomMode]}</Text>
+        </Pressable>
+      );
+    })}
   </View>
 );
 

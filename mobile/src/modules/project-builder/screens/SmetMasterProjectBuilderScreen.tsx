@@ -3,6 +3,8 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ElementParametersSheet } from '../components/ElementParametersSheet';
 import { ElementQuickCard } from '../components/ElementQuickCard';
+import { CeilingView } from '../components/CeilingView';
+import { FloorView } from '../components/FloorView';
 import { ProjectCanvas } from '../components/ProjectCanvas';
 import { ProjectCard } from '../components/ProjectCard';
 import { RoomFocusHeader } from '../components/RoomFocusHeader';
@@ -12,6 +14,8 @@ import { SummaryPanel } from '../components/SummaryPanel';
 import { Toolbar } from '../components/Toolbar';
 import { WallView } from '../components/WallView';
 import { useProjectBuilder } from '../hooks/useProjectBuilder';
+import { WALL_DIRECTION_LABELS } from '../model/orientation';
+import { ROOM_VIEW_MODE_LABELS } from '../model/roomViewMode';
 import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
 
 type MainStackParamList = {
@@ -110,7 +114,11 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
         <RoomFocusHeader
           roomName={selectedRoom.name}
           onBack={exitRoomFocus}
-          breadcrumb={selectedWall ? `Проект → ${selectedRoom.name} → Стены → ${selectedWall.cardinal}` : `Проект → ${selectedRoom.name} → ${roomViewMode === 'plan' ? 'План' : 'Стены'}`}
+          breadcrumb={
+            selectedWall && roomViewMode === 'walls'
+              ? `Проект → ${selectedRoom.name} → Стены → ${WALL_DIRECTION_LABELS[selectedWall.cardinal]}`
+              : `Проект → ${selectedRoom.name} → ${ROOM_VIEW_MODE_LABELS[roomViewMode]}`
+          }
         />
       ) : null}
 
@@ -169,6 +177,18 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
               onMoveElement={moveElement}
             />
           ) : null}
+        </View>
+      ) : null}
+
+      {isRoomFocusMode && selectedRoom && roomViewMode === 'ceiling' ? (
+        <View style={styles.wallModeContainer}>
+          <CeilingView room={selectedRoom} orientation={project.orientation} />
+        </View>
+      ) : null}
+
+      {isRoomFocusMode && selectedRoom && roomViewMode === 'floor' ? (
+        <View style={styles.wallModeContainer}>
+          <FloorView room={selectedRoom} orientation={project.orientation} />
         </View>
       ) : null}
 
