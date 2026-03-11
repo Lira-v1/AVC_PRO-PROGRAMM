@@ -17,6 +17,7 @@ const DOUBLE_PRESS_MS = 260;
 export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove, onResize, onDoublePress }: RoomRectangleProps) => {
   const dragOriginRef = useRef({ x: room.x, y: room.y });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
+  const isResizingRef = useRef(false);
   const lastPressRef = useRef(0);
 
   const dragResponder = useMemo(
@@ -25,11 +26,19 @@ export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove,
         onStartShouldSetPanResponder: () => canInteract,
         onMoveShouldSetPanResponder: () => canInteract,
         onPanResponderGrant: () => {
+          if (isResizingRef.current) return;
           dragOriginRef.current = { x: room.x, y: room.y };
           onSelect(room.id);
         },
         onPanResponderMove: (_, gestureState) => {
+          if (isResizingRef.current) return;
           onMove(room.id, dragOriginRef.current.x + gestureState.dx, dragOriginRef.current.y + gestureState.dy);
+        },
+        onPanResponderRelease: () => {
+          isResizingRef.current = false;
+        },
+        onPanResponderTerminate: () => {
+          isResizingRef.current = false;
         },
       }),
     [canInteract, onMove, onSelect, room.id, room.x, room.y],
@@ -41,11 +50,18 @@ export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove,
         onStartShouldSetPanResponder: () => canInteract,
         onMoveShouldSetPanResponder: () => canInteract,
         onPanResponderGrant: () => {
+          isResizingRef.current = true;
           resizeOriginRef.current = { width: room.width, height: room.height };
           onSelect(room.id);
         },
         onPanResponderMove: (_, gestureState) => {
           onResize(room.id, resizeOriginRef.current.width + gestureState.dx, resizeOriginRef.current.height + gestureState.dy);
+        },
+        onPanResponderRelease: () => {
+          isResizingRef.current = false;
+        },
+        onPanResponderTerminate: () => {
+          isResizingRef.current = false;
         },
       }),
     [canInteract, onResize, onSelect, room.height, room.id, room.width],
@@ -61,26 +77,23 @@ export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove,
   };
 
   return (
-    <Pressable
-      {...dragResponder.panHandlers}
-      onPress={handlePress}
-      style={[styles.room, isSelected ? styles.roomSelected : null, { left: room.x, top: room.y, width: room.width, height: room.height }]}
-    >
-      <View pointerEvents="none" style={styles.roomHeader}>
-        <Text style={styles.roomName}>{room.name || ROOM_TYPE_LABELS[room.type]}</Text>
-      </View>
-      <View pointerEvents="none" style={styles.wallHintTop} />
-      <View pointerEvents="none" style={styles.wallHintRight} />
-      <View pointerEvents="none" style={styles.wallHintBottom} />
-      <View pointerEvents="none" style={styles.wallHintLeft} />
-      {canInteract ? <View style={styles.resizeHandle} {...resizeResponder.panHandlers} /> : null}
-    </Pressable>
+    <View style={[styles.roomRoot, { left: room.x, top: room.y, width: room.width, height: room.height }]} pointerEvents="box-none">
+      <Pressable {...dragResponder.panHandlers} onPress={handlePress} style={[styles.room, isSelected ? styles.roomSelected : null]}>
+        <View pointerEvents="none" style={styles.roomHeader}>
+          <Text style={styles.roomName}>{room.name || ROOM_TYPE_LABELS[room.type]}</Text>
+        </View>
+      </Pressable>
+      {canInteract ? <Pressable hitSlop={12} style={styles.resizeHandle} {...resizeResponder.panHandlers} onPress={handlePress} /> : null}
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  room: {
+  roomRoot: {
     position: 'absolute',
+  },
+  room: {
+    flex: 1,
     backgroundColor: '#F7FAFF',
     borderColor: '#2A3756',
     borderWidth: 2,
@@ -111,45 +124,13 @@ const styles = StyleSheet.create({
     color: '#1E2A46',
     textAlign: 'center',
   },
-  wallHintTop: {
-    position: 'absolute',
-    top: 6,
-    left: 18,
-    right: 18,
-    borderTopWidth: 1,
-    borderColor: 'rgba(37, 57, 103, 0.25)',
-  },
-  wallHintRight: {
-    position: 'absolute',
-    right: 6,
-    top: 18,
-    bottom: 18,
-    borderRightWidth: 1,
-    borderColor: 'rgba(37, 57, 103, 0.25)',
-  },
-  wallHintBottom: {
-    position: 'absolute',
-    bottom: 6,
-    left: 18,
-    right: 18,
-    borderBottomWidth: 1,
-    borderColor: 'rgba(37, 57, 103, 0.25)',
-  },
-  wallHintLeft: {
-    position: 'absolute',
-    left: 6,
-    top: 18,
-    bottom: 18,
-    borderLeftWidth: 1,
-    borderColor: 'rgba(37, 57, 103, 0.25)',
-  },
   resizeHandle: {
     position: 'absolute',
-    right: -8,
-    bottom: -8,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    right: -10,
+    bottom: -10,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#2D5ED2',
     borderWidth: 2,
     borderColor: '#FFFFFF',
