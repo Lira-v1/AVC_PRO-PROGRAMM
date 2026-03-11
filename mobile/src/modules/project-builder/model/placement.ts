@@ -1,5 +1,6 @@
 import { clamp, distanceToRoom, isPointInRoom, Point } from '../utils/geometry';
 import { createId } from '../utils/ids';
+import { getDefaultElementWidthMm, getElementOffsetFromPosition, getPositionFromOffset, validateWallPlacement } from './wallGeometry';
 import { getNearestWall, getWallRotation, getRoomWalls } from './walls';
 import { ElementNode, ElementType, Room, Wall } from './types';
 
@@ -44,15 +45,7 @@ const projectPointToWall = (wall: Wall, point: Point): Point => {
   return { x: wall.x1, y: clamp(point.y, Math.min(wall.y1, wall.y2), Math.max(wall.y1, wall.y2)) };
 };
 
-const getWallOffset = (wall: Wall, point: Point): number => {
-  if (wall.side === 'top' || wall.side === 'bottom') {
-    return Math.round(Math.abs(point.x - wall.x1));
-  }
-
-  return Math.round(Math.abs(point.y - wall.y1));
-};
-
-export const placeWallBoundElement = (rooms: Room[], point: Point, type: ElementType): ElementNode | null => {
+export const placeWallBoundElement = (rooms: Room[], elements: ElementNode[], point: Point, type: ElementType): ElementNode | null => {
   const room = getRoomByPoint(rooms, point) ?? getRoomNearPoint(rooms, point);
   if (!room) {
     return null;
@@ -60,8 +53,9 @@ export const placeWallBoundElement = (rooms: Room[], point: Point, type: Element
 
   const wall = getNearestWall(room, point);
   const wallPoint = projectPointToWall(wall, point);
+  const offsetMm = getElementOffsetFromPosition(wall, wallPoint);
 
-  return {
+  const candidate: ElementNode = {
     id: createId('el'),
     type,
     roomId: room.id,
@@ -70,8 +64,16 @@ export const placeWallBoundElement = (rooms: Room[], point: Point, type: Element
     x: wallPoint.x,
     y: wallPoint.y,
     rotation: getWallRotation(wall.side),
-    offsetMm: getWallOffset(wall, wallPoint),
+    offsetMm,
+    widthMm: getDefaultElementWidthMm(type),
   };
+
+  const wallElements = elements.filter((element) => element.roomId === room.id && element.wallId === wall.id);
+  if (!validateWallPlacement(candidate, wall, wallElements).valid) {
+    return null;
+  }
+
+  return candidate;
 };
 
 export const placeInteriorElement = (rooms: Room[], point: Point, type: ElementType): ElementNode | null => {
@@ -114,7 +116,21 @@ export const recalculateElementBinding = (rooms: Room[], element: ElementNode, p
     x: wallPoint.x,
     y: wallPoint.y,
     rotation: getWallRotation(wall.side),
-    offsetMm: getWallOffset(wall, wallPoint),
+    offsetMm: getElementOffsetFromPosition(wall, wallPoint),
+    widthMm: element.widthMm ?? getDefaultElementWidthMm(element.type),
+  };
+};
+
+export const applyElementOffsetToWall = (element: ElementNode, wall: Wall, offsetMm: number): ElementNode => {
+  const position = getPositionFromOffset(wall, offsetMm);
+  return {
+    ...element,
+    wallId: wall.id,
+    wallCardinal: wall.cardinal,
+    x: position.x,
+    y: position.y,
+    rotation: getWallRotation(wall.side),
+    offsetMm,
   };
 };
 

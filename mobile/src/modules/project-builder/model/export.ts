@@ -23,6 +23,7 @@ export const exportToEstimateDraft = (project: Project): EstimateDraftPayload =>
     wallId: element.wallId,
     wallCardinal: element.wallCardinal,
     preset: element.preset,
+    widthMm: element.widthMm,
     heightMode: element.heightMode,
     heightValueMm: element.heightValueMm,
     offsetMm: element.offsetMm,

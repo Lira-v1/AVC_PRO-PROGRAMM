@@ -1,9 +1,11 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
+import { getWallElementScale } from '../model/wallGeometry';
 import { ElementType } from '../types';
 
 type ElementSymbolProps = {
   type: ElementType;
+  widthMm?: number;
   selected?: boolean;
   rotation?: number;
 };
@@ -11,11 +13,12 @@ type ElementSymbolProps = {
 const STROKE = '#1C2A44';
 const ACCENT = '#2D5ED2';
 
-export const ElementSymbol = ({ type, selected = false, rotation = 0 }: ElementSymbolProps) => {
+export const ElementSymbol = ({ type, widthMm, selected = false, rotation = 0 }: ElementSymbolProps) => {
   const color = selected ? ACCENT : STROKE;
+  const scale = getWallElementScale({ type, widthMm });
 
   return (
-    <View style={[styles.root, { transform: [{ rotate: `${rotation}deg` }] }]}>
+    <View style={[styles.root, { transform: [{ rotate: `${rotation}deg` }, { scaleX: scale }, { scaleY: Math.min(1.6, 0.9 + scale * 0.2) }] }]}>
       {type === 'socket' ? <View style={[styles.socket, { borderColor: color }]} /> : null}
       {type === 'double_socket' ? (
         <View style={styles.doubleRow}>

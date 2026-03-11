@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { exportToEstimateDraft } from '../model/export';
 import { CARDINAL_DIRECTIONS } from '../model/orientation';
-import { placeInteriorElement, placeWallBoundElement, recalculateElementBinding } from '../model/placement';
+import { applyElementOffsetToWall, placeInteriorElement, placeWallBoundElement, recalculateElementBinding } from '../model/placement';
 import { createDefaultRoom, createInitialProject } from '../model/projectBuilderDefaults';
 import { getPresetById } from '../model/presets';
 import { buildProjectSummary } from '../model/summary';
+import { getDefaultElementWidthMm, validateWallPlacement } from '../model/wallGeometry';
 import { getRoomWalls } from '../model/walls';
 import { createId } from '../utils/ids';
 import { ElementNode, ElementType, EstimateDraftPayload, Project, Room, RoomType, ToolType, Wall, ROOM_TYPE_LABELS } from '../types';
@@ -17,7 +18,7 @@ type RoomDimensions = {
   height: number;
 };
 
-type ElementParametersPatch = Pick<ElementNode, 'preset' | 'heightMode' | 'heightValueMm' | 'note'>;
+type ElementParametersPatch = Pick<ElementNode, 'preset' | 'heightMode' | 'heightValueMm' | 'note' | 'offsetMm' | 'widthMm'>;
 
 const applyProjectUpdate = (project: Project, patch: Partial<Project>): Project => {
   const nextProject = {
@@ -184,7 +185,8 @@ export const useProjectBuilder = () => {
 
   const addElementAtPoint = (type: ElementType, point: { x: number; y: number }) => {
     updateProject((prevProject) => {
-      const node = type === 'light_point' ? placeInteriorElement(prevProject.rooms, point, type) : placeWallBoundElement(prevProject.rooms, point, type);
+      const node =
+        type === 'light_point' ? placeInteriorElement(prevProject.rooms, point, type) : placeWallBoundElement(prevProject.rooms, prevProject.elements, point, type);
       if (!node) return prevProject;
 
       return {
@@ -195,15 +197,29 @@ export const useProjectBuilder = () => {
   };
 
   const moveElement = (elementId: string, x: number, y: number) => {
-    updateProject((prevProject) => ({
-      ...prevProject,
-      elements: prevProject.elements
+    updateProject((prevProject) => {
+      const nextElements = prevProject.elements
         .map((element) => {
           if (element.id !== elementId) return element;
-          return recalculateElementBinding(prevProject.rooms, element, { x, y });
+          const rebound = recalculateElementBinding(prevProject.rooms, element, { x, y });
+          if (!rebound || rebound.type === 'light_point' || !rebound.wallId) return rebound;
+
+          const wall = prevProject.rooms
+            .flatMap((room) => getRoomWalls(room))
+            .find((roomWall) => roomWall.id === rebound.wallId && roomWall.roomId === rebound.roomId);
+
+          if (!wall) return element;
+
+          const wallElements = prevProject.elements.filter((item) => item.id !== element.id && item.roomId === rebound.roomId && item.wallId === rebound.wallId);
+          return validateWallPlacement(rebound, wall, wallElements).valid ? rebound : element;
         })
-        .filter(Boolean) as ElementNode[],
-    }));
+        .filter(Boolean) as ElementNode[];
+
+      return {
+        ...prevProject,
+        elements: nextElements,
+      };
+    });
   };
 
   const updateElementParameters = (elementId: string, patch: ElementParametersPatch) => {
@@ -215,12 +231,37 @@ export const useProjectBuilder = () => {
         const preset = patch.preset ?? element.preset;
         const presetSuggestion = getPresetById(element.type, preset);
 
-        return {
+        const nextElement: ElementNode = {
           ...element,
           ...patch,
+          widthMm: patch.widthMm ?? element.widthMm ?? getDefaultElementWidthMm(element.type),
           heightMode: patch.heightMode ?? presetSuggestion?.suggestedHeightMode ?? element.heightMode,
           heightValueMm: patch.heightValueMm ?? presetSuggestion?.suggestedHeightValueMm ?? element.heightValueMm,
         };
+
+        if (typeof patch.offsetMm === 'number' && element.wallId && element.roomId) {
+          const wall = prevProject.rooms
+            .flatMap((room) => getRoomWalls(room))
+            .find((roomWall) => roomWall.id === element.wallId && roomWall.roomId === element.roomId);
+
+          if (wall) {
+            const positioned = applyElementOffsetToWall(nextElement, wall, patch.offsetMm);
+            const wallElements = prevProject.elements.filter((item) => item.id !== element.id && item.roomId === element.roomId && item.wallId === element.wallId);
+            return validateWallPlacement(positioned, wall, wallElements).valid ? positioned : element;
+          }
+        }
+
+        if (nextElement.wallId && nextElement.roomId) {
+          const wall = prevProject.rooms
+            .flatMap((room) => getRoomWalls(room))
+            .find((roomWall) => roomWall.id === nextElement.wallId && roomWall.roomId === nextElement.roomId);
+          if (wall) {
+            const wallElements = prevProject.elements.filter((item) => item.id !== element.id && item.roomId === nextElement.roomId && item.wallId === nextElement.wallId);
+            return validateWallPlacement(nextElement, wall, wallElements).valid ? nextElement : element;
+          }
+        }
+
+        return nextElement;
       }),
     }));
   };
