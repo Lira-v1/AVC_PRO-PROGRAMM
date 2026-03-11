@@ -1,4 +1,4 @@
-import { Project, Room, RoomType } from '../types';
+import { Project, Room, RoomType, ROOM_TYPE_LABELS } from '../types';
 
 export const DEFAULT_ROOM_SIZE = {
   width: 120,
@@ -28,5 +28,5 @@ export const createDefaultRoom = (roomIndex: number, type: RoomType = 'other'): 
   width: DEFAULT_ROOM_SIZE.width,
   height: DEFAULT_ROOM_SIZE.height,
   type,
-  name: `Комната ${roomIndex + 1}`,
+  name: ROOM_TYPE_LABELS[type],
 });
