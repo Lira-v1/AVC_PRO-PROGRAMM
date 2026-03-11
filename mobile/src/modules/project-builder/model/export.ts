@@ -21,9 +21,11 @@ export const exportToEstimateDraft = (project: Project): EstimateDraftPayload =>
     type: element.type,
     roomId: element.roomId,
     wallId: element.wallId,
+    wallCardinal: element.wallCardinal,
     preset: element.preset,
     heightMode: element.heightMode,
     heightValueMm: element.heightValueMm,
+    offsetMm: element.offsetMm,
     note: element.note,
   })),
 });

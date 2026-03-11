@@ -23,15 +23,25 @@ export type Room = {
 };
 
 export type WallSide = 'top' | 'right' | 'bottom' | 'left';
+export type CardinalDirection = 'north' | 'east' | 'south' | 'west';
+
+export type ProjectOrientation = {
+  northLabel?: string;
+  eastLabel?: string;
+  southLabel?: string;
+  westLabel?: string;
+};
 
 export type Wall = {
   id: string;
   roomId: string;
   side: WallSide;
+  cardinal: CardinalDirection;
   x1: number;
   y1: number;
   x2: number;
   y2: number;
+  length?: number;
 };
 
 export const ELEMENT_TYPES = [
@@ -57,12 +67,14 @@ export type ElementNode = {
   type: ElementType;
   roomId?: string;
   wallId?: string | null;
+  wallCardinal?: CardinalDirection;
   x: number;
   y: number;
   rotation?: number;
   preset?: string;
   heightMode?: HeightMode;
   heightValueMm?: number;
+  offsetMm?: number;
   note?: string;
 };
 
@@ -76,6 +88,7 @@ export type Project = {
   name: string;
   title: string;
   objectType: 'apartment' | 'house' | 'warehouse' | 'other';
+  orientation?: ProjectOrientation;
   rooms: Room[];
   elements: ElementNode[];
   summary: ProjectSummary;
@@ -100,9 +113,11 @@ export type EstimateDraftPayload = {
     type: string;
     roomId?: string;
     wallId?: string | null;
+    wallCardinal?: CardinalDirection;
     preset?: string;
     heightMode?: string;
     heightValueMm?: number;
+    offsetMm?: number;
     note?: string;
   }>;
 };

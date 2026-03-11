@@ -6,8 +6,11 @@ import { ElementQuickCard } from '../components/ElementQuickCard';
 import { ProjectCanvas } from '../components/ProjectCanvas';
 import { ProjectCard } from '../components/ProjectCard';
 import { RoomFocusHeader } from '../components/RoomFocusHeader';
+import { RoomModeSwitch } from '../components/RoomModeSwitch';
+import { RoomWallsTabs } from '../components/RoomWallsTabs';
 import { SummaryPanel } from '../components/SummaryPanel';
 import { Toolbar } from '../components/Toolbar';
+import { WallView } from '../components/WallView';
 import { useProjectBuilder } from '../hooks/useProjectBuilder';
 import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
 
@@ -41,6 +44,10 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
     selectedRoomId,
     selectedElementId,
     isRoomFocusMode,
+    roomViewMode,
+    selectedWallId,
+    selectedRoomWalls,
+    selectedWall,
     isSummaryOpen,
     lastSavedAt,
     isQuickCardOpen,
@@ -51,6 +58,8 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
     selectRoom,
     enterRoomFocus,
     exitRoomFocus,
+    switchRoomViewMode,
+    selectWall,
     openSummary,
     closeSummary,
     moveRoom,
@@ -97,7 +106,13 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
         </Pressable>
       </View>
 
-      {isRoomFocusMode && selectedRoom ? <RoomFocusHeader roomName={selectedRoom.name} onBack={exitRoomFocus} /> : null}
+      {isRoomFocusMode && selectedRoom ? (
+        <RoomFocusHeader
+          roomName={selectedRoom.name}
+          onBack={exitRoomFocus}
+          breadcrumb={selectedWall ? `Проект → ${selectedRoom.name} → Стены → ${selectedWall.cardinal}` : `Проект → ${selectedRoom.name} → ${roomViewMode === 'plan' ? 'План' : 'Стены'}`}
+        />
+      ) : null}
 
       <View style={styles.toolbarHeader}>
         <Text style={styles.projectTitle}>{project.name}</Text>
@@ -118,23 +133,44 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
 
       <Toolbar tool={tool} onSelectTool={setTool} />
 
-      <View style={styles.canvasContainer}>
-        <ProjectCanvas
-          rooms={displayedRooms}
-          elements={displayedElements}
-          selectedRoomId={selectedRoomId}
-          selectedElementId={selectedElementId}
-          tool={tool}
-          onSelectRoom={selectRoom}
-          onOpenRoom={enterRoomFocus}
-          onMoveRoom={moveRoom}
-          onResizeRoom={resizeRoom}
-          onCanvasTap={handleCanvasTap}
-          onSelectElement={selectElement}
-          onDeleteElement={deleteElement}
-          onMoveElement={moveElement}
-        />
-      </View>
+      {isRoomFocusMode && selectedRoom ? <RoomModeSwitch mode={roomViewMode} onChange={switchRoomViewMode} /> : null}
+
+      {!isRoomFocusMode || roomViewMode === 'plan' ? (
+        <View style={styles.canvasContainer}>
+          <ProjectCanvas
+            rooms={displayedRooms}
+            elements={displayedElements}
+            selectedRoomId={selectedRoomId}
+            selectedElementId={selectedElementId}
+            tool={tool}
+            onSelectRoom={selectRoom}
+            onOpenRoom={enterRoomFocus}
+            onMoveRoom={moveRoom}
+            onResizeRoom={resizeRoom}
+            onCanvasTap={handleCanvasTap}
+            onSelectElement={selectElement}
+            onDeleteElement={deleteElement}
+            onMoveElement={moveElement}
+          />
+        </View>
+      ) : null}
+
+      {isRoomFocusMode && selectedRoom && roomViewMode === 'walls' ? (
+        <View style={styles.wallModeContainer}>
+          <RoomWallsTabs walls={selectedRoomWalls} selectedWallId={selectedWallId} onSelect={selectWall} />
+          {selectedWall ? (
+            <WallView
+              roomName={selectedRoom.name}
+              roomId={selectedRoom.id}
+              wall={selectedWall}
+              elements={displayedElements}
+              selectedElementId={selectedElementId}
+              onSelectElement={selectElement}
+              onMoveElement={moveElement}
+            />
+          ) : null}
+        </View>
+      ) : null}
 
       {selectedElement && isQuickCardOpen ? (
         <ElementQuickCard
@@ -231,6 +267,7 @@ const styles = StyleSheet.create({
   addRoomButton: { backgroundColor: '#1E8B57', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14 },
   addRoomButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   canvasContainer: { flex: 1, marginTop: 8, marginBottom: 12 },
+  wallModeContainer: { marginTop: 8, marginBottom: 12 },
   editorCard: { backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#D7DEEE', padding: 12, gap: 10 },
   editorTitle: { fontSize: 16, fontWeight: '700', color: '#1C2743' },
   editorMeta: { fontSize: 12, color: '#617194' },

@@ -1,4 +1,5 @@
 import { createId } from '../utils/ids';
+import { DEFAULT_PROJECT_ORIENTATION } from './orientation';
 import { Project, Room, RoomType, ROOM_TYPE_LABELS } from '../types';
 
 export const DEFAULT_ROOM_SIZE = {
@@ -17,6 +18,7 @@ export const createInitialProject = (): Project => {
     name: DEFAULT_PROJECT_NAME,
     title: DEFAULT_PROJECT_NAME,
     objectType: 'apartment',
+    orientation: DEFAULT_PROJECT_ORIENTATION,
     rooms: [],
     elements: [],
     summary: {
