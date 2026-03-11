@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
+import { exportToEstimateDraft } from '../model/export';
+import { placeInteriorElement, placeWallBoundElement, recalculateElementBinding } from '../model/placement';
 import { createDefaultRoom, createInitialProject } from '../model/projectBuilderDefaults';
 import { getPresetById } from '../model/presets';
-import { placeInteriorElement, placeWallBoundElement, recalculateElementBinding } from '../model/placement';
+import { buildProjectSummary } from '../model/summary';
 import { createId } from '../utils/ids';
-import { ElementNode, ElementType, Project, Room, RoomType, ToolType, ROOM_TYPE_LABELS } from '../types';
+import { ElementNode, ElementType, EstimateDraftPayload, Project, Room, RoomType, ToolType, ROOM_TYPE_LABELS } from '../types';
 
 const MIN_ROOM_SIZE = 40;
 const DUPLICATE_OFFSET = 12;
@@ -15,6 +17,26 @@ type RoomDimensions = {
 
 type ElementParametersPatch = Pick<ElementNode, 'preset' | 'heightMode' | 'heightValueMm' | 'note'>;
 
+const applyProjectUpdate = (project: Project, patch: Partial<Project>): Project => {
+  const nextProject = {
+    ...project,
+    ...patch,
+  };
+
+  const summary = buildProjectSummary(nextProject.elements, nextProject.rooms);
+  const hasStructure = nextProject.rooms.length > 0;
+  const hasElements = nextProject.elements.length > 0;
+
+  const derivedStatus = hasStructure && hasElements ? 'formed' : 'draft';
+
+  return {
+    ...nextProject,
+    summary,
+    status: derivedStatus,
+    updatedAt: new Date().toISOString(),
+  };
+};
+
 export const useProjectBuilder = () => {
   const [project, setProject] = useState<Project>(() => createInitialProject());
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
@@ -22,14 +44,25 @@ export const useProjectBuilder = () => {
   const [tool, setTool] = useState<ToolType>('select');
   const [isQuickCardOpen, setQuickCardOpen] = useState(false);
   const [isParametersSheetOpen, setParametersSheetOpen] = useState(false);
+  const [isRoomFocusMode, setRoomFocusMode] = useState(false);
+  const [isSummaryOpen, setSummaryOpen] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [estimateDraftPayload, setEstimateDraftPayload] = useState<EstimateDraftPayload | null>(null);
+
+  const updateProject = (updater: (prevProject: Project) => Project) => {
+    setProject((prevProject) => {
+      const nextProject = updater(prevProject);
+      if (nextProject === prevProject) return prevProject;
+      return applyProjectUpdate(nextProject, {});
+    });
+  };
 
   const addRoom = () => {
     const nextRoom = createDefaultRoom(project.rooms.length);
 
-    setProject((prevProject) => ({
+    updateProject((prevProject) => ({
       ...prevProject,
       rooms: [...prevProject.rooms, nextRoom],
-      updatedAt: new Date().toISOString(),
     }));
 
     setSelectedRoomId(nextRoom.id);
@@ -43,6 +76,15 @@ export const useProjectBuilder = () => {
     setSelectedElementId(null);
     setQuickCardOpen(false);
     setParametersSheetOpen(false);
+  };
+
+  const enterRoomFocus = (roomId: string) => {
+    selectRoom(roomId);
+    setRoomFocusMode(true);
+  };
+
+  const exitRoomFocus = () => {
+    setRoomFocusMode(false);
   };
 
   const selectElement = (elementId: string) => {
@@ -71,7 +113,7 @@ export const useProjectBuilder = () => {
   };
 
   const updateRoom = (roomId: string, updater: (room: Room) => Room) => {
-    setProject((prevProject) => {
+    updateProject((prevProject) => {
       const nextRooms = prevProject.rooms.map((room) => (room.id === roomId ? updater(room) : room));
       const nextElements = prevProject.elements
         .map((element) => recalculateElementBinding(nextRooms, element, { x: element.x, y: element.y }))
@@ -81,7 +123,6 @@ export const useProjectBuilder = () => {
         ...prevProject,
         rooms: nextRooms,
         elements: nextElements,
-        updatedAt: new Date().toISOString(),
       };
     });
   };
@@ -103,31 +144,29 @@ export const useProjectBuilder = () => {
   };
 
   const removeRoom = (roomId: string) => {
-    setProject((prevProject) => ({
+    updateProject((prevProject) => ({
       ...prevProject,
       rooms: prevProject.rooms.filter((room) => room.id !== roomId),
       elements: prevProject.elements.filter((el) => el.roomId !== roomId),
-      updatedAt: new Date().toISOString(),
     }));
 
     setSelectedRoomId((currentSelected) => (currentSelected === roomId ? null : currentSelected));
   };
 
   const addElementAtPoint = (type: ElementType, point: { x: number; y: number }) => {
-    setProject((prevProject) => {
+    updateProject((prevProject) => {
       const node = type === 'light_point' ? placeInteriorElement(prevProject.rooms, point, type) : placeWallBoundElement(prevProject.rooms, point, type);
       if (!node) return prevProject;
 
       return {
         ...prevProject,
         elements: [...prevProject.elements, node],
-        updatedAt: new Date().toISOString(),
       };
     });
   };
 
   const moveElement = (elementId: string, x: number, y: number) => {
-    setProject((prevProject) => ({
+    updateProject((prevProject) => ({
       ...prevProject,
       elements: prevProject.elements
         .map((element) => {
@@ -135,12 +174,11 @@ export const useProjectBuilder = () => {
           return recalculateElementBinding(prevProject.rooms, element, { x, y });
         })
         .filter(Boolean) as ElementNode[],
-      updatedAt: new Date().toISOString(),
     }));
   };
 
   const updateElementParameters = (elementId: string, patch: ElementParametersPatch) => {
-    setProject((prevProject) => ({
+    updateProject((prevProject) => ({
       ...prevProject,
       elements: prevProject.elements.map((element) => {
         if (element.id !== elementId) return element;
@@ -155,14 +193,13 @@ export const useProjectBuilder = () => {
           heightValueMm: patch.heightValueMm ?? presetSuggestion?.suggestedHeightValueMm ?? element.heightValueMm,
         };
       }),
-      updatedAt: new Date().toISOString(),
     }));
   };
 
   const duplicateElement = (elementId: string) => {
     let duplicatedId: string | null = null;
 
-    setProject((prevProject) => {
+    updateProject((prevProject) => {
       const source = prevProject.elements.find((element) => element.id === elementId);
       if (!source) {
         return prevProject;
@@ -184,7 +221,6 @@ export const useProjectBuilder = () => {
       return {
         ...prevProject,
         elements: [...prevProject.elements, boundCopy],
-        updatedAt: new Date().toISOString(),
       };
     });
 
@@ -197,10 +233,9 @@ export const useProjectBuilder = () => {
   };
 
   const deleteElement = (elementId: string) => {
-    setProject((prevProject) => ({
+    updateProject((prevProject) => ({
       ...prevProject,
       elements: prevProject.elements.filter((element) => element.id !== elementId),
-      updatedAt: new Date().toISOString(),
     }));
 
     if (selectedElementId === elementId) {
@@ -212,7 +247,6 @@ export const useProjectBuilder = () => {
 
   const handleCanvasTap = (point: { x: number; y: number }) => {
     if (tool === 'select') {
-      setSelectedRoomId(null);
       closeElementPanels();
       return;
     }
@@ -223,25 +257,57 @@ export const useProjectBuilder = () => {
     addElementAtPoint(tool, point);
   };
 
+  const saveProject = () => {
+    setLastSavedAt(new Date().toISOString());
+  };
+
+  const prepareEstimateDraft = () => {
+    setProject((prevProject) => {
+      const payload = exportToEstimateDraft(prevProject);
+      setEstimateDraftPayload(payload);
+      return {
+        ...prevProject,
+        status: 'ready_for_estimate',
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  };
+
   const rooms = useMemo<Room[]>(() => project.rooms, [project.rooms]);
   const elements = useMemo<ElementNode[]>(() => project.elements, [project.elements]);
   const selectedRoom = useMemo<Room | null>(() => rooms.find((room) => room.id === selectedRoomId) ?? null, [rooms, selectedRoomId]);
   const selectedElement = useMemo<ElementNode | null>(() => elements.find((item) => item.id === selectedElementId) ?? null, [elements, selectedElementId]);
 
+  const displayedRooms = useMemo(() => (isRoomFocusMode && selectedRoom ? [selectedRoom] : rooms), [isRoomFocusMode, rooms, selectedRoom]);
+  const displayedElements = useMemo(
+    () => (isRoomFocusMode && selectedRoom ? elements.filter((element) => element.roomId === selectedRoom.id) : elements),
+    [elements, isRoomFocusMode, selectedRoom],
+  );
+
   return {
     project,
     rooms,
     elements,
+    displayedRooms,
+    displayedElements,
     selectedRoom,
     selectedElement,
     selectedRoomId,
     selectedElementId,
+    isRoomFocusMode,
+    isSummaryOpen,
+    lastSavedAt,
+    estimateDraftPayload,
     isQuickCardOpen,
     isParametersSheetOpen,
     tool,
     setTool,
     addRoom,
     selectRoom,
+    enterRoomFocus,
+    exitRoomFocus,
+    openSummary: () => setSummaryOpen(true),
+    closeSummary: () => setSummaryOpen(false),
     moveRoom,
     resizeRoom,
     setRoomType,
@@ -256,5 +322,7 @@ export const useProjectBuilder = () => {
     closeParametersSheet,
     closeElementPanels,
     handleCanvasTap,
+    saveProject,
+    prepareEstimateDraft,
   };
 };

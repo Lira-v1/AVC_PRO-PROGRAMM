@@ -11,6 +11,7 @@ type ProjectCanvasProps = {
   selectedElementId: string | null;
   tool: ToolType;
   onSelectRoom: (roomId: string) => void;
+  onOpenRoom?: (roomId: string) => void;
   onMoveRoom: (roomId: string, x: number, y: number) => void;
   onResizeRoom: (roomId: string, width: number, height: number) => void;
   onCanvasTap: (point: { x: number; y: number }) => void;
@@ -26,6 +27,7 @@ export const ProjectCanvas = ({
   selectedElementId,
   tool,
   onSelectRoom,
+  onOpenRoom,
   onMoveRoom,
   onResizeRoom,
   onCanvasTap,
@@ -50,6 +52,7 @@ export const ProjectCanvas = ({
           isSelected={selectedRoomId === room.id}
           canInteract={selectMode}
           onSelect={onSelectRoom}
+          onDoublePress={onOpenRoom}
           onMove={onMoveRoom}
           onResize={onResizeRoom}
         />

@@ -47,6 +47,7 @@ export const ELEMENT_TYPES = [
 ] as const;
 
 export type ElementType = (typeof ELEMENT_TYPES)[number];
+export type ProjectStatus = 'draft' | 'formed' | 'ready_for_estimate';
 
 export const HEIGHT_MODES = ['from_floor', 'from_ceiling', 'custom'] as const;
 export type HeightMode = (typeof HEIGHT_MODES)[number];
@@ -65,13 +66,45 @@ export type ElementNode = {
   note?: string;
 };
 
+export type ProjectSummary = {
+  byType: Partial<Record<ElementType, number>>;
+  byRoom: Record<string, Partial<Record<ElementType, number>>>;
+};
+
 export type Project = {
   id: string;
   name: string;
+  title: string;
+  objectType: 'apartment' | 'house' | 'warehouse' | 'other';
   rooms: Room[];
   elements: ElementNode[];
+  summary: ProjectSummary;
+  status: ProjectStatus;
   createdAt: string;
   updatedAt: string;
+};
+
+export type EstimateDraftPayload = {
+  projectId: string;
+  title: string;
+  objectType: string;
+  rooms: Array<{
+    id: string;
+    type: string;
+    name: string;
+  }>;
+  totalsByType: Record<string, number>;
+  totalsByRoom: Record<string, Record<string, number>>;
+  elements: Array<{
+    id: string;
+    type: string;
+    roomId?: string;
+    wallId?: string | null;
+    preset?: string;
+    heightMode?: string;
+    heightValueMm?: number;
+    note?: string;
+  }>;
 };
 
 export const TOOL_TYPES = ['select', ...ELEMENT_TYPES, 'delete'] as const;

@@ -15,8 +15,15 @@ export const createInitialProject = (): Project => {
   return {
     id: createId('project'),
     name: DEFAULT_PROJECT_NAME,
+    title: DEFAULT_PROJECT_NAME,
+    objectType: 'apartment',
     rooms: [],
     elements: [],
+    summary: {
+      byType: {},
+      byRoom: {},
+    },
+    status: 'draft',
     createdAt: now,
     updatedAt: now,
   };
