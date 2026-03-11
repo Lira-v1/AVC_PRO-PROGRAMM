@@ -12,7 +12,7 @@ type CanvasLayerElementsProps = {
   onMoveElement: (elementId: string, x: number, y: number) => void;
 };
 
-const HIT_SIZE = 36;
+const HIT_SIZE = 40;
 
 export const CanvasLayerElements = ({
   elements,
@@ -94,9 +94,11 @@ const styles = StyleSheet.create({
     height: HIT_SIZE,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 20,
   },
   activeHit: {
     backgroundColor: '#E3ECFF',
+    borderWidth: 1,
+    borderColor: '#2D5ED2',
   },
 });
