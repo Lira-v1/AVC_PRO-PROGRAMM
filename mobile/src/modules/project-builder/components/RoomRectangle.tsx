@@ -5,19 +5,21 @@ import { Room, ROOM_TYPE_LABELS } from '../types';
 type RoomRectangleProps = {
   room: Room;
   isSelected: boolean;
+  canInteract: boolean;
   onSelect: (roomId: string) => void;
   onMove: (roomId: string, x: number, y: number) => void;
   onResize: (roomId: string, width: number, height: number) => void;
 };
 
-export const RoomRectangle = ({ room, isSelected, onSelect, onMove, onResize }: RoomRectangleProps) => {
+export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove, onResize }: RoomRectangleProps) => {
   const dragOriginRef = useRef({ x: room.x, y: room.y });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
 
   const dragResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => canInteract,
+        onMoveShouldSetPanResponder: () => canInteract,
         onPanResponderGrant: () => {
           dragOriginRef.current = { x: room.x, y: room.y };
           onSelect(room.id);
@@ -26,13 +28,14 @@ export const RoomRectangle = ({ room, isSelected, onSelect, onMove, onResize }: 
           onMove(room.id, dragOriginRef.current.x + gestureState.dx, dragOriginRef.current.y + gestureState.dy);
         },
       }),
-    [onMove, onSelect, room.id, room.x, room.y],
+    [canInteract, onMove, onSelect, room.id, room.x, room.y],
   );
 
   const resizeResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => canInteract,
+        onMoveShouldSetPanResponder: () => canInteract,
         onPanResponderGrant: () => {
           resizeOriginRef.current = { width: room.width, height: room.height };
           onSelect(room.id);
@@ -41,25 +44,16 @@ export const RoomRectangle = ({ room, isSelected, onSelect, onMove, onResize }: 
           onResize(room.id, resizeOriginRef.current.width + gestureState.dx, resizeOriginRef.current.height + gestureState.dy);
         },
       }),
-    [onResize, onSelect, room.height, room.id, room.width],
+    [canInteract, onResize, onSelect, room.height, room.id, room.width],
   );
 
   return (
     <View
       {...dragResponder.panHandlers}
-      style={[
-        styles.room,
-        isSelected ? styles.roomSelected : null,
-        {
-          left: room.x,
-          top: room.y,
-          width: room.width,
-          height: room.height,
-        },
-      ]}
+      style={[styles.room, isSelected ? styles.roomSelected : null, { left: room.x, top: room.y, width: room.width, height: room.height }]}
     >
       <Text style={styles.roomName}>{ROOM_TYPE_LABELS[room.type]}</Text>
-      <View style={styles.resizeHandle} {...resizeResponder.panHandlers} />
+      {canInteract ? <View style={styles.resizeHandle} {...resizeResponder.panHandlers} /> : null}
     </View>
   );
 };
@@ -67,20 +61,20 @@ export const RoomRectangle = ({ room, isSelected, onSelect, onMove, onResize }: 
 const styles = StyleSheet.create({
   room: {
     position: 'absolute',
-    backgroundColor: '#E4ECFF',
-    borderColor: '#4B7BE5',
+    backgroundColor: '#F7FAFF',
+    borderColor: '#2A3756',
     borderWidth: 2,
-    borderRadius: 8,
+    borderRadius: 4,
     padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
   roomSelected: {
-    borderColor: '#2349B8',
-    backgroundColor: '#DBE7FF',
+    borderColor: '#2D5ED2',
+    backgroundColor: '#EDF3FF',
   },
   roomName: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: '#1E2A46',
     textAlign: 'center',
@@ -89,10 +83,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: -8,
     bottom: -8,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#2349B8',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#2D5ED2',
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },

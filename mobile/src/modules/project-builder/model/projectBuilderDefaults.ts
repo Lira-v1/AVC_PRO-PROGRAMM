@@ -1,3 +1,4 @@
+import { createId } from '../utils/ids';
 import { Project, Room, RoomType, ROOM_TYPE_LABELS } from '../types';
 
 export const DEFAULT_ROOM_SIZE = {
@@ -6,23 +7,23 @@ export const DEFAULT_ROOM_SIZE = {
 };
 
 const ROOM_STEP = 18;
-
 const DEFAULT_PROJECT_NAME = 'Новый проект';
 
 export const createInitialProject = (): Project => {
   const now = new Date().toISOString();
 
   return {
-    id: `project-${Date.now()}`,
+    id: createId('project'),
     name: DEFAULT_PROJECT_NAME,
     rooms: [],
+    elements: [],
     createdAt: now,
     updatedAt: now,
   };
 };
 
 export const createDefaultRoom = (roomIndex: number, type: RoomType = 'other'): Room => ({
-  id: `room-${Date.now()}-${roomIndex + 1}`,
+  id: createId('room'),
   x: 16 + ROOM_STEP * roomIndex,
   y: 16 + ROOM_STEP * roomIndex,
   width: DEFAULT_ROOM_SIZE.width,
