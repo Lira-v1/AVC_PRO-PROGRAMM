@@ -8,6 +8,7 @@ import { buildProjectSummary } from '../model/summary';
 import { getDefaultElementWidthMm, validateWallPlacement } from '../model/wallGeometry';
 import { getRoomWalls } from '../model/walls';
 import { createId } from '../utils/ids';
+import { RoomViewMode } from '../model/roomViewMode';
 import { ElementNode, ElementType, EstimateDraftPayload, Project, Room, RoomType, ToolType, Wall, ROOM_TYPE_LABELS } from '../types';
 
 const MIN_ROOM_SIZE = 40;
@@ -48,7 +49,7 @@ export const useProjectBuilder = () => {
   const [isQuickCardOpen, setQuickCardOpen] = useState(false);
   const [isParametersSheetOpen, setParametersSheetOpen] = useState(false);
   const [isRoomFocusMode, setRoomFocusMode] = useState(false);
-  const [roomViewMode, setRoomViewMode] = useState<'plan' | 'walls'>('plan');
+  const [roomViewMode, setRoomViewMode] = useState<RoomViewMode>('plan');
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [isSummaryOpen, setSummaryOpen] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
@@ -97,10 +98,10 @@ export const useProjectBuilder = () => {
     setSelectedWallId(null);
   };
 
-  const switchRoomViewMode = (mode: 'plan' | 'walls') => {
+  const switchRoomViewMode = (mode: RoomViewMode) => {
     setRoomViewMode(mode);
 
-    if (mode === 'plan') {
+    if (mode !== 'walls') {
       setSelectedWallId(null);
       return;
     }

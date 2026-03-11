@@ -1,13 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { CardinalDirection, Wall } from '../types';
-
-const WALL_LABELS: Record<CardinalDirection, string> = {
-  north: 'Север',
-  east: 'Восток',
-  south: 'Юг',
-  west: 'Запад',
-};
+import { WALL_DIRECTION_LABELS } from '../model/orientation';
+import { Wall } from '../types';
 
 type RoomWallsTabsProps = {
   walls: Wall[];
@@ -21,7 +15,7 @@ export const RoomWallsTabs = ({ walls, selectedWallId, onSelect }: RoomWallsTabs
       const isActive = selectedWallId === wall.id;
       return (
         <Pressable key={wall.id} style={[styles.tab, isActive ? styles.tabActive : null]} onPress={() => onSelect(wall.id)}>
-          <Text style={[styles.text, isActive ? styles.textActive : null]}>{WALL_LABELS[wall.cardinal]}</Text>
+          <Text style={[styles.text, isActive ? styles.textActive : null]}>{WALL_DIRECTION_LABELS[wall.cardinal]}</Text>
         </Pressable>
       );
     })}

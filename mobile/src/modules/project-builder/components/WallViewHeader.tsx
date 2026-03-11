@@ -1,13 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { CardinalDirection, Wall } from '../types';
-
-const WALL_LABELS: Record<CardinalDirection, string> = {
-  north: 'Северная стена',
-  east: 'Восточная стена',
-  south: 'Южная стена',
-  west: 'Западная стена',
-};
+import { WALL_DIRECTION_LABELS } from '../model/orientation';
+import { Wall } from '../types';
 
 type WallViewHeaderProps = {
   roomName: string;
@@ -17,7 +11,7 @@ type WallViewHeaderProps = {
 export const WallViewHeader = ({ roomName, wall }: WallViewHeaderProps) => (
   <View style={styles.root}>
     <Text style={styles.title}>{roomName}</Text>
-    <Text style={styles.subtitle}>{WALL_LABELS[wall.cardinal]}</Text>
+    <Text style={styles.subtitle}>{WALL_DIRECTION_LABELS[wall.cardinal]}</Text>
     <Text style={styles.meta}>Длина: {Math.round((wall.length ?? 0) * 10) / 10}</Text>
   </View>
 );
