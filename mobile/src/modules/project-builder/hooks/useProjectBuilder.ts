@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { exportToEstimateDraft } from '../model/export';
+import { CARDINAL_DIRECTIONS } from '../model/orientation';
 import { placeInteriorElement, placeWallBoundElement, recalculateElementBinding } from '../model/placement';
 import { createDefaultRoom, createInitialProject } from '../model/projectBuilderDefaults';
 import { getPresetById } from '../model/presets';
 import { buildProjectSummary } from '../model/summary';
+import { getRoomWalls } from '../model/walls';
 import { createId } from '../utils/ids';
-import { ElementNode, ElementType, EstimateDraftPayload, Project, Room, RoomType, ToolType, ROOM_TYPE_LABELS } from '../types';
+import { ElementNode, ElementType, EstimateDraftPayload, Project, Room, RoomType, ToolType, Wall, ROOM_TYPE_LABELS } from '../types';
 
 const MIN_ROOM_SIZE = 40;
 const DUPLICATE_OFFSET = 12;
@@ -45,6 +47,8 @@ export const useProjectBuilder = () => {
   const [isQuickCardOpen, setQuickCardOpen] = useState(false);
   const [isParametersSheetOpen, setParametersSheetOpen] = useState(false);
   const [isRoomFocusMode, setRoomFocusMode] = useState(false);
+  const [roomViewMode, setRoomViewMode] = useState<'plan' | 'walls'>('plan');
+  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [isSummaryOpen, setSummaryOpen] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [estimateDraftPayload, setEstimateDraftPayload] = useState<EstimateDraftPayload | null>(null);
@@ -73,6 +77,7 @@ export const useProjectBuilder = () => {
 
   const selectRoom = (roomId: string) => {
     setSelectedRoomId(roomId);
+    setSelectedWallId(null);
     setSelectedElementId(null);
     setQuickCardOpen(false);
     setParametersSheetOpen(false);
@@ -81,10 +86,34 @@ export const useProjectBuilder = () => {
   const enterRoomFocus = (roomId: string) => {
     selectRoom(roomId);
     setRoomFocusMode(true);
+    setRoomViewMode('plan');
+    setSelectedWallId(null);
   };
 
   const exitRoomFocus = () => {
     setRoomFocusMode(false);
+    setRoomViewMode('plan');
+    setSelectedWallId(null);
+  };
+
+  const switchRoomViewMode = (mode: 'plan' | 'walls') => {
+    setRoomViewMode(mode);
+
+    if (mode === 'plan') {
+      setSelectedWallId(null);
+      return;
+    }
+
+    if (!selectedRoom) return;
+    const firstWall = CARDINAL_DIRECTIONS
+      .map((cardinal) => getRoomWalls(selectedRoom).find((wall) => wall.cardinal === cardinal) ?? null)
+      .find(Boolean);
+
+    setSelectedWallId((current) => current ?? firstWall?.id ?? null);
+  };
+
+  const selectWall = (wallId: string) => {
+    setSelectedWallId(wallId);
   };
 
   const selectElement = (elementId: string) => {
@@ -276,6 +305,8 @@ export const useProjectBuilder = () => {
   const rooms = useMemo<Room[]>(() => project.rooms, [project.rooms]);
   const elements = useMemo<ElementNode[]>(() => project.elements, [project.elements]);
   const selectedRoom = useMemo<Room | null>(() => rooms.find((room) => room.id === selectedRoomId) ?? null, [rooms, selectedRoomId]);
+  const selectedRoomWalls = useMemo<Wall[]>(() => (selectedRoom ? getRoomWalls(selectedRoom) : []), [selectedRoom]);
+  const selectedWall = useMemo<Wall | null>(() => selectedRoomWalls.find((wall) => wall.id === selectedWallId) ?? null, [selectedRoomWalls, selectedWallId]);
   const selectedElement = useMemo<ElementNode | null>(() => elements.find((item) => item.id === selectedElementId) ?? null, [elements, selectedElementId]);
 
   const displayedRooms = useMemo(() => (isRoomFocusMode && selectedRoom ? [selectedRoom] : rooms), [isRoomFocusMode, rooms, selectedRoom]);
@@ -295,6 +326,10 @@ export const useProjectBuilder = () => {
     selectedRoomId,
     selectedElementId,
     isRoomFocusMode,
+    roomViewMode,
+    selectedWallId,
+    selectedRoomWalls,
+    selectedWall,
     isSummaryOpen,
     lastSavedAt,
     estimateDraftPayload,
@@ -306,6 +341,8 @@ export const useProjectBuilder = () => {
     selectRoom,
     enterRoomFocus,
     exitRoomFocus,
+    switchRoomViewMode,
+    selectWall,
     openSummary: () => setSummaryOpen(true),
     closeSummary: () => setSummaryOpen(false),
     moveRoom,

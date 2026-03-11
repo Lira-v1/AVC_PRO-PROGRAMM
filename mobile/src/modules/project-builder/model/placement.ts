@@ -44,6 +44,14 @@ const projectPointToWall = (wall: Wall, point: Point): Point => {
   return { x: wall.x1, y: clamp(point.y, Math.min(wall.y1, wall.y2), Math.max(wall.y1, wall.y2)) };
 };
 
+const getWallOffset = (wall: Wall, point: Point): number => {
+  if (wall.side === 'top' || wall.side === 'bottom') {
+    return Math.round(Math.abs(point.x - wall.x1));
+  }
+
+  return Math.round(Math.abs(point.y - wall.y1));
+};
+
 export const placeWallBoundElement = (rooms: Room[], point: Point, type: ElementType): ElementNode | null => {
   const room = getRoomByPoint(rooms, point) ?? getRoomNearPoint(rooms, point);
   if (!room) {
@@ -58,9 +66,11 @@ export const placeWallBoundElement = (rooms: Room[], point: Point, type: Element
     type,
     roomId: room.id,
     wallId: wall.id,
+    wallCardinal: wall.cardinal,
     x: wallPoint.x,
     y: wallPoint.y,
     rotation: getWallRotation(wall.side),
+    offsetMm: getWallOffset(wall, wallPoint),
   };
 };
 
@@ -75,6 +85,7 @@ export const placeInteriorElement = (rooms: Room[], point: Point, type: ElementT
     type,
     roomId: room.id,
     wallId: null,
+    wallCardinal: undefined,
     x: point.x,
     y: point.y,
     rotation: 0,
@@ -86,7 +97,7 @@ export const recalculateElementBinding = (rooms: Room[], element: ElementNode, p
   if (type === 'light_point') {
     const room = getRoomByPoint(rooms, point);
     if (!room) return null;
-    return { ...element, roomId: room.id, wallId: null, x: point.x, y: point.y, rotation: 0 };
+    return { ...element, roomId: room.id, wallId: null, wallCardinal: undefined, x: point.x, y: point.y, rotation: 0, offsetMm: undefined };
   }
 
   const room = getRoomByPoint(rooms, point) ?? getRoomNearPoint(rooms, point);
@@ -99,9 +110,11 @@ export const recalculateElementBinding = (rooms: Room[], element: ElementNode, p
     ...element,
     roomId: room.id,
     wallId: wall.id,
+    wallCardinal: wall.cardinal,
     x: wallPoint.x,
     y: wallPoint.y,
     rotation: getWallRotation(wall.side),
+    offsetMm: getWallOffset(wall, wallPoint),
   };
 };
 
