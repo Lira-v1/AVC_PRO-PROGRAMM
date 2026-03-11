@@ -9,6 +9,7 @@ import { RegistrationScreen } from '../screens/RegistrationScreen';
 import { ServicesScreen } from '../screens/ServicesScreen';
 import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
 import { ChatMasterScreen } from '../screens/ChatMasterScreen';
+import { SmetMasterProjectBuilderScreen } from '../modules/project-builder';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
 type MainStackParamList = {
@@ -105,7 +106,7 @@ const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.
       <MainStack.Screen name="Home" component={HomeContainerScreen} />
       <MainStack.Screen name="Services" component={ServicesScreen} />
       <MainStack.Screen name="Emergency" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />
-      <MainStack.Screen name="Estimate" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Сметмастер' } }} />} />
+      <MainStack.Screen name="Estimate" component={SmetMasterProjectBuilderScreen} />
       <MainStack.Screen name="Commercial" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Коммерция' } }} />} />
       <MainStack.Screen name="Maintenance" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Обслуживание' } }} />} />
       <MainStack.Screen name="Vacancies" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Вакансии' } }} />} />
