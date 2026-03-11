@@ -4,6 +4,9 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ElementParametersSheet } from '../components/ElementParametersSheet';
 import { ElementQuickCard } from '../components/ElementQuickCard';
 import { ProjectCanvas } from '../components/ProjectCanvas';
+import { ProjectCard } from '../components/ProjectCard';
+import { RoomFocusHeader } from '../components/RoomFocusHeader';
+import { SummaryPanel } from '../components/SummaryPanel';
 import { Toolbar } from '../components/Toolbar';
 import { useProjectBuilder } from '../hooks/useProjectBuilder';
 import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
@@ -31,17 +34,25 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
   const {
     project,
     rooms,
-    elements,
+    displayedRooms,
+    displayedElements,
     selectedRoom,
     selectedElement,
     selectedRoomId,
     selectedElementId,
+    isRoomFocusMode,
+    isSummaryOpen,
+    lastSavedAt,
     isQuickCardOpen,
     isParametersSheetOpen,
     tool,
     setTool,
     addRoom,
     selectRoom,
+    enterRoomFocus,
+    exitRoomFocus,
+    openSummary,
+    closeSummary,
     moveRoom,
     resizeRoom,
     setRoomType,
@@ -56,6 +67,8 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
     closeParametersSheet,
     closeElementPanels,
     handleCanvasTap,
+    saveProject,
+    prepareEstimateDraft,
   } = useProjectBuilder();
 
   const handleDimensionChange = (field: 'width' | 'height', value: string) => {
@@ -79,28 +92,41 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
           <Text style={styles.outlineButtonText}>Back</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Project Builder</Text>
-        <Pressable style={styles.filledButton}>
+        <Pressable style={styles.filledButton} onPress={saveProject}>
           <Text style={styles.filledButtonText}>Save</Text>
         </Pressable>
       </View>
 
+      {isRoomFocusMode && selectedRoom ? <RoomFocusHeader roomName={selectedRoom.name} onBack={exitRoomFocus} /> : null}
+
       <View style={styles.toolbarHeader}>
         <Text style={styles.projectTitle}>{project.name}</Text>
-        <Pressable style={styles.addRoomButton} onPress={addRoom}>
-          <Text style={styles.addRoomButtonText}>Добавить комнату</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          {selectedRoom && !isRoomFocusMode ? (
+            <Pressable style={styles.secondaryButton} onPress={() => enterRoomFocus(selectedRoom.id)}>
+              <Text style={styles.secondaryButtonText}>Открыть комнату</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.secondaryButton} onPress={openSummary}>
+            <Text style={styles.secondaryButtonText}>Сводка</Text>
+          </Pressable>
+          <Pressable style={styles.addRoomButton} onPress={addRoom}>
+            <Text style={styles.addRoomButtonText}>Добавить комнату</Text>
+          </Pressable>
+        </View>
       </View>
 
       <Toolbar tool={tool} onSelectTool={setTool} />
 
       <View style={styles.canvasContainer}>
         <ProjectCanvas
-          rooms={rooms}
-          elements={elements}
+          rooms={displayedRooms}
+          elements={displayedElements}
           selectedRoomId={selectedRoomId}
           selectedElementId={selectedElementId}
           tool={tool}
           onSelectRoom={selectRoom}
+          onOpenRoom={enterRoomFocus}
           onMoveRoom={moveRoom}
           onResizeRoom={resizeRoom}
           onCanvasTap={handleCanvasTap}
@@ -174,6 +200,17 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
           </Pressable>
         </View>
       ) : null}
+
+      <ProjectCard
+        project={project}
+        lastSavedAt={lastSavedAt}
+        onOpenSummary={openSummary}
+        onSendToEstimate={prepareEstimateDraft}
+        onSave={saveProject}
+        onEdit={() => undefined}
+      />
+
+      <SummaryPanel project={project} isOpen={isSummaryOpen} onClose={closeSummary} />
     </View>
   );
 };
@@ -187,6 +224,9 @@ const styles = StyleSheet.create({
   filledButton: { backgroundColor: '#3461D5', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, minWidth: 66, alignItems: 'center' },
   filledButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
   toolbarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  headerActions: { flexDirection: 'row', gap: 8 },
+  secondaryButton: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#BBC5DC', paddingVertical: 10, paddingHorizontal: 10 },
+  secondaryButtonText: { color: '#2A3756', fontSize: 12, fontWeight: '700' },
   projectTitle: { fontSize: 16, color: '#2A3756', fontWeight: '600' },
   addRoomButton: { backgroundColor: '#1E8B57', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14 },
   addRoomButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },

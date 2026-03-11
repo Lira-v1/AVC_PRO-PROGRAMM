@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from 'react';
-import { PanResponder, StyleSheet, Text, View } from 'react-native';
+import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Room, ROOM_TYPE_LABELS } from '../types';
 
 type RoomRectangleProps = {
@@ -9,11 +9,15 @@ type RoomRectangleProps = {
   onSelect: (roomId: string) => void;
   onMove: (roomId: string, x: number, y: number) => void;
   onResize: (roomId: string, width: number, height: number) => void;
+  onDoublePress?: (roomId: string) => void;
 };
 
-export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove, onResize }: RoomRectangleProps) => {
+const DOUBLE_PRESS_MS = 260;
+
+export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove, onResize, onDoublePress }: RoomRectangleProps) => {
   const dragOriginRef = useRef({ x: room.x, y: room.y });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
+  const lastPressRef = useRef(0);
 
   const dragResponder = useMemo(
     () =>
@@ -47,14 +51,24 @@ export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove,
     [canInteract, onResize, onSelect, room.height, room.id, room.width],
   );
 
+  const handlePress = () => {
+    const now = Date.now();
+    if (now - lastPressRef.current < DOUBLE_PRESS_MS) {
+      onDoublePress?.(room.id);
+    }
+    lastPressRef.current = now;
+    onSelect(room.id);
+  };
+
   return (
-    <View
+    <Pressable
       {...dragResponder.panHandlers}
+      onPress={handlePress}
       style={[styles.room, isSelected ? styles.roomSelected : null, { left: room.x, top: room.y, width: room.width, height: room.height }]}
     >
       <Text style={styles.roomName}>{ROOM_TYPE_LABELS[room.type]}</Text>
       {canInteract ? <View style={styles.resizeHandle} {...resizeResponder.panHandlers} /> : null}
-    </View>
+    </Pressable>
   );
 };
 
