@@ -8,6 +8,8 @@ type ParametersDraft = {
   preset?: string;
   heightMode?: HeightMode;
   heightValueMm?: number;
+  offsetMm?: number;
+  widthMm?: number;
   note?: string;
 };
 
@@ -23,12 +25,16 @@ export const ElementParametersSheet = ({ element, isOpen, onSave, onDelete, onCl
   const [preset, setPreset] = useState<string | undefined>(element.preset);
   const [heightMode, setHeightMode] = useState<HeightMode | undefined>(element.heightMode);
   const [heightValueMm, setHeightValueMm] = useState<string>(element.heightValueMm ? String(element.heightValueMm) : '');
+  const [offsetMm, setOffsetMm] = useState<string>(typeof element.offsetMm === 'number' ? String(Math.round(element.offsetMm)) : '');
+  const [widthMm, setWidthMm] = useState<string>(typeof element.widthMm === 'number' ? String(Math.round(element.widthMm)) : '');
   const [note, setNote] = useState<string>(element.note ?? '');
 
   useEffect(() => {
     setPreset(element.preset);
     setHeightMode(element.heightMode);
     setHeightValueMm(typeof element.heightValueMm === 'number' ? String(element.heightValueMm) : '');
+    setOffsetMm(typeof element.offsetMm === 'number' ? String(Math.round(element.offsetMm)) : '');
+    setWidthMm(typeof element.widthMm === 'number' ? String(Math.round(element.widthMm)) : '');
     setNote(element.note ?? '');
   }, [element]);
 
@@ -45,11 +51,15 @@ export const ElementParametersSheet = ({ element, isOpen, onSave, onDelete, onCl
 
   const handleSave = () => {
     const parsedHeight = Number(heightValueMm.replace(',', '.'));
+    const parsedOffset = Number(offsetMm.replace(',', '.'));
+    const parsedWidth = Number(widthMm.replace(',', '.'));
 
     onSave({
       preset,
       heightMode,
       heightValueMm: Number.isFinite(parsedHeight) ? parsedHeight : undefined,
+      offsetMm: Number.isFinite(parsedOffset) ? parsedOffset : undefined,
+      widthMm: Number.isFinite(parsedWidth) ? parsedWidth : undefined,
       note: note.trim() || undefined,
     });
 
@@ -100,6 +110,20 @@ export const ElementParametersSheet = ({ element, isOpen, onSave, onDelete, onCl
           <Text style={styles.groupTitle}>Высота (мм)</Text>
           <TextInput style={styles.input} keyboardType="numeric" value={heightValueMm} onChangeText={setHeightValueMm} placeholder="Например, 900" />
         </View>
+
+        {element.wallId ? (
+          <View style={styles.group}>
+            <Text style={styles.groupTitle}>Offset по оси стены (мм)</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={offsetMm} onChangeText={setOffsetMm} placeholder="Например, 1200" />
+          </View>
+        ) : null}
+
+        {(element.type === 'door' || element.type === 'window') ? (
+          <View style={styles.group}>
+            <Text style={styles.groupTitle}>Ширина (мм)</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={widthMm} onChangeText={setWidthMm} placeholder="Например, 900" />
+          </View>
+        ) : null}
 
         <View style={styles.group}>
           <Text style={styles.groupTitle}>Комментарий</Text>

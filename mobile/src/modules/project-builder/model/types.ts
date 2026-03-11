@@ -71,6 +71,7 @@ export type ElementNode = {
   x: number;
   y: number;
   rotation?: number;
+  widthMm?: number;
   preset?: string;
   heightMode?: HeightMode;
   heightValueMm?: number;
@@ -115,6 +116,7 @@ export type EstimateDraftPayload = {
     wallId?: string | null;
     wallCardinal?: CardinalDirection;
     preset?: string;
+    widthMm?: number;
     heightMode?: string;
     heightValueMm?: number;
     offsetMm?: number;

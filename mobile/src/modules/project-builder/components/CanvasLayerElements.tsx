@@ -81,7 +81,7 @@ const DraggableElement = ({
       onPress={() => (canDrag ? onSelectElement(element.id) : onDeleteElement(element.id))}
     >
       <View pointerEvents="none">
-        <ElementSymbol type={element.type} selected={isSelected} rotation={element.rotation} />
+        <ElementSymbol type={element.type} widthMm={element.widthMm} selected={isSelected} rotation={element.rotation} />
       </View>
     </Pressable>
   );
