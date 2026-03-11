@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ProjectCanvas } from '../components/ProjectCanvas';
 import { useProjectBuilder } from '../hooks/useProjectBuilder';
+import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
 
 type MainStackParamList = {
   Home: undefined;
@@ -24,7 +25,35 @@ type MainStackParamList = {
 type Props = NativeStackScreenProps<MainStackParamList, 'Estimate'>;
 
 export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
-  const { project, rooms, addRoom } = useProjectBuilder();
+  const {
+    project,
+    rooms,
+    selectedRoom,
+    selectedRoomId,
+    addRoom,
+    selectRoom,
+    moveRoom,
+    resizeRoom,
+    setRoomType,
+    setRoomDimensions,
+    removeRoom,
+  } = useProjectBuilder();
+
+  const handleDimensionChange = (field: 'width' | 'height', value: string) => {
+    if (!selectedRoom) {
+      return;
+    }
+
+    const parsedValue = Number(value.replace(',', '.'));
+    if (Number.isNaN(parsedValue)) {
+      return;
+    }
+
+    setRoomDimensions(selectedRoom.id, {
+      width: field === 'width' ? parsedValue : selectedRoom.width,
+      height: field === 'height' ? parsedValue : selectedRoom.height,
+    });
+  };
 
   return (
     <View style={styles.root}>
@@ -46,8 +75,65 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
       </View>
 
       <View style={styles.canvasContainer}>
-        <ProjectCanvas rooms={rooms} />
+        <ProjectCanvas
+          rooms={rooms}
+          selectedRoomId={selectedRoomId}
+          onSelectRoom={selectRoom}
+          onMoveRoom={moveRoom}
+          onResizeRoom={resizeRoom}
+        />
       </View>
+
+      {selectedRoom ? (
+        <View style={styles.editorCard}>
+          <Text style={styles.editorTitle}>Редактирование комнаты</Text>
+          <Text style={styles.editorMeta}>id: {selectedRoom.id}</Text>
+
+          <View style={styles.typeGrid}>
+            {ROOM_TYPES.map((type) => {
+              const isActive = selectedRoom.type === type;
+
+              return (
+                <Pressable
+                  key={type}
+                  style={[styles.typeButton, isActive ? styles.typeButtonActive : null]}
+                  onPress={() => setRoomType(selectedRoom.id, type)}
+                >
+                  <Text style={[styles.typeButtonText, isActive ? styles.typeButtonTextActive : null]}>
+                    {ROOM_TYPE_LABELS[type]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.dimensionsRow}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>width (m)</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="numeric"
+                value={String(Math.round(selectedRoom.width * 100) / 100)}
+                onChangeText={(value) => handleDimensionChange('width', value)}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>height (m)</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="numeric"
+                value={String(Math.round(selectedRoom.height * 100) / 100)}
+                onChangeText={(value) => handleDimensionChange('height', value)}
+              />
+            </View>
+          </View>
+
+          <Pressable style={styles.deleteButton} onPress={() => removeRoom(selectedRoom.id)}>
+            <Text style={styles.deleteButtonText}>Удалить комнату</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -122,5 +208,82 @@ const styles = StyleSheet.create({
   },
   canvasContainer: {
     flex: 1,
+    marginBottom: 12,
+  },
+  editorCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D7DEEE',
+    padding: 12,
+    gap: 10,
+  },
+  editorTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1C2743',
+  },
+  editorMeta: {
+    fontSize: 12,
+    color: '#617194',
+  },
+  typeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  typeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBC5DC',
+    backgroundColor: '#FFFFFF',
+  },
+  typeButtonActive: {
+    backgroundColor: '#2D5ED2',
+    borderColor: '#2D5ED2',
+  },
+  typeButtonText: {
+    color: '#2A3756',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  typeButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  dimensionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  inputGroup: {
+    flex: 1,
+    gap: 4,
+  },
+  inputLabel: {
+    fontSize: 12,
+    color: '#617194',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#BBC5DC',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1C2743',
+    backgroundColor: '#FFFFFF',
+  },
+  deleteButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#D64343',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  deleteButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
