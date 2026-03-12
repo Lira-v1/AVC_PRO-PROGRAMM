@@ -1,6 +1,8 @@
 import React from 'react';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { V2CanvasControls } from './V2CanvasControls';
+import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
 import { V2Room } from './V2Room';
 
@@ -11,9 +13,28 @@ type Props = {
   onMoveRoom: (roomId: string, x: number, y: number) => void;
   onResizeRoom: (roomId: string, width: number, height: number) => void;
   onBackgroundPress: () => void;
+  showGrid: boolean;
+  showCompass: boolean;
+  isFullscreen: boolean;
+  onToggleGrid: () => void;
+  onToggleFullscreen: () => void;
+  onOpenTools: () => void;
 };
 
-export const V2Canvas = ({ rooms, selectedRoomId, onSelectRoom, onMoveRoom, onResizeRoom, onBackgroundPress }: Props) => {
+export const V2Canvas = ({
+  rooms,
+  selectedRoomId,
+  onSelectRoom,
+  onMoveRoom,
+  onResizeRoom,
+  onBackgroundPress,
+  showGrid,
+  showCompass,
+  isFullscreen,
+  onToggleGrid,
+  onToggleFullscreen,
+  onOpenTools,
+}: Props) => {
   const handleCanvasMouseDown = (event: any) => {
     if (event?.target === event?.currentTarget) {
       onBackgroundPress();
@@ -25,7 +46,15 @@ export const V2Canvas = ({ rooms, selectedRoomId, onSelectRoom, onMoveRoom, onRe
   return (
     <View style={styles.canvas} {...webCanvasProps}>
       {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
-      <V2Grid />
+      {showGrid ? <V2Grid /> : null}
+
+      <V2CanvasControls isFullscreen={isFullscreen} showGrid={showGrid} onToggleFullscreen={onToggleFullscreen} onToggleGrid={onToggleGrid} />
+      {showCompass ? <V2Compass /> : null}
+
+      <Pressable style={styles.gearButton} onPress={onOpenTools}>
+        <Text style={styles.gearIcon}>⚙️</Text>
+      </Pressable>
+
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         {rooms.map((room) => (
           <V2Room
@@ -50,5 +79,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D5DEEF',
     overflow: 'hidden',
+    position: 'relative',
   },
+  gearButton: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    zIndex: 20,
+  },
+  gearIcon: { fontSize: 18 },
 });

@@ -19,7 +19,7 @@ import { WALL_DIRECTION_LABELS } from '../model/orientation';
 import { ROOM_VIEW_MODE_LABELS } from '../model/roomViewMode';
 import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
 import { V2Canvas } from '../v2/components/V2Canvas';
-import { V2DebugPanel } from '../v2/components/V2DebugPanel';
+import { useCanvasUiStateV2 } from '../v2/hooks/useCanvasUiStateV2';
 import { useProjectBuilderV2 } from '../v2/hooks/useProjectBuilderV2';
 
 type MainStackParamList = {
@@ -94,12 +94,12 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
   const {
     rooms: v2Rooms,
     selectedRoomId: v2SelectedRoomId,
-    selectedRoom: v2SelectedRoom,
     selectRoom: selectV2Room,
     deselectRoom: deselectV2Room,
     moveRoom: moveV2Room,
     resizeRoom: resizeV2Room,
   } = useProjectBuilderV2();
+  const { canvasUiState, toggleFullscreen: toggleV2Fullscreen, toggleGrid: toggleV2Grid } = useCanvasUiStateV2();
 
   const handleDimensionChange = (field: 'width' | 'height', value: string) => {
     if (!selectedRoom) return;
@@ -271,15 +271,17 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
 
     if (mode === 'project_v2') {
       return (
-        <View style={styles.projectModeRoot}>
-          <View style={styles.projectTopPanel}>
-            <View>
-              <Text style={styles.headerTitle}>Project Builder V2</Text>
-              <Text style={styles.v2Subtitle}>Новый чистый визуальный редактор. Логика будет подключаться поэтапно.</Text>
+        <View style={[styles.projectModeRoot, canvasUiState.isFullscreen ? styles.v2FullscreenRoot : null]}>
+          {!canvasUiState.isFullscreen ? (
+            <View style={styles.projectTopPanel}>
+              <View>
+                <Text style={styles.headerTitle}>Project Builder V2</Text>
+                <Text style={styles.v2Subtitle}>Новый чистый визуальный редактор. Логика будет подключаться поэтапно.</Text>
+              </View>
             </View>
-          </View>
+          ) : null}
 
-          <View style={styles.v2CanvasContainer}>
+          <View style={[styles.v2CanvasContainer, canvasUiState.isFullscreen ? styles.v2CanvasContainerFullscreen : null]}>
             <V2Canvas
               rooms={v2Rooms}
               selectedRoomId={v2SelectedRoomId}
@@ -287,8 +289,13 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onMoveRoom={moveV2Room}
               onResizeRoom={resizeV2Room}
               onBackgroundPress={deselectV2Room}
+              showGrid={canvasUiState.showGrid}
+              showCompass={canvasUiState.showCompass}
+              isFullscreen={canvasUiState.isFullscreen}
+              onToggleGrid={toggleV2Grid}
+              onToggleFullscreen={toggleV2Fullscreen}
+              onOpenTools={() => setIsProjectV2ToolsOpen(true)}
             />
-            <V2DebugPanel room={v2SelectedRoom} />
           </View>
 
           {isProjectV2ToolsOpen ? (
@@ -302,11 +309,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
 
               <Text style={styles.toolsDescription}>Здесь будет новая система инструментов редактора</Text>
             </View>
-          ) : (
-            <Pressable style={styles.gearButton} onPress={() => setIsProjectV2ToolsOpen(true)}>
-              <Text style={styles.gearIcon}>⚙️</Text>
-            </Pressable>
-          )}
+          ) : null}
         </View>
       );
     }
@@ -414,24 +417,26 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     <View style={styles.root}>
       <AppHeader title="SmetMaster" />
 
-      <View style={styles.contentArea}>{renderMainContent()}</View>
+      <View style={[styles.contentArea, mode === 'project_v2' && canvasUiState.isFullscreen ? styles.contentAreaFullscreen : null]}>{renderMainContent()}</View>
 
-      <View style={styles.inputRow}>
-        <Pressable style={styles.iconButton} onPress={() => undefined}>
-          <Text style={styles.iconText}>📎</Text>
-        </Pressable>
-        <TextInput
-          style={styles.chatInput}
-          value={input}
-          onChangeText={setInput}
-          placeholder="Напишите сообщение..."
-          placeholderTextColor="#8A94A6"
-          multiline
-        />
-        <Pressable style={[styles.iconButton, styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={() => setInput('')}>
-          <Text style={styles.sendText}>➤</Text>
-        </Pressable>
-      </View>
+      {mode === 'project_v2' && canvasUiState.isFullscreen ? null : (
+        <View style={styles.inputRow}>
+          <Pressable style={styles.iconButton} onPress={() => undefined}>
+            <Text style={styles.iconText}>📎</Text>
+          </Pressable>
+          <TextInput
+            style={styles.chatInput}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Напишите сообщение..."
+            placeholderTextColor="#8A94A6"
+            multiline
+          />
+          <Pressable style={[styles.iconButton, styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={() => setInput('')}>
+            <Text style={styles.sendText}>➤</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 };
@@ -439,6 +444,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F3F5FA' },
   contentArea: { flex: 1, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10 },
+  contentAreaFullscreen: { paddingHorizontal: 8, paddingTop: 8, paddingBottom: 8 },
   homeContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18 },
   homeTitle: { color: '#1B2A45', fontSize: 24, fontWeight: '700', textAlign: 'center' },
   homeActions: { width: '100%', maxWidth: 380, gap: 10 },
@@ -447,6 +453,7 @@ const styles = StyleSheet.create({
   secondaryActionButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE3F2' },
   secondaryActionButtonText: { color: '#1B2A45' },
   projectModeRoot: { flex: 1, position: 'relative' },
+  v2FullscreenRoot: { paddingTop: 0 },
   projectTopPanel: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   projectTopActions: { flexDirection: 'row', gap: 8 },
   headerTitle: { fontSize: 18, fontWeight: '700', color: '#101623' },
@@ -528,6 +535,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginRight: 64,
     gap: 8,
+  },
+  v2CanvasContainerFullscreen: {
+    marginTop: 0,
+    marginBottom: 0,
+    marginRight: 0,
   },
   drawerScroll: { flex: 1 },
   drawerScrollContent: { gap: 10, paddingBottom: 6 },
