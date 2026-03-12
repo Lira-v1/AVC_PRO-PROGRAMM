@@ -12,8 +12,18 @@ const DIMENSION_OFFSET = 26;
 const formatMeters = (valueCm: number) => `${(valueCm / 100).toFixed(2)} м`;
 
 export const V2RoomDimensions = ({ room }: Props) => {
+  const normalizedRotation = ((room.rotation ?? 0) % 360 + 360) % 360;
+  const isVerticalOrientation =
+    normalizedRotation === 90 || normalizedRotation === 270;
+
   const widthValue = room.widthCm ?? room.width;
   const heightValue = room.heightCm ?? room.height;
+
+  const topValue = isVerticalOrientation ? heightValue : widthValue;
+  const leftValue = isVerticalOrientation ? widthValue : heightValue;
+
+  const topLineLength = isVerticalOrientation ? room.height : room.width;
+  const leftLineLength = isVerticalOrientation ? room.width : room.height;
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -23,13 +33,13 @@ export const V2RoomDimensions = ({ room }: Props) => {
           {
             left: room.x,
             top: room.y - DIMENSION_OFFSET,
-            width: room.width,
+            width: topLineLength,
           },
         ]}
       >
         <View style={styles.topEndCapLeft} />
         <View style={styles.topEndCapRight} />
-        <Text style={styles.topDimensionText}>{formatMeters(widthValue)}</Text>
+        <Text style={styles.topDimensionText}>{formatMeters(topValue)}</Text>
       </View>
 
       <View
@@ -38,13 +48,13 @@ export const V2RoomDimensions = ({ room }: Props) => {
           {
             left: room.x - DIMENSION_OFFSET,
             top: room.y,
-            height: room.height,
+            height: leftLineLength,
           },
         ]}
       >
         <View style={styles.leftEndCapTop} />
         <View style={styles.leftEndCapBottom} />
-        <Text style={styles.leftDimensionText}>{formatMeters(heightValue)}</Text>
+        <Text style={styles.leftDimensionText}>{formatMeters(leftValue)}</Text>
       </View>
     </View>
   );
