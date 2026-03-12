@@ -9,6 +9,8 @@ export const useProjectBuilderV2 = () => {
 
   const selectedRoom = useMemo(() => scene.rooms.find((room) => room.id === scene.selectedRoomId) ?? null, [scene.rooms, scene.selectedRoomId]);
 
+  const MM_PER_CANVAS_UNIT = 10;
+
   const selectRoom = (roomId: string) => {
     setScene((prev) => ({
       ...prev,
@@ -43,8 +45,8 @@ export const useProjectBuilderV2 = () => {
                 ...room,
                 width: nextWidth,
                 height: nextHeight,
-                widthCm: nextWidth,
-                heightCm: nextHeight,
+                widthMm: Math.round(nextWidth * MM_PER_CANVAS_UNIT),
+                heightMm: Math.round(nextHeight * MM_PER_CANVAS_UNIT),
               };
             })()
           : room,
@@ -52,9 +54,9 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
-  const updateRoomSize = (roomId: string, widthCm: number, heightCm: number) => {
-    const safeWidth = Math.max(1, widthCm);
-    const safeHeight = Math.max(1, heightCm);
+  const updateRoomSize = (roomId: string, widthMm: number, heightMm: number) => {
+    const safeWidthMm = Math.max(1, widthMm);
+    const safeHeightMm = Math.max(1, heightMm);
 
     setScene((prev) => ({
       ...prev,
@@ -62,10 +64,10 @@ export const useProjectBuilderV2 = () => {
         room.id === roomId
           ? {
               ...room,
-              widthCm: safeWidth,
-              heightCm: safeHeight,
-              width: safeWidth,
-              height: safeHeight,
+              widthMm: safeWidthMm,
+              heightMm: safeHeightMm,
+              width: safeWidthMm / MM_PER_CANVAS_UNIT,
+              height: safeHeightMm / MM_PER_CANVAS_UNIT,
             }
           : room,
       ),

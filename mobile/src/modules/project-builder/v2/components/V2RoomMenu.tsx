@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { formatRoomSize, parseRoomSizeToMm, RoomSizeUnit } from '../utils/roomUnits';
 
 type Props = {
   roomId: string;
@@ -9,11 +10,10 @@ type Props = {
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
-  onStartSetWidth: (roomId: string) => void;
-  onStartSetHeight: (roomId: string) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
   onAddDoor: (roomId: string) => void;
   onAddWindow: (roomId: string) => void;
+  onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
 };
 
 export const V2RoomMenu = ({
@@ -23,17 +23,50 @@ export const V2RoomMenu = ({
   onCustomRename,
   onOpenSettings,
   onOpenRoom,
-  onStartSetWidth,
-  onStartSetHeight,
   onToggleSizeLock,
   onAddDoor,
   onAddWindow,
+  onUpdateRoomSize,
 }: Props) => {
   const [submenu, setSubmenu] = useState<'root' | 'name' | 'settings'>('root');
+  const [sizeUnit, setSizeUnit] = useState<RoomSizeUnit>('m');
+  const [editingField, setEditingField] = useState<'width' | 'height' | null>(null);
+  const [draftValue, setDraftValue] = useState('');
 
   useEffect(() => {
     setSubmenu('root');
+    setEditingField(null);
+    setDraftValue('');
   }, [roomId]);
+
+  const startEditField = (field: 'width' | 'height') => {
+    setEditingField(field);
+
+    const currentValue = field === 'width' ? formatRoomSize(room.widthMm, sizeUnit) : formatRoomSize(room.heightMm, sizeUnit);
+    setDraftValue(currentValue);
+  };
+
+  const commitField = () => {
+    if (!editingField) return;
+
+    const parsedMm = parseRoomSizeToMm(draftValue, sizeUnit);
+    if (parsedMm == null) {
+      setEditingField(null);
+      setDraftValue('');
+      return;
+    }
+
+    if (editingField === 'width') {
+      onUpdateRoomSize(room.id, parsedMm, room.heightMm);
+    }
+
+    if (editingField === 'height') {
+      onUpdateRoomSize(room.id, room.widthMm, parsedMm);
+    }
+
+    setEditingField(null);
+    setDraftValue('');
+  };
 
   const renderRootMenu = () => (
     <>
@@ -89,13 +122,63 @@ export const V2RoomMenu = ({
         <Text style={styles.itemText}>← Назад</Text>
       </Pressable>
 
-      <Pressable style={styles.item} onPress={() => onStartSetWidth(roomId)}>
-        <Text style={styles.itemText}>Ширина: {((room.widthCm ?? room.width) / 100).toFixed(2)} м</Text>
-      </Pressable>
+      <View style={styles.unitRow}>
+        {(['mm', 'cm', 'm'] as RoomSizeUnit[]).map((unit) => (
+          <Pressable key={unit} style={[styles.unitChip, sizeUnit === unit ? styles.unitChipActive : null]} onPress={() => setSizeUnit(unit)}>
+            <Text style={[styles.unitChipText, sizeUnit === unit ? styles.unitChipTextActive : null]}>{unit}</Text>
+          </Pressable>
+        ))}
+      </View>
 
-      <Pressable style={styles.item} onPress={() => onStartSetHeight(roomId)}>
-        <Text style={styles.itemText}>Длина: {((room.heightCm ?? room.height) / 100).toFixed(2)} м</Text>
-      </Pressable>
+      <View style={styles.fieldRow}>
+        <Text style={styles.fieldLabel}>Ширина</Text>
+
+        {editingField === 'width' ? (
+          <View style={styles.inlineEditor}>
+            <TextInput
+              value={draftValue}
+              onChangeText={setDraftValue}
+              autoFocus
+              keyboardType="numeric"
+              style={styles.fieldInput}
+              onSubmitEditing={commitField}
+              onBlur={commitField}
+            />
+            <Pressable style={styles.confirmButton} onPress={commitField}>
+              <Text style={styles.confirmButtonText}>✓</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable style={styles.valueBox} onPress={() => startEditField('width')}>
+            <Text style={styles.valueBoxText}>{formatRoomSize(room.widthMm, sizeUnit)}</Text>
+          </Pressable>
+        )}
+      </View>
+
+      <View style={styles.fieldRow}>
+        <Text style={styles.fieldLabel}>Длина</Text>
+
+        {editingField === 'height' ? (
+          <View style={styles.inlineEditor}>
+            <TextInput
+              value={draftValue}
+              onChangeText={setDraftValue}
+              autoFocus
+              keyboardType="numeric"
+              style={styles.fieldInput}
+              onSubmitEditing={commitField}
+              onBlur={commitField}
+            />
+            <Pressable style={styles.confirmButton} onPress={commitField}>
+              <Text style={styles.confirmButtonText}>✓</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable style={styles.valueBox} onPress={() => startEditField('height')}>
+            <Text style={styles.valueBoxText}>{formatRoomSize(room.heightMm, sizeUnit)}</Text>
+          </Pressable>
+        )}
+      </View>
 
       <Pressable style={styles.item} onPress={() => onToggleSizeLock(roomId, !room.isSizeLocked)}>
         <Text style={styles.itemText}>{room.isSizeLocked ? '☑ Зафиксировать размеры' : '☐ Зафиксировать размеры'}</Text>
@@ -128,8 +211,8 @@ const styles = StyleSheet.create({
     top: 28,
     alignSelf: 'center',
     minWidth: 160,
-    maxWidth: 220,
-    maxHeight: 220,
+    maxWidth: 240,
+    maxHeight: 280,
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderRadius: 10,
     borderWidth: 1,
@@ -142,7 +225,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   scroll: {
-    maxHeight: 220,
+    maxHeight: 280,
   },
   scrollContent: {
     padding: 6,
@@ -157,5 +240,88 @@ const styles = StyleSheet.create({
     color: '#1E293B',
     fontSize: 13,
     fontWeight: '600',
+  },
+  unitRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  unitChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+  },
+  unitChipActive: {
+    backgroundColor: '#2D5ED2',
+    borderColor: '#2D5ED2',
+  },
+  unitChipText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  unitChipTextActive: {
+    color: '#FFFFFF',
+  },
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 8,
+  },
+  fieldLabel: {
+    color: '#1E293B',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  valueBox: {
+    minWidth: 84,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+  },
+  valueBoxText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  inlineEditor: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  fieldInput: {
+    minWidth: 84,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2D5ED2',
+    backgroundColor: '#FFFFFF',
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  confirmButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#2D5ED2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

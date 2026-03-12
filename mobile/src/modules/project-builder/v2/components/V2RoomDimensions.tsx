@@ -10,14 +10,14 @@ type Props = {
 const DIMENSION_STROKE = '#334155';
 const DIMENSION_OFFSET = 26;
 
-const formatMeters = (valueCm: number) => `${(valueCm / 100).toFixed(2)} м`;
+const formatMeters = (valueMm: number) => `${(valueMm / 1000).toFixed(2)} м`;
 
 export const V2RoomDimensions = ({ room }: Props) => {
   const normalizedRotation = ((room.rotation ?? 0) % 360 + 360) % 360;
   const isVerticalOrientation = normalizedRotation === 90 || normalizedRotation === 270;
 
-  const widthValue = room.widthCm ?? room.width;
-  const heightValue = room.heightCm ?? room.height;
+  const widthValue = room.widthMm;
+  const heightValue = room.heightMm;
 
   const topValue = isVerticalOrientation ? heightValue : widthValue;
   const leftValue = isVerticalOrientation ? widthValue : heightValue;
