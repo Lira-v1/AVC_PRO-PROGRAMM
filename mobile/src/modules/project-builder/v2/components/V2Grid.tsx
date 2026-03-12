@@ -1,31 +1,54 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { CANVAS_UNITS_PER_METER, GRID_CELLS_PER_METER } from '../model/metrics';
 
-const GRID_COUNT = 24;
-const GRID_LINES = Array.from({ length: GRID_COUNT }, (_, index) => index + 1);
+type Props = {
+  sceneWidth: number;
+  sceneHeight: number;
+};
 
-export const V2Grid = () => {
+export const V2Grid = ({ sceneWidth, sceneHeight }: Props) => {
+  const meterSizePx = CANVAS_UNITS_PER_METER;
+  const cellSizePx = meterSizePx / GRID_CELLS_PER_METER;
+
+  const verticalLines = useMemo(() => {
+    const lineCount = Math.ceil(sceneWidth / cellSizePx) + 1;
+
+    return Array.from({ length: lineCount }, (_, index) => {
+      const x = index * cellSizePx;
+
+      return {
+        key: `v-${index}`,
+        x,
+        isMajor: index % GRID_CELLS_PER_METER === 0,
+      };
+    });
+  }, [cellSizePx, sceneWidth]);
+
+  const horizontalLines = useMemo(() => {
+    const lineCount = Math.ceil(sceneHeight / cellSizePx) + 1;
+
+    return Array.from({ length: lineCount }, (_, index) => {
+      const y = index * cellSizePx;
+
+      return {
+        key: `h-${index}`,
+        y,
+        isMajor: index % GRID_CELLS_PER_METER === 0,
+      };
+    });
+  }, [cellSizePx, sceneHeight]);
+
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {GRID_LINES.map((line) => (
+      {horizontalLines.map((line) => (
         <View
-          key={`h-${line}`}
-          style={[
-            styles.horizontal,
-            line % 4 === 0 ? styles.majorLine : null,
-            { top: `${(line * 100) / (GRID_COUNT + 1)}%` },
-          ]}
+          key={line.key}
+          style={[styles.horizontal, line.isMajor ? styles.majorLine : null, { top: line.y }]}
         />
       ))}
-      {GRID_LINES.map((line) => (
-        <View
-          key={`v-${line}`}
-          style={[
-            styles.vertical,
-            line % 4 === 0 ? styles.majorLine : null,
-            { left: `${(line * 100) / (GRID_COUNT + 1)}%` },
-          ]}
-        />
+      {verticalLines.map((line) => (
+        <View key={line.key} style={[styles.vertical, line.isMajor ? styles.majorLine : null, { left: line.x }]} />
       ))}
     </View>
   );
