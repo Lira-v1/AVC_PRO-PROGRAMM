@@ -7,7 +7,7 @@ export const DEFAULT_ROOM_SIZE = {
   height: 90,
 };
 
-const ROOM_STEP = 18;
+const ROOM_STEP = 28;
 const DEFAULT_PROJECT_NAME = 'Новый проект';
 
 export const createInitialProject = (): Project => {
@@ -33,8 +33,8 @@ export const createInitialProject = (): Project => {
 
 export const createDefaultRoom = (roomIndex: number, type: RoomType = 'other'): Room => ({
   id: createId('room'),
-  x: 16 + ROOM_STEP * roomIndex,
-  y: 16 + ROOM_STEP * roomIndex,
+  x: 40 + ROOM_STEP * roomIndex,
+  y: 40 + ROOM_STEP * roomIndex,
   width: DEFAULT_ROOM_SIZE.width,
   height: DEFAULT_ROOM_SIZE.height,
   type,

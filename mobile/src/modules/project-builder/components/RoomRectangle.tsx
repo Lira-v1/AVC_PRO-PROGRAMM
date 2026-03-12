@@ -1,5 +1,5 @@
-import React, { useMemo, useRef } from 'react';
-import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useRef } from 'react';
+import { GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Room, ROOM_TYPE_LABELS } from '../types';
 
 type RoomRectangleProps = {
@@ -15,57 +15,56 @@ type RoomRectangleProps = {
 const DOUBLE_PRESS_MS = 260;
 
 export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove, onResize, onDoublePress }: RoomRectangleProps) => {
-  const dragOriginRef = useRef({ x: room.x, y: room.y });
-  const resizeOriginRef = useRef({ width: room.width, height: room.height });
-  const isResizingRef = useRef(false);
+  const dragStateRef = useRef({ startPageX: 0, startPageY: 0, originX: room.x, originY: room.y, active: false });
+  const resizeStateRef = useRef({ startPageX: 0, startPageY: 0, originWidth: room.width, originHeight: room.height, active: false });
   const lastPressRef = useRef(0);
 
-  const dragResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => canInteract,
-        onMoveShouldSetPanResponder: () => canInteract,
-        onPanResponderGrant: () => {
-          if (isResizingRef.current) return;
-          dragOriginRef.current = { x: room.x, y: room.y };
-          onSelect(room.id);
-        },
-        onPanResponderMove: (_, gestureState) => {
-          if (isResizingRef.current) return;
-          onMove(room.id, dragOriginRef.current.x + gestureState.dx, dragOriginRef.current.y + gestureState.dy);
-        },
-        onPanResponderRelease: () => {
-          isResizingRef.current = false;
-        },
-        onPanResponderTerminate: () => {
-          isResizingRef.current = false;
-        },
-      }),
-    [canInteract, onMove, onSelect, room.id, room.x, room.y],
-  );
+  const getPoint = (event: GestureResponderEvent) => ({
+    x: event.nativeEvent.pageX ?? event.nativeEvent.locationX,
+    y: event.nativeEvent.pageY ?? event.nativeEvent.locationY,
+  });
 
-  const resizeResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => canInteract,
-        onMoveShouldSetPanResponder: () => canInteract,
-        onPanResponderGrant: () => {
-          isResizingRef.current = true;
-          resizeOriginRef.current = { width: room.width, height: room.height };
-          onSelect(room.id);
-        },
-        onPanResponderMove: (_, gestureState) => {
-          onResize(room.id, resizeOriginRef.current.width + gestureState.dx, resizeOriginRef.current.height + gestureState.dy);
-        },
-        onPanResponderRelease: () => {
-          isResizingRef.current = false;
-        },
-        onPanResponderTerminate: () => {
-          isResizingRef.current = false;
-        },
-      }),
-    [canInteract, onResize, onSelect, room.height, room.id, room.width],
-  );
+  const startDrag = (event: GestureResponderEvent) => {
+    if (!canInteract || resizeStateRef.current.active) return;
+
+    const point = getPoint(event);
+    dragStateRef.current = { startPageX: point.x, startPageY: point.y, originX: room.x, originY: room.y, active: true };
+    onSelect(room.id);
+  };
+
+  const handleDragMove = (event: GestureResponderEvent) => {
+    if (!dragStateRef.current.active || resizeStateRef.current.active) return;
+
+    const point = getPoint(event);
+    onMove(room.id, dragStateRef.current.originX + (point.x - dragStateRef.current.startPageX), dragStateRef.current.originY + (point.y - dragStateRef.current.startPageY));
+  };
+
+  const stopDrag = () => {
+    dragStateRef.current.active = false;
+  };
+
+  const startResize = (event: GestureResponderEvent) => {
+    if (!canInteract) return;
+
+    const point = getPoint(event);
+    resizeStateRef.current = { startPageX: point.x, startPageY: point.y, originWidth: room.width, originHeight: room.height, active: true };
+    onSelect(room.id);
+  };
+
+  const handleResizeMove = (event: GestureResponderEvent) => {
+    if (!resizeStateRef.current.active) return;
+
+    const point = getPoint(event);
+    onResize(
+      room.id,
+      resizeStateRef.current.originWidth + (point.x - resizeStateRef.current.startPageX),
+      resizeStateRef.current.originHeight + (point.y - resizeStateRef.current.startPageY),
+    );
+  };
+
+  const stopResize = () => {
+    resizeStateRef.current.active = false;
+  };
 
   const handlePress = () => {
     const now = Date.now();
@@ -78,12 +77,33 @@ export const RoomRectangle = ({ room, isSelected, canInteract, onSelect, onMove,
 
   return (
     <View style={[styles.roomRoot, { left: room.x, top: room.y, width: room.width, height: room.height }]} pointerEvents="box-none">
-      <Pressable {...dragResponder.panHandlers} onPress={handlePress} style={[styles.room, isSelected ? styles.roomSelected : null]}>
+      <Pressable
+        onPress={handlePress}
+        onPressIn={startDrag}
+        onResponderMove={handleDragMove}
+        onResponderRelease={stopDrag}
+        onResponderTerminate={stopDrag}
+        onStartShouldSetResponder={() => canInteract}
+        onMoveShouldSetResponder={() => canInteract}
+        style={[styles.room, isSelected ? styles.roomSelected : null]}
+      >
         <View pointerEvents="none" style={styles.roomHeader}>
           <Text style={styles.roomName}>{room.name || ROOM_TYPE_LABELS[room.type]}</Text>
         </View>
       </Pressable>
-      {canInteract ? <Pressable hitSlop={12} style={styles.resizeHandle} {...resizeResponder.panHandlers} onPress={handlePress} /> : null}
+      {canInteract ? (
+        <Pressable
+          hitSlop={12}
+          style={styles.resizeHandle}
+          onPressIn={startResize}
+          onResponderMove={handleResizeMove}
+          onResponderRelease={stopResize}
+          onResponderTerminate={stopResize}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onPress={handlePress}
+        />
+      ) : null}
     </View>
   );
 };
