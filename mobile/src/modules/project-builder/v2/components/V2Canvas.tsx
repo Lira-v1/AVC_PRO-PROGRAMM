@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { CompassViewMode } from '../model/orientation';
@@ -153,6 +153,7 @@ export const V2Canvas = ({
 
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
+  const [lastCenteredSceneKey, setLastCenteredSceneKey] = useState<string | null>(null);
   const [wallScenePosition, setWallScenePosition] = useState({
     x: WALL_SCENE_LAYOUT.defaultX,
     y: WALL_SCENE_LAYOUT.defaultY,
@@ -188,6 +189,21 @@ export const V2Canvas = ({
     };
   }, [activeWallObject, wallScenePosition.x, wallScenePosition.y]);
 
+  const roomsRef = useRef(rooms);
+  const roomSurfaceSceneItemsRef = useRef(roomSurfaceSceneItems);
+  const activeWallSceneItemRef = useRef(activeWallSceneItem);
+
+  roomsRef.current = rooms;
+  roomSurfaceSceneItemsRef.current = roomSurfaceSceneItems;
+  activeWallSceneItemRef.current = activeWallSceneItem;
+
+  const sceneCenterKey =
+    editorState.level === 'project'
+      ? 'project'
+      : editorState.level === 'room'
+      ? `room:${editorState.activeRoomId ?? 'none'}`
+      : `wall:${editorState.activeRoomId ?? 'none'}:${editorState.activeWall ?? 'none'}`;
+
   useEffect(() => {
     if (editorState.level !== 'wall') {
       setSelectedWallId(null);
@@ -204,8 +220,12 @@ export const V2Canvas = ({
       return;
     }
 
+    if (lastCenteredSceneKey === sceneCenterKey) {
+      return;
+    }
+
     if (editorState.level === 'project') {
-      const firstRoom = rooms[0] ?? null;
+      const firstRoom = roomsRef.current[0] ?? null;
       if (!firstRoom) {
         return;
       }
@@ -213,36 +233,37 @@ export const V2Canvas = ({
       const bounds = getRoomVisualBounds(firstRoom);
       const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, scale);
       onSetCameraPosition(centered.panX, centered.panY);
+      setLastCenteredSceneKey(sceneCenterKey);
       return;
     }
 
     if (editorState.level === 'room') {
-      if (!roomSurfaceSceneItems.length) {
+      if (!roomSurfaceSceneItemsRef.current.length) {
         return;
       }
 
-      const bounds = getSurfaceSceneBounds(roomSurfaceSceneItems);
+      const bounds = getSurfaceSceneBounds(roomSurfaceSceneItemsRef.current);
       const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, scale);
       onSetCameraPosition(centered.panX, centered.panY);
+      setLastCenteredSceneKey(sceneCenterKey);
       return;
     }
 
     if (editorState.level === 'wall') {
-      if (!activeWallSceneItem) {
+      const wallSceneItem = activeWallSceneItemRef.current;
+      if (!wallSceneItem) {
         return;
       }
 
-      const centered = centerBoundsInViewport(activeWallSceneItem, viewportSize.width, viewportSize.height, scale);
+      const centered = centerBoundsInViewport(wallSceneItem, viewportSize.width, viewportSize.height, scale);
       onSetCameraPosition(centered.panX, centered.panY);
+      setLastCenteredSceneKey(sceneCenterKey);
     }
   }, [
-    activeWallSceneItem,
-    editorState.activeRoomId,
-    editorState.activeWall,
     editorState.level,
+    lastCenteredSceneKey,
     onSetCameraPosition,
-    roomSurfaceSceneItems,
-    rooms,
+    sceneCenterKey,
     scale,
     viewportSize.height,
     viewportSize.width,
