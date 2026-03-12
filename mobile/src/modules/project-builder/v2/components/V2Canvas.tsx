@@ -13,6 +13,7 @@ type Props = {
   onSelectRoom: (roomId: string) => void;
   onMoveRoom: (roomId: string, x: number, y: number) => void;
   onResizeRoom: (roomId: string, width: number, height: number) => void;
+  onRotateRoom: (roomId: string) => void;
   onBackgroundPress: () => void;
   onRenamePreset: (roomId: string, name: string) => void;
   onCustomRename: (roomId: string) => void;
@@ -40,6 +41,7 @@ export const V2Canvas = ({
   onSelectRoom,
   onMoveRoom,
   onResizeRoom,
+  onRotateRoom,
   onBackgroundPress,
   onRenamePreset,
   onCustomRename,
@@ -108,6 +110,7 @@ export const V2Canvas = ({
             onSelect={onSelectRoom}
             onMove={onMoveRoom}
             onResize={onResizeRoom}
+            onRotate={onRotateRoom}
             onRenamePreset={onRenamePreset}
             onCustomRename={onCustomRename}
             onOpenSettings={onOpenSettings}

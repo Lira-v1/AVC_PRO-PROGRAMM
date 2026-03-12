@@ -12,6 +12,7 @@ export const INITIAL_SCENE_V2: SceneStateV2 = {
       height: 100,
       widthCm: ROOM_BASE_SIZE_CM,
       heightCm: ROOM_BASE_SIZE_CM,
+      rotation: 0,
     },
   ],
   selectedRoomId: null,

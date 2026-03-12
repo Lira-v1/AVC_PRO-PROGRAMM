@@ -103,6 +103,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     moveRoom: moveV2Room,
     resizeRoom: resizeV2Room,
     renameRoom: renameV2Room,
+    rotateRoom: rotateV2Room,
     toggleCompassOrientation: toggleV2CompassOrientation,
   } = useProjectBuilderV2();
   const {
@@ -332,6 +333,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onSelectRoom={selectV2Room}
               onMoveRoom={moveV2Room}
               onResizeRoom={resizeV2Room}
+              onRotateRoom={rotateV2Room}
               onBackgroundPress={() => {
                 deselectV2Room();
                 setInputModeV2({ type: 'default' });
