@@ -22,6 +22,7 @@ import { V2Canvas } from '../v2/components/V2Canvas';
 import { useCanvasUiStateV2 } from '../v2/hooks/useCanvasUiStateV2';
 import { useProjectBuilderV2 } from '../v2/hooks/useProjectBuilderV2';
 import { useCanvasViewportV2 } from '../v2/hooks/useCanvasViewportV2';
+import { InputModeV2 } from '../v2/model/types';
 
 type MainStackParamList = {
   Home: undefined;
@@ -47,6 +48,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
   const [input, setInput] = useState('');
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [isProjectV2ToolsOpen, setIsProjectV2ToolsOpen] = useState(false);
+  const [inputModeV2, setInputModeV2] = useState<InputModeV2>({ type: 'default' });
   const {
     project,
     rooms,
@@ -100,6 +102,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     deselectRoom: deselectV2Room,
     moveRoom: moveV2Room,
     resizeRoom: resizeV2Room,
+    renameRoom: renameV2Room,
     toggleCompassOrientation: toggleV2CompassOrientation,
   } = useProjectBuilderV2();
   const {
@@ -123,6 +126,35 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
 
   const selectedElementRoom = selectedElement ? rooms.find((room) => room.id === selectedElement.roomId) ?? null : null;
   const canSend = useMemo(() => input.trim().length > 0, [input]);
+
+  const isV2RenameMode = inputModeV2.type === 'rename-room';
+
+  const handleV2RenamePreset = (roomId: string, name: string) => {
+    renameV2Room(roomId, name);
+    setInputModeV2({ type: 'default' });
+    setInput('');
+  };
+
+  const handleV2CustomRename = (roomId: string) => {
+    setInputModeV2({ type: 'rename-room', roomId });
+    const room = v2Rooms.find((item) => item.id === roomId);
+    setInput(room?.name ?? '');
+  };
+
+  const handleV2OpenRoomSettings = (roomId: string) => {
+    selectV2Room(roomId);
+  };
+
+  const handleBottomInputSubmit = () => {
+    if (mode === 'project_v2' && inputModeV2.type === 'rename-room') {
+      renameV2Room(inputModeV2.roomId, input);
+      setInputModeV2({ type: 'default' });
+      setInput('');
+      return;
+    }
+
+    setInput('');
+  };
 
   const renderProjectCanvas = () => {
     if (!isRoomFocusMode || roomViewMode === 'plan') {
@@ -296,7 +328,13 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onSelectRoom={selectV2Room}
               onMoveRoom={moveV2Room}
               onResizeRoom={resizeV2Room}
-              onBackgroundPress={deselectV2Room}
+              onBackgroundPress={() => {
+                deselectV2Room();
+                setInputModeV2({ type: 'default' });
+              }}
+              onRenamePreset={handleV2RenamePreset}
+              onCustomRename={handleV2CustomRename}
+              onOpenRoomSettings={handleV2OpenRoomSettings}
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
               compassViewMode={v2Orientation.viewMode}
@@ -444,11 +482,11 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
             style={styles.chatInput}
             value={input}
             onChangeText={setInput}
-            placeholder="Напишите сообщение..."
+            placeholder={mode === 'project_v2' && isV2RenameMode ? 'Введите название комнаты...' : 'Напишите сообщение...'}
             placeholderTextColor="#8A94A6"
             multiline
           />
-          <Pressable style={[styles.iconButton, styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={() => setInput('')}>
+          <Pressable style={[styles.iconButton, styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={handleBottomInputSubmit}>
             <Text style={styles.sendText}>➤</Text>
           </Pressable>
         </View>
