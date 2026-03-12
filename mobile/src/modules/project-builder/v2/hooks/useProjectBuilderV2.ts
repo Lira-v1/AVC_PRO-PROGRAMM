@@ -15,6 +15,13 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const deselectRoom = () => {
+    setScene((prev) => ({
+      ...prev,
+      selectedRoomId: null,
+    }));
+  };
+
   const moveRoom = (roomId: string, x: number, y: number) => {
     setScene((prev) => ({
       ...prev,
@@ -44,6 +51,7 @@ export const useProjectBuilderV2 = () => {
     selectedRoom,
     activeTool: scene.activeTool,
     selectRoom,
+    deselectRoom,
     moveRoom,
     resizeRoom,
   };

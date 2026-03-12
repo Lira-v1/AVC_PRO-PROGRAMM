@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { V2Grid } from './V2Grid';
 import { V2Room } from './V2Room';
@@ -10,11 +10,13 @@ type Props = {
   onSelectRoom: (roomId: string) => void;
   onMoveRoom: (roomId: string, x: number, y: number) => void;
   onResizeRoom: (roomId: string, width: number, height: number) => void;
+  onBackgroundPress: () => void;
 };
 
-export const V2Canvas = ({ rooms, selectedRoomId, onSelectRoom, onMoveRoom, onResizeRoom }: Props) => {
+export const V2Canvas = ({ rooms, selectedRoomId, onSelectRoom, onMoveRoom, onResizeRoom, onBackgroundPress }: Props) => {
   return (
     <View style={styles.canvas}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />
       <V2Grid />
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         {rooms.map((room) => (
