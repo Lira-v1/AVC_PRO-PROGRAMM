@@ -8,6 +8,7 @@ import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
+import { V2SurfaceView } from './V2SurfaceView';
 
 type Props = {
   rooms: RoomV2[];
@@ -81,6 +82,7 @@ export const V2Canvas = ({
   onToggleCompassOrientation,
 }: Props) => {
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
+  const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
 
   const handleCanvasMouseDown = (event: any) => {
     if (event?.target === event?.currentTarget) {
@@ -145,47 +147,49 @@ export const V2Canvas = ({
         </View>
       ) : null}
 
-      {editorState.viewMode === 'surface' ? (
-        <View style={styles.surfaceMode}>
-          <Text style={styles.surfaceModeText}>Режим поверхности: {editorState.activeSurface}</Text>
+      {editorState.viewMode === 'surface' && activeRoom && editorState.activeSurface ? (
+        <View style={styles.surfaceModeContainer}>
+          <View style={styles.surfaceTopBar}>
+            <Pressable style={styles.modeButton} onPress={onBackToRoom}>
+              <Text style={styles.modeButtonText}>← Назад к комнате</Text>
+            </Pressable>
+          </View>
 
-          <Pressable style={styles.modeButton} onPress={onBackToRoom}>
-            <Text style={styles.modeButtonText}>← Назад к комнате</Text>
-          </Pressable>
+          <V2SurfaceView room={activeRoom} surface={editorState.activeSurface} />
         </View>
-      ) : null}
+      ) : (
+        <View
+          style={[
+            styles.sceneLayer,
+            {
+              transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }],
+            },
+          ]}
+          pointerEvents="box-none"
+        >
+          {rooms.map((room) => (
+            <V2Room
+              key={room.id}
+              room={room}
+              selected={selectedRoomId === room.id}
+              onSelect={onSelectRoom}
+              onMove={onMoveRoom}
+              onResize={onResizeRoom}
+              onRotate={onRotateRoom}
+              onRenamePreset={onRenamePreset}
+              onCustomRename={onCustomRename}
+              onOpenSettings={onOpenSettings}
+              onOpenRoom={onOpenRoom}
+              onUpdateRoomSize={onUpdateRoomSize}
+              onToggleSizeLock={onToggleSizeLock}
+              onAddDoor={onAddDoor}
+              onAddWindow={onAddWindow}
+            />
+          ))}
 
-      <View
-        style={[
-          styles.sceneLayer,
-          {
-            transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }],
-          },
-        ]}
-        pointerEvents="box-none"
-      >
-        {rooms.map((room) => (
-          <V2Room
-            key={room.id}
-            room={room}
-            selected={selectedRoomId === room.id}
-            onSelect={onSelectRoom}
-            onMove={onMoveRoom}
-            onResize={onResizeRoom}
-            onRotate={onRotateRoom}
-            onRenamePreset={onRenamePreset}
-            onCustomRename={onCustomRename}
-            onOpenSettings={onOpenSettings}
-            onOpenRoom={onOpenRoom}
-            onUpdateRoomSize={onUpdateRoomSize}
-            onToggleSizeLock={onToggleSizeLock}
-            onAddDoor={onAddDoor}
-            onAddWindow={onAddWindow}
-          />
-        ))}
-
-        {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
-      </View>
+          {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
+        </View>
+      )}
     </View>
   );
 };
@@ -246,23 +250,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  surfaceMode: {
-    position: 'absolute',
-    top: 64,
-    left: 12,
-    right: 12,
+  surfaceModeContainer: {
+    ...StyleSheet.absoluteFillObject,
     zIndex: 26,
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: 'rgba(255,255,255,0.97)',
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    gap: 10,
+    backgroundColor: '#F9FBFF',
   },
-  surfaceModeText: {
-    color: '#1E293B',
-    fontSize: 14,
-    fontWeight: '600',
+  surfaceTopBar: {
+    paddingTop: 12,
+    paddingHorizontal: 12,
   },
 
 });

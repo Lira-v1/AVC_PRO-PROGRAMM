@@ -12,6 +12,7 @@ export type RoomV2 = {
 
   widthMm: number;
   heightMm: number;
+  wallHeightMm?: number;
 
   rotation: RoomRotation;
 

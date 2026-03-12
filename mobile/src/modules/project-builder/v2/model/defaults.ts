@@ -11,6 +11,7 @@ export const INITIAL_SCENE_V2: SceneStateV2 = {
       height: 100,
       widthMm: 1000,
       heightMm: 1000,
+      wallHeightMm: 2700,
       rotation: 0,
       isSizeLocked: false,
     },
