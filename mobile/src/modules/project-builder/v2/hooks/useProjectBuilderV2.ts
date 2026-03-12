@@ -144,6 +144,14 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const backToRoom = () => {
+    setEditorState((prev) => ({
+      ...prev,
+      viewMode: 'room',
+      activeSurface: null,
+    }));
+  };
+
   const backToProject = () => {
     setEditorState({
       viewMode: 'project',
@@ -172,6 +180,7 @@ export const useProjectBuilderV2 = () => {
     toggleCompassOrientation,
     openRoom,
     openSurface,
+    backToRoom,
     backToProject,
   };
 };

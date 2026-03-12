@@ -108,9 +108,9 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     setRoomSizeLocked: setV2RoomSizeLocked,
     toggleCompassOrientation: toggleV2CompassOrientation,
     editorState: v2EditorState,
-    setEditorState: setV2EditorState,
     openRoom: openV2Room,
     openSurface: openV2Surface,
+    backToRoom: backToV2Room,
     backToProject: backToV2Project,
   } = useProjectBuilderV2();
   const {
@@ -151,13 +151,6 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
 
   const handleV2OpenRoomSettings = (roomId: string) => {
     selectV2Room(roomId);
-  };
-
-  const backToV2Room = () => {
-    setV2EditorState((prev) => ({
-      ...prev,
-      viewMode: 'room',
-    }));
   };
 
   const addDoorPlaceholder = (roomId: string) => {

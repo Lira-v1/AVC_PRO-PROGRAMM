@@ -8,6 +8,7 @@ import { V2RoomMenu } from './V2RoomMenu';
 type Props = {
   room: RoomV2;
   selected: boolean;
+  interactive?: boolean;
   onSelect: (roomId: string) => void;
   onMove: (roomId: string, centerX: number, centerY: number) => void;
   onResize: (roomId: string, width: number, height: number) => void;
@@ -33,6 +34,7 @@ const RESIZE_HANDLE_SIZE = 20;
 export const V2Room = ({
   room,
   selected,
+  interactive = true,
   onSelect,
   onMove,
   onResize,
@@ -98,8 +100,8 @@ export const V2Room = ({
   }, [selected]);
 
   const dragResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => !isResizingRef.current,
-    onMoveShouldSetPanResponder: () => !isResizingRef.current,
+    onStartShouldSetPanResponder: () => interactive && !isResizingRef.current,
+    onMoveShouldSetPanResponder: () => interactive && !isResizingRef.current,
     onPanResponderGrant: () => {
       if (isResizingRef.current) return;
       dragOriginRef.current = { centerX: room.centerX, centerY: room.centerY };
@@ -118,8 +120,8 @@ export const V2Room = ({
   });
 
   const resizeResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => !room.isSizeLocked,
-    onMoveShouldSetPanResponder: () => !room.isSizeLocked,
+    onStartShouldSetPanResponder: () => interactive && !room.isSizeLocked,
+    onMoveShouldSetPanResponder: () => interactive && !room.isSizeLocked,
     onPanResponderGrant: () => {
       if (room.isSizeLocked) return;
       isResizingRef.current = true;
@@ -139,6 +141,8 @@ export const V2Room = ({
   });
 
   const startDragWeb = (event: any) => {
+    if (!interactive) return;
+
     onSelect(room.id);
     interactionStateRef.current = {
       mode: 'drag',
@@ -150,7 +154,7 @@ export const V2Room = ({
   };
 
   const startResizeWeb = (event: any) => {
-    if (room.isSizeLocked) return;
+    if (!interactive || room.isSizeLocked) return;
 
     event?.stopPropagation?.();
     onSelect(room.id);
@@ -180,9 +184,13 @@ export const V2Room = ({
       pointerEvents="box-none"
     >
       <Pressable
-        {...(Platform.OS === 'web' ? {} : dragResponder.panHandlers)}
+        {...(Platform.OS === 'web' || !interactive ? {} : dragResponder.panHandlers)}
         {...webDragProps}
-        onPress={() => onSelect(room.id)}
+        onPress={() => {
+          if (!interactive) return;
+
+          onSelect(room.id);
+        }}
         style={styles.hitLayer}
       >
         <View
@@ -238,7 +246,7 @@ export const V2Room = ({
             />
           ) : null}
 
-          {selected ? (
+          {selected && interactive ? (
             <Pressable
               style={[
                 styles.settingsHandle,
@@ -260,7 +268,7 @@ export const V2Room = ({
         </View>
       </Pressable>
 
-      {selected ? (
+      {selected && interactive ? (
         <Pressable
           style={[
             styles.rotateHandle,
@@ -279,9 +287,9 @@ export const V2Room = ({
         </Pressable>
       ) : null}
 
-      {selected && !room.isSizeLocked ? (
+      {selected && interactive && !room.isSizeLocked ? (
         <Pressable
-          {...(Platform.OS === 'web' ? {} : resizeResponder.panHandlers)}
+          {...(Platform.OS === 'web' || !interactive ? {} : resizeResponder.panHandlers)}
           {...webResizeProps}
           style={[
             styles.resizeHandle,
