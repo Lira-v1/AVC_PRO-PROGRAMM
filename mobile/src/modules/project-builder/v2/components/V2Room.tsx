@@ -175,16 +175,7 @@ export const V2Room = ({
         </View>
 
         <View style={styles.overlayLayer} pointerEvents="box-none">
-          <Pressable
-            style={styles.nameButton}
-            onPress={(event) => {
-              event?.stopPropagation?.();
-              onSelect(room.id);
-              setIsMenuOpen((prev) => !prev);
-            }}
-          >
-            <Text style={styles.name}>{room.name}</Text>
-          </Pressable>
+          <Text style={styles.name}>{room.name}</Text>
 
           {isMenuOpen ? (
             <V2RoomMenu
@@ -206,6 +197,20 @@ export const V2Room = ({
                 setIsMenuOpen(false);
               }}
             />
+          ) : null}
+
+          {selected ? (
+            <Pressable
+              style={styles.settingsHandle}
+              onPress={(event) => {
+                event?.stopPropagation?.();
+                onSelect(room.id);
+                setIsMenuOpen((prev) => !prev);
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.settingsIcon}>⚙</Text>
+            </Pressable>
           ) : null}
         </View>
       </Pressable>
@@ -262,19 +267,16 @@ const styles = StyleSheet.create({
     borderColor: '#2D5ED2',
     backgroundColor: '#EDF3FF',
   },
-  nameButton: {
+  name: {
     position: 'absolute',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
+    alignSelf: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    backgroundColor: 'rgba(255,255,255,0.88)',
-  },
-  name: {
+    borderRadius: 8,
     fontSize: 12,
     fontWeight: '700',
-    color: '#1E2A46',
+    color: 'rgba(30, 42, 70, 0.62)',
+    backgroundColor: 'rgba(255,255,255,0.55)',
     textAlign: 'center',
   },
   rotateHandle: {
@@ -292,6 +294,25 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   rotateIcon: {
+    color: '#2D5ED2',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  settingsHandle: {
+    position: 'absolute',
+    right: -10,
+    top: -10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#2D5ED2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
+  settingsIcon: {
     color: '#2D5ED2',
     fontSize: 12,
     fontWeight: '700',
