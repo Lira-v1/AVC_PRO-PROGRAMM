@@ -152,7 +152,6 @@ export const V2Room = ({
           top: room.y,
           width: room.width,
           height: room.height,
-          transform: [{ rotate: `${roomRotation}deg` }],
         },
       ]}
       pointerEvents="box-none"
@@ -161,40 +160,54 @@ export const V2Room = ({
         {...(Platform.OS === 'web' ? {} : dragResponder.panHandlers)}
         {...webDragProps}
         onPress={() => onSelect(room.id)}
-        style={[styles.room, selected ? styles.roomSelected : null]}
+        style={styles.hitLayer}
       >
-        <Pressable
-          style={styles.nameButton}
-          onPress={(event) => {
-            event?.stopPropagation?.();
-            onSelect(room.id);
-            setIsMenuOpen((prev) => !prev);
-          }}
+        <View
+          style={[
+            styles.geometryLayer,
+            {
+              transform: [{ rotate: `${roomRotation}deg` }],
+            },
+          ]}
+          pointerEvents="none"
         >
-          <Text style={styles.name}>{room.name}</Text>
-        </Pressable>
+          <View style={[styles.roomBody, selected ? styles.roomSelected : null]} />
+        </View>
 
-        {isMenuOpen ? (
-          <V2RoomMenu
-            roomId={room.id}
-            onRenamePreset={(roomId, name) => {
-              onRenamePreset(roomId, name);
-              setIsMenuOpen(false);
+        <View style={styles.overlayLayer} pointerEvents="box-none">
+          <Pressable
+            style={styles.nameButton}
+            onPress={(event) => {
+              event?.stopPropagation?.();
+              onSelect(room.id);
+              setIsMenuOpen((prev) => !prev);
             }}
-            onCustomRename={(roomId) => {
-              onCustomRename(roomId);
-              setIsMenuOpen(false);
-            }}
-            onOpenSettings={(roomId) => {
-              onOpenSettings(roomId);
-              setIsMenuOpen(false);
-            }}
-            onOpenRoom={(roomId) => {
-              onOpenRoom(roomId);
-              setIsMenuOpen(false);
-            }}
-          />
-        ) : null}
+          >
+            <Text style={styles.name}>{room.name}</Text>
+          </Pressable>
+
+          {isMenuOpen ? (
+            <V2RoomMenu
+              roomId={room.id}
+              onRenamePreset={(roomId, name) => {
+                onRenamePreset(roomId, name);
+                setIsMenuOpen(false);
+              }}
+              onCustomRename={(roomId) => {
+                onCustomRename(roomId);
+                setIsMenuOpen(false);
+              }}
+              onOpenSettings={(roomId) => {
+                onOpenSettings(roomId);
+                setIsMenuOpen(false);
+              }}
+              onOpenRoom={(roomId) => {
+                onOpenRoom(roomId);
+                setIsMenuOpen(false);
+              }}
+            />
+          ) : null}
+        </View>
       </Pressable>
 
       {selected ? (
@@ -226,32 +239,43 @@ const styles = StyleSheet.create({
   root: {
     position: 'absolute',
   },
-  room: {
+  hitLayer: {
+    flex: 1,
+    cursor: 'move' as any,
+  },
+  geometryLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  roomBody: {
     flex: 1,
     backgroundColor: '#F7FAFF',
     borderWidth: 2,
     borderColor: '#2A3756',
     borderRadius: 6,
-    justifyContent: 'flex-start',
+  },
+  overlayLayer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 10,
-    cursor: 'move' as any,
-    position: 'relative',
-    overflow: 'visible',
   },
   roomSelected: {
     borderColor: '#2D5ED2',
     backgroundColor: '#EDF3FF',
   },
   nameButton: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    backgroundColor: 'rgba(255,255,255,0.88)',
   },
   name: {
     fontSize: 12,
     fontWeight: '700',
     color: '#1E2A46',
+    textAlign: 'center',
   },
   rotateHandle: {
     position: 'absolute',
