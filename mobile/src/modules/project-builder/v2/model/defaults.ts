@@ -5,8 +5,9 @@ export const INITIAL_SCENE_V2: SceneStateV2 = {
     {
       id: 'room-1',
       name: 'Комната 1',
-      centerX: 0,
-      centerY: 0,
+      // Room coordinates are in scene space (0..10000), so the scene center is 5000/5000.
+      centerX: 5000,
+      centerY: 5000,
       width: 100,
       height: 100,
       widthMm: 1000,

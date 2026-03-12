@@ -407,6 +407,48 @@ export const V2Canvas = ({
     </View>
   );
 
+
+  const handleZoomWithFirstRoomFocus = useCallback(
+    (direction: 'in' | 'out') => {
+      const firstRoom = roomsRef.current[0] ?? null;
+      if (!firstRoom || !viewportSize.width || !viewportSize.height) {
+        if (direction === 'in') {
+          onZoomIn();
+        } else {
+          onZoomOut();
+        }
+        return;
+      }
+
+      const zoomDelta = direction === 'in' ? 0.25 : -0.25;
+      const nextZoom = Number(Math.max(0.25, Math.min(3, camera.zoom + zoomDelta)).toFixed(2));
+
+      if (nextZoom === camera.zoom) {
+        return;
+      }
+
+      const bounds = getRoomVisualBounds(firstRoom);
+      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, nextZoom);
+
+      if (direction === 'in') {
+        onZoomIn();
+      } else {
+        onZoomOut();
+      }
+
+      onSetCameraPosition(centered.panX, centered.panY);
+    },
+    [camera.zoom, onSetCameraPosition, onZoomIn, onZoomOut, viewportSize.height, viewportSize.width],
+  );
+
+  const handleZoomIn = useCallback(() => {
+    handleZoomWithFirstRoomFocus('in');
+  }, [handleZoomWithFirstRoomFocus]);
+
+  const handleZoomOut = useCallback(() => {
+    handleZoomWithFirstRoomFocus('out');
+  }, [handleZoomWithFirstRoomFocus]);
+
   const centerOnProject = () => {
     const firstRoom = roomsRef.current[0] ?? null;
     if (!firstRoom || !viewportSize.width || !viewportSize.height) {
@@ -446,8 +488,8 @@ export const V2Canvas = ({
         onBackPress={editorState.level === 'room' ? onBackToProject : editorState.level === 'wall' ? onBackToRoom : undefined}
         onToggleFullscreen={onToggleFullscreen}
         onToggleGrid={onToggleGrid}
-        onZoomIn={onZoomIn}
-        onZoomOut={onZoomOut}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
         onResetZoom={onResetZoom}
         onCenterProject={centerOnProject}
       />
