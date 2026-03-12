@@ -2,9 +2,11 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 type Props = {
+  backLabel: string | null;
   isFullscreen: boolean;
   showGrid: boolean;
   scale: number;
+  onBackPress?: () => void;
   onToggleFullscreen: () => void;
   onToggleGrid: () => void;
   onZoomIn: () => void;
@@ -13,9 +15,11 @@ type Props = {
 };
 
 export const V2CanvasControls = ({
+  backLabel,
   isFullscreen,
   showGrid,
   scale,
+  onBackPress,
   onToggleFullscreen,
   onToggleGrid,
   onZoomIn,
@@ -23,31 +27,37 @@ export const V2CanvasControls = ({
   onResetZoom,
 }: Props) => {
   return (
-    <View style={styles.root}>
-      <View style={styles.buttonRow}>
-        <Pressable style={styles.button} onPress={onZoomOut}>
+    <View style={styles.controlsRoot}>
+      <View style={styles.zoomRow}>
+        <Pressable style={styles.smallControlButton} onPress={onZoomOut}>
           <Text style={styles.buttonText}>−</Text>
         </Pressable>
 
-        <Pressable style={styles.button} onPress={onZoomIn}>
+        <Pressable style={styles.smallControlButton} onPress={onZoomIn}>
           <Text style={styles.buttonText}>+</Text>
         </Pressable>
 
-        <Pressable style={styles.button} onPress={onResetZoom}>
+        <Pressable style={styles.scaleBadge} onPress={onResetZoom}>
           <Text style={styles.buttonText}>100%</Text>
         </Pressable>
 
-        <View style={styles.scaleChip}>
+        <View style={styles.activeScaleBadge}>
           <Text style={styles.scaleChipText}>{Math.round(scale * 100)}%</Text>
         </View>
       </View>
 
-      <View style={styles.buttonRow}>
-        <Pressable style={styles.button} onPress={onToggleFullscreen}>
+      <View style={styles.actionsRow}>
+        {backLabel && onBackPress ? (
+          <Pressable style={styles.backButton} onPress={onBackPress}>
+            <Text style={styles.buttonText}>{backLabel}</Text>
+          </Pressable>
+        ) : null}
+
+        <Pressable style={styles.actionButton} onPress={onToggleFullscreen}>
           <Text style={styles.buttonText}>{isFullscreen ? 'Свернуть' : 'Полный экран'}</Text>
         </Pressable>
 
-        <Pressable style={styles.button} onPress={onToggleGrid}>
+        <Pressable style={styles.actionButton} onPress={onToggleGrid}>
           <Text style={styles.buttonText}>{showGrid ? 'Скрыть сетку' : 'Показать сетку'}</Text>
         </Pressable>
       </View>
@@ -56,39 +66,78 @@ export const V2CanvasControls = ({
 };
 
 const styles = StyleSheet.create({
-  root: {
+  controlsRoot: {
     position: 'absolute',
     top: 12,
     left: 12,
-    gap: 8,
-    zIndex: 20,
+    zIndex: 100,
+    gap: 10,
   },
-  buttonRow: {
+  zoomRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  button: {
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderRadius: 10,
+  actionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  backButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#DCE3F2',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  },
+  actionButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+  },
+  smallControlButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonText: {
     color: '#1E293B',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
-  scaleChip: {
-    backgroundColor: 'rgba(15,23,42,0.85)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
+  scaleBadge: {
+    minWidth: 120,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  activeScaleBadge: {
+    minWidth: 120,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
   },
   scaleChipText: {
     color: '#F8FAFC',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
 });
