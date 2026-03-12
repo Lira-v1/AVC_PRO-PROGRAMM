@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { CompassViewMode } from '../model/orientation';
@@ -13,6 +13,9 @@ import { RoomSurfaceObject } from '../model/surfaces';
 import { SceneObject } from '../model/sceneObjects';
 import { buildSurfaceId } from '../utils/buildSurfaceId';
 import { getSurfaceObjects } from '../utils/getSurfaceObjects';
+import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
+import { centerBoundsInViewport } from '../utils/centerBoundsInViewport';
+import { getSurfaceSceneBounds, SurfaceSceneItem } from '../utils/getSurfaceSceneBounds';
 
 type Props = {
   rooms: RoomV2[];
@@ -49,8 +52,25 @@ type Props = {
   onResetZoom: () => void;
   onOpenTools: () => void;
   onToggleCompassOrientation: () => void;
+  onSetCameraPosition: (panX: number, panY: number) => void;
 };
 
+
+
+const ROOM_SCENE_LAYOUT = {
+  left: 70,
+  top: 70,
+  width: 420,
+  gap: 12,
+  rowHeight: 86,
+};
+
+const WALL_SCENE_LAYOUT = {
+  left: 70,
+  top: 100,
+  width: 520,
+  activeWallHeight: 220,
+};
 
 export const V2Canvas = ({
   rooms,
@@ -87,6 +107,7 @@ export const V2Canvas = ({
   onResetZoom,
   onOpenTools,
   onToggleCompassOrientation,
+  onSetCameraPosition,
 }: Props) => {
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
   const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
@@ -121,6 +142,87 @@ export const V2Canvas = ({
   };
 
   const webCanvasProps = Platform.OS === 'web' ? ({ onMouseDown: handleCanvasMouseDown } as any) : {};
+
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+
+  const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
+    const rowSplitWidth = (ROOM_SCENE_LAYOUT.width - ROOM_SCENE_LAYOUT.gap) / 2;
+    const top = ROOM_SCENE_LAYOUT.top;
+    const left = ROOM_SCENE_LAYOUT.left;
+    const gap = ROOM_SCENE_LAYOUT.gap;
+    const rowHeight = ROOM_SCENE_LAYOUT.rowHeight;
+
+    return [
+      { x: left, y: top, width: ROOM_SCENE_LAYOUT.width, height: rowHeight },
+      { x: left, y: top + rowHeight + gap, width: rowSplitWidth, height: rowHeight },
+      { x: left + rowSplitWidth + gap, y: top + rowHeight + gap, width: rowSplitWidth, height: rowHeight },
+      { x: left, y: top + (rowHeight + gap) * 2, width: ROOM_SCENE_LAYOUT.width, height: rowHeight },
+      { x: left, y: top + (rowHeight + gap) * 3, width: rowSplitWidth, height: rowHeight },
+      { x: left + rowSplitWidth + gap, y: top + (rowHeight + gap) * 3, width: rowSplitWidth, height: rowHeight },
+    ];
+  }, []);
+
+  const activeWallSceneItem = useMemo<SurfaceSceneItem | null>(() => {
+    if (!activeWallObject) {
+      return null;
+    }
+
+    return {
+      x: WALL_SCENE_LAYOUT.left,
+      y: WALL_SCENE_LAYOUT.top,
+      width: WALL_SCENE_LAYOUT.width,
+      height: WALL_SCENE_LAYOUT.activeWallHeight,
+    };
+  }, [activeWallObject]);
+
+  useEffect(() => {
+    if (!viewportSize.width || !viewportSize.height) {
+      return;
+    }
+
+    if (editorState.level === 'project') {
+      const firstRoom = rooms[0] ?? null;
+      if (!firstRoom) {
+        return;
+      }
+
+      const bounds = getRoomVisualBounds(firstRoom);
+      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, scale);
+      onSetCameraPosition(centered.panX, centered.panY);
+      return;
+    }
+
+    if (editorState.level === 'room') {
+      if (!roomSurfaceSceneItems.length) {
+        return;
+      }
+
+      const bounds = getSurfaceSceneBounds(roomSurfaceSceneItems);
+      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, scale);
+      onSetCameraPosition(centered.panX, centered.panY);
+      return;
+    }
+
+    if (editorState.level === 'wall') {
+      if (!activeWallSceneItem) {
+        return;
+      }
+
+      const centered = centerBoundsInViewport(activeWallSceneItem, viewportSize.width, viewportSize.height, scale);
+      onSetCameraPosition(centered.panX, centered.panY);
+    }
+  }, [
+    activeWallSceneItem,
+    editorState.activeRoomId,
+    editorState.activeWall,
+    editorState.level,
+    onSetCameraPosition,
+    roomSurfaceSceneItems,
+    rooms,
+    scale,
+    viewportSize.height,
+    viewportSize.width,
+  ]);
 
   const renderProjectScene = () => (
     <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
@@ -190,7 +292,14 @@ export const V2Canvas = ({
   };
 
   return (
-    <View style={styles.canvas} {...webCanvasProps}>
+    <View
+      style={styles.canvas}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setViewportSize({ width, height });
+      }}
+      {...webCanvasProps}
+    >
       {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
       {showGrid ? <V2Grid /> : null}
 
@@ -314,16 +423,16 @@ const styles = StyleSheet.create({
   },
   roomSceneLayout: {
     position: 'absolute',
-    left: 70,
-    top: 70,
-    width: 420,
-    gap: 12,
+    left: ROOM_SCENE_LAYOUT.left,
+    top: ROOM_SCENE_LAYOUT.top,
+    width: ROOM_SCENE_LAYOUT.width,
+    gap: ROOM_SCENE_LAYOUT.gap,
   },
   wallSceneLayout: {
     position: 'absolute',
-    left: 70,
-    top: 100,
-    width: 520,
+    left: WALL_SCENE_LAYOUT.left,
+    top: WALL_SCENE_LAYOUT.top,
+    width: WALL_SCENE_LAYOUT.width,
     height: 300,
   },
   rowWide: {
