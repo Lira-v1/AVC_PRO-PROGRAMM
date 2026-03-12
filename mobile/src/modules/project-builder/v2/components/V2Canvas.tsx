@@ -61,20 +61,19 @@ type Props = {
 
 const SCENE_WIDTH = 10000;
 const SCENE_HEIGHT = 10000;
+const SCENE_CENTER_X = SCENE_WIDTH / 2;
+const SCENE_CENTER_Y = SCENE_HEIGHT / 2;
 const GRID_CELL_SIZE = CANVAS_UNITS_PER_METER / GRID_CELLS_PER_METER;
 
-
 const ROOM_SCENE_LAYOUT = {
-  left: 70,
-  top: 70,
   width: 420,
   gap: 12,
   rowHeight: 86,
 };
 
 const WALL_SCENE_LAYOUT = {
-  defaultX: 240,
-  defaultY: 180,
+  defaultX: SCENE_CENTER_X - 520 / 2,
+  defaultY: SCENE_CENTER_Y - 220 / 2,
   width: 520,
   activeWallHeight: 220,
 };
@@ -159,10 +158,11 @@ export const V2Canvas = ({
 
   const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
     const rowSplitWidth = (ROOM_SCENE_LAYOUT.width - ROOM_SCENE_LAYOUT.gap) / 2;
-    const top = ROOM_SCENE_LAYOUT.top;
-    const left = ROOM_SCENE_LAYOUT.left;
     const gap = ROOM_SCENE_LAYOUT.gap;
     const rowHeight = ROOM_SCENE_LAYOUT.rowHeight;
+    const layoutHeight = rowHeight * 4 + gap * 3;
+    const left = SCENE_CENTER_X - ROOM_SCENE_LAYOUT.width / 2;
+    const top = SCENE_CENTER_Y - layoutHeight / 2;
 
     return [
       { x: left, y: top, width: ROOM_SCENE_LAYOUT.width, height: rowHeight },
@@ -202,17 +202,9 @@ export const V2Canvas = ({
       ? `room:${editorState.activeRoomId ?? 'none'}`
       : `wall:${editorState.activeRoomId ?? 'none'}:${editorState.activeWall ?? 'none'}`;
 
-  const sceneOriginX = viewportSize.width / 2 - SCENE_WIDTH / 2;
-  const sceneOriginY = viewportSize.height / 2 - SCENE_HEIGHT / 2;
-
   const getCenteredCameraPosition = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
-    const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
-
-    return {
-      panX: centered.panX - sceneOriginX,
-      panY: centered.panY - sceneOriginY,
-    };
-  }, [camera.zoom, sceneOriginX, sceneOriginY, viewportSize.height, viewportSize.width]);
+    return centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
+  }, [camera.zoom, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     if (editorState.level !== 'wall') {
@@ -357,7 +349,17 @@ export const V2Canvas = ({
 
   const renderRoomScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
-      <View style={styles.roomSceneLayout} pointerEvents="box-none">
+      <View
+        style={[
+          styles.roomSceneLayout,
+          {
+            left: roomSurfaceSceneItems[0]?.x ?? SCENE_CENTER_X - ROOM_SCENE_LAYOUT.width / 2,
+            top: roomSurfaceSceneItems[0]?.y ?? SCENE_CENTER_Y,
+            width: ROOM_SCENE_LAYOUT.width,
+          },
+        ]}
+        pointerEvents="box-none"
+      >
         <View style={styles.rowWide}>
           {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
         </View>
@@ -464,8 +466,8 @@ export const V2Canvas = ({
           {
             width: SCENE_WIDTH,
             height: SCENE_HEIGHT,
-            left: sceneOriginX,
-            top: sceneOriginY,
+            left: viewportSize.width / 2 - SCENE_CENTER_X,
+            top: viewportSize.height / 2 - SCENE_CENTER_Y,
             transform: [{ translateX: camera.panX }, { translateY: camera.panY }, { scale: camera.zoom }],
           },
         ]}
@@ -553,9 +555,6 @@ const styles = StyleSheet.create({
   gearIcon: { fontSize: 18 },
   roomSceneLayout: {
     position: 'absolute',
-    left: ROOM_SCENE_LAYOUT.left,
-    top: ROOM_SCENE_LAYOUT.top,
-    width: ROOM_SCENE_LAYOUT.width,
     gap: ROOM_SCENE_LAYOUT.gap,
   },
   wallMetaLayer: {
