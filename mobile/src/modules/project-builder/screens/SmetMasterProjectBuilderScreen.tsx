@@ -107,6 +107,11 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     updateRoomSize: updateV2RoomSize,
     setRoomSizeLocked: setV2RoomSizeLocked,
     toggleCompassOrientation: toggleV2CompassOrientation,
+    editorState: v2EditorState,
+    setEditorState: setV2EditorState,
+    openRoom: openV2Room,
+    openSurface: openV2Surface,
+    backToProject: backToV2Project,
   } = useProjectBuilderV2();
   const {
     canvasUiState,
@@ -148,10 +153,13 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     selectV2Room(roomId);
   };
 
-  const openRoomPlaceholder = (roomId: string) => {
-    console.log('Открыть комнату placeholder:', roomId);
+  const backToV2Room = () => {
+    setV2EditorState((prev) => ({
+      ...prev,
+      viewMode: 'room',
+      activeSurface: null,
+    }));
   };
-
 
   const addDoorPlaceholder = (roomId: string) => {
     console.log('Добавить дверь placeholder:', roomId);
@@ -353,11 +361,12 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onBackgroundPress={() => {
                 deselectV2Room();
                 setInputModeV2({ type: 'default' });
+                backToV2Project();
               }}
               onRenamePreset={handleV2RenamePreset}
               onCustomRename={handleV2CustomRename}
               onOpenSettings={handleV2OpenRoomSettings}
-              onOpenRoom={openRoomPlaceholder}
+              onOpenRoom={openV2Room}
               onUpdateRoomSize={updateV2RoomSize}
               onToggleSizeLock={setV2RoomSizeLocked}
               onAddDoor={addDoorPlaceholder}
@@ -376,6 +385,10 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onResetZoom={v2Viewport.resetViewport}
               onOpenTools={() => setIsProjectV2ToolsOpen(true)}
               onToggleCompassOrientation={toggleV2CompassOrientation}
+              editorState={v2EditorState}
+              onBackToProject={backToV2Project}
+              onOpenSurface={openV2Surface}
+              onBackToRoom={backToV2Room}
             />
           </View>
 

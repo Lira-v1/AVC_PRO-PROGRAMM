@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { CompassViewMode } from '../model/orientation';
+import { EditorState, RoomSurface } from '../model/editorTypes';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
@@ -20,6 +21,10 @@ type Props = {
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
+  editorState: EditorState;
+  onBackToProject: () => void;
+  onOpenSurface: (surface: RoomSurface) => void;
+  onBackToRoom: () => void;
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
   onAddDoor: (roomId: string) => void;
@@ -52,6 +57,10 @@ export const V2Canvas = ({
   onCustomRename,
   onOpenSettings,
   onOpenRoom,
+  editorState,
+  onBackToProject,
+  onOpenSurface,
+  onBackToRoom,
   onUpdateRoomSize,
   onToggleSizeLock,
   onAddDoor,
@@ -103,6 +112,48 @@ export const V2Canvas = ({
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
+
+      {editorState.viewMode === 'room' && editorState.activeRoomId !== null ? (
+        <View style={styles.roomModeBar}>
+          <Pressable style={styles.modeButton} onPress={onBackToProject}>
+            <Text style={styles.modeButtonText}>← Проект</Text>
+          </Pressable>
+
+          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('north-wall')}>
+            <Text style={styles.modeButtonText}>Север</Text>
+          </Pressable>
+
+          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('east-wall')}>
+            <Text style={styles.modeButtonText}>Восток</Text>
+          </Pressable>
+
+          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('south-wall')}>
+            <Text style={styles.modeButtonText}>Юг</Text>
+          </Pressable>
+
+          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('west-wall')}>
+            <Text style={styles.modeButtonText}>Запад</Text>
+          </Pressable>
+
+          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('floor')}>
+            <Text style={styles.modeButtonText}>Пол</Text>
+          </Pressable>
+
+          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('ceiling')}>
+            <Text style={styles.modeButtonText}>Потолок</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {editorState.viewMode === 'surface' ? (
+        <View style={styles.surfaceMode}>
+          <Text style={styles.surfaceModeText}>Режим поверхности: {editorState.activeSurface}</Text>
+
+          <Pressable style={styles.modeButton} onPress={onBackToRoom}>
+            <Text style={styles.modeButtonText}>← Назад к комнате</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View
         style={[
@@ -167,4 +218,51 @@ const styles = StyleSheet.create({
   sceneLayer: {
     ...StyleSheet.absoluteFillObject,
   },
+  roomModeBar: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 64,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    zIndex: 25,
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+  },
+  modeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBC5DC',
+    backgroundColor: '#FFFFFF',
+  },
+  modeButtonText: {
+    color: '#2A3756',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  surfaceMode: {
+    position: 'absolute',
+    top: 64,
+    left: 12,
+    right: 12,
+    zIndex: 26,
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    gap: 10,
+  },
+  surfaceModeText: {
+    color: '#1E293B',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
 });
