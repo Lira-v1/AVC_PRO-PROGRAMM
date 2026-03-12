@@ -9,6 +9,7 @@ import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
 import { V2SurfaceView } from './V2SurfaceView';
+import { getSurfaceTitle } from '../utils/getSurfaceMetrics';
 
 type Props = {
   rooms: RoomV2[];
@@ -81,6 +82,15 @@ export const V2Canvas = ({
   onOpenTools,
   onToggleCompassOrientation,
 }: Props) => {
+  const surfaceTabs: Array<{ key: RoomSurface; label: string }> = [
+    { key: 'north-wall', label: 'Север' },
+    { key: 'east-wall', label: 'Восток' },
+    { key: 'south-wall', label: 'Юг' },
+    { key: 'west-wall', label: 'Запад' },
+    { key: 'floor', label: 'Пол' },
+    { key: 'ceiling', label: 'Потолок' },
+  ];
+
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
   const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
 
@@ -115,44 +125,48 @@ export const V2Canvas = ({
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
 
-      {editorState.viewMode === 'room' && editorState.activeRoomId !== null ? (
-        <View style={styles.roomModeBar}>
-          <Pressable style={styles.modeButton} onPress={onBackToProject}>
-            <Text style={styles.modeButtonText}>← Проект</Text>
-          </Pressable>
+      {editorState.viewMode === 'room' && activeRoom ? (
+        <View style={styles.modeShell}>
+          <View style={styles.modeHeader}>
+            <Pressable style={styles.modeBackButton} onPress={onBackToProject}>
+              <Text style={styles.modeBackButtonText}>← Проект</Text>
+            </Pressable>
 
-          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('north-wall')}>
-            <Text style={styles.modeButtonText}>Север</Text>
-          </Pressable>
+            <View style={styles.modeHeaderMeta}>
+              <Text style={styles.modeRoomName}>{activeRoom.name}</Text>
+              <Text style={styles.modeSubtitle}>Режим комнаты</Text>
+            </View>
+          </View>
 
-          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('east-wall')}>
-            <Text style={styles.modeButtonText}>Восток</Text>
-          </Pressable>
+          <View style={styles.surfaceTabsRow}>
+            {surfaceTabs.map((tab) => {
+              const isActive = editorState.activeSurface === tab.key;
 
-          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('south-wall')}>
-            <Text style={styles.modeButtonText}>Юг</Text>
-          </Pressable>
-
-          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('west-wall')}>
-            <Text style={styles.modeButtonText}>Запад</Text>
-          </Pressable>
-
-          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('floor')}>
-            <Text style={styles.modeButtonText}>Пол</Text>
-          </Pressable>
-
-          <Pressable style={styles.modeButton} onPress={() => onOpenSurface('ceiling')}>
-            <Text style={styles.modeButtonText}>Потолок</Text>
-          </Pressable>
+              return (
+                <Pressable
+                  key={tab.key}
+                  style={[styles.surfaceTab, isActive ? styles.surfaceTabActive : null]}
+                  onPress={() => onOpenSurface(tab.key)}
+                >
+                  <Text style={[styles.surfaceTabText, isActive ? styles.surfaceTabTextActive : null]}>{tab.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       ) : null}
 
       {editorState.viewMode === 'surface' && activeRoom && editorState.activeSurface ? (
-        <View style={styles.surfaceModeContainer}>
-          <View style={styles.surfaceTopBar}>
-            <Pressable style={styles.modeButton} onPress={onBackToRoom}>
-              <Text style={styles.modeButtonText}>← Назад к комнате</Text>
+        <View style={styles.surfaceShell}>
+          <View style={styles.modeHeader}>
+            <Pressable style={styles.modeBackButton} onPress={onBackToRoom}>
+              <Text style={styles.modeBackButtonText}>← К комнате</Text>
             </Pressable>
+
+            <View style={styles.modeHeaderMeta}>
+              <Text style={styles.modeRoomName}>{activeRoom.name}</Text>
+              <Text style={styles.modeSubtitle}>{getSurfaceTitle(editorState.activeSurface)}</Text>
+            </View>
           </View>
 
           <V2SurfaceView room={activeRoom} surface={editorState.activeSurface} />
@@ -222,22 +236,34 @@ const styles = StyleSheet.create({
   sceneLayer: {
     ...StyleSheet.absoluteFillObject,
   },
-  roomModeBar: {
+  modeShell: {
     position: 'absolute',
     top: 12,
     left: 12,
-    right: 64,
+    right: 12,
+    zIndex: 50,
+    gap: 10,
+  },
+  surfaceShell: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    bottom: 12,
+    zIndex: 50,
+  },
+  modeHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    zIndex: 25,
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.95)',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#DCE3F2',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  modeButton: {
+  modeBackButton: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -245,19 +271,53 @@ const styles = StyleSheet.create({
     borderColor: '#BBC5DC',
     backgroundColor: '#FFFFFF',
   },
-  modeButtonText: {
+  modeBackButtonText: {
     color: '#2A3756',
     fontSize: 12,
     fontWeight: '700',
   },
-  surfaceModeContainer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 26,
-    backgroundColor: '#F9FBFF',
+  modeHeaderMeta: {
+    flex: 1,
+    gap: 2,
   },
-  surfaceTopBar: {
-    paddingTop: 12,
-    paddingHorizontal: 12,
+  modeRoomName: {
+    color: '#1F2A44',
+    fontSize: 14,
+    fontWeight: '700',
   },
-
+  modeSubtitle: {
+    color: '#5D6B89',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  surfaceTabsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    padding: 8,
+  },
+  surfaceTab: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBC5DC',
+    backgroundColor: '#FFFFFF',
+  },
+  surfaceTabActive: {
+    borderColor: '#4B84FF',
+    backgroundColor: '#EAF1FF',
+  },
+  surfaceTabText: {
+    color: '#2A3756',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  surfaceTabTextActive: {
+    color: '#1C4CCC',
+  },
 });
