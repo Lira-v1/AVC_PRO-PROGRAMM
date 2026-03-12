@@ -21,6 +21,7 @@ import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
 import { V2Canvas } from '../v2/components/V2Canvas';
 import { useCanvasUiStateV2 } from '../v2/hooks/useCanvasUiStateV2';
 import { useProjectBuilderV2 } from '../v2/hooks/useProjectBuilderV2';
+import { useCanvasViewportV2 } from '../v2/hooks/useCanvasViewportV2';
 
 type MainStackParamList = {
   Home: undefined;
@@ -100,6 +101,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     resizeRoom: resizeV2Room,
   } = useProjectBuilderV2();
   const { canvasUiState, toggleFullscreen: toggleV2Fullscreen, toggleGrid: toggleV2Grid } = useCanvasUiStateV2();
+  const v2Viewport = useCanvasViewportV2();
 
   const handleDimensionChange = (field: 'width' | 'height', value: string) => {
     if (!selectedRoom) return;
@@ -292,8 +294,14 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
               isFullscreen={canvasUiState.isFullscreen}
+              scale={v2Viewport.scale}
+              offsetX={v2Viewport.offsetX}
+              offsetY={v2Viewport.offsetY}
               onToggleGrid={toggleV2Grid}
               onToggleFullscreen={toggleV2Fullscreen}
+              onZoomIn={v2Viewport.zoomIn}
+              onZoomOut={v2Viewport.zoomOut}
+              onResetZoom={v2Viewport.resetViewport}
               onOpenTools={() => setIsProjectV2ToolsOpen(true)}
             />
           </View>

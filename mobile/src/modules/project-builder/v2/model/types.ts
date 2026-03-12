@@ -12,3 +12,9 @@ export type SceneStateV2 = {
   selectedRoomId: string | null;
   activeTool: 'select';
 };
+
+export type CanvasViewportStateV2 = {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+};

@@ -16,8 +16,14 @@ type Props = {
   showGrid: boolean;
   showCompass: boolean;
   isFullscreen: boolean;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
   onToggleGrid: () => void;
   onToggleFullscreen: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onResetZoom: () => void;
   onOpenTools: () => void;
 };
 
@@ -31,8 +37,14 @@ export const V2Canvas = ({
   showGrid,
   showCompass,
   isFullscreen,
+  scale,
+  offsetX,
+  offsetY,
   onToggleGrid,
   onToggleFullscreen,
+  onZoomIn,
+  onZoomOut,
+  onResetZoom,
   onOpenTools,
 }: Props) => {
   const handleCanvasMouseDown = (event: any) => {
@@ -48,14 +60,31 @@ export const V2Canvas = ({
       {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
       {showGrid ? <V2Grid /> : null}
 
-      <V2CanvasControls isFullscreen={isFullscreen} showGrid={showGrid} onToggleFullscreen={onToggleFullscreen} onToggleGrid={onToggleGrid} />
+      <V2CanvasControls
+        isFullscreen={isFullscreen}
+        showGrid={showGrid}
+        scale={scale}
+        onToggleFullscreen={onToggleFullscreen}
+        onToggleGrid={onToggleGrid}
+        onZoomIn={onZoomIn}
+        onZoomOut={onZoomOut}
+        onResetZoom={onResetZoom}
+      />
       {showCompass ? <V2Compass /> : null}
 
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
 
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <View
+        style={[
+          styles.sceneLayer,
+          {
+            transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }],
+          },
+        ]}
+        pointerEvents="box-none"
+      >
         {rooms.map((room) => (
           <V2Room
             key={room.id}
@@ -96,4 +125,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   gearIcon: { fontSize: 18 },
+  sceneLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
 });
