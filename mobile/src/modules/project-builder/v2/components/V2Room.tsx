@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { RoomSizeUnit } from '../utils/roomUnits';
 import { getRoomCorners } from '../utils/getRoomCorners';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { V2RoomMenu } from './V2RoomMenu';
@@ -21,6 +22,8 @@ type Props = {
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
   onAddDoor: (roomId: string) => void;
   onAddWindow: (roomId: string) => void;
+  dimensionUnit: RoomSizeUnit;
+  onDimensionUnitChange: (unit: RoomSizeUnit) => void;
 };
 
 type InteractionState =
@@ -47,6 +50,8 @@ export const V2Room = ({
   onToggleSizeLock,
   onAddDoor,
   onAddWindow,
+  dimensionUnit,
+  onDimensionUnitChange,
 }: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
@@ -143,6 +148,7 @@ export const V2Room = ({
   const startDragWeb = (event: any) => {
     if (!interactive) return;
 
+    event?.stopPropagation?.();
     onSelect(room.id);
     interactionStateRef.current = {
       mode: 'drag',
@@ -240,6 +246,8 @@ export const V2Room = ({
                 onAddWindow(roomId);
                 setIsMenuOpen(false);
               }}
+              dimensionUnit={dimensionUnit}
+              onDimensionUnitChange={onDimensionUnitChange}
             />
           ) : null}
 

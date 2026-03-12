@@ -11,6 +11,8 @@ export type EditorState = {
   activeRoomId: string | null;
 
   activeWall: WallSurfaceDirection | null;
+
+  dimensionUnit: 'mm' | 'cm' | 'm';
 };
 
 export type RoomSurface = RoomSurfaceDirection;

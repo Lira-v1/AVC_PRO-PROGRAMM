@@ -14,6 +14,8 @@ type Props = {
   onAddDoor: (roomId: string) => void;
   onAddWindow: (roomId: string) => void;
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
+  dimensionUnit: RoomSizeUnit;
+  onDimensionUnitChange: (unit: RoomSizeUnit) => void;
 };
 
 export const V2RoomMenu = ({
@@ -27,9 +29,10 @@ export const V2RoomMenu = ({
   onAddDoor,
   onAddWindow,
   onUpdateRoomSize,
+  dimensionUnit,
+  onDimensionUnitChange,
 }: Props) => {
   const [submenu, setSubmenu] = useState<'root' | 'name' | 'settings'>('root');
-  const [sizeUnit, setSizeUnit] = useState<RoomSizeUnit>('m');
   const [editingField, setEditingField] = useState<'name' | 'width' | 'height' | null>(null);
   const [draftValue, setDraftValue] = useState('');
 
@@ -48,11 +51,11 @@ export const V2RoomMenu = ({
     }
 
     if (field === 'width') {
-      setDraftValue(formatRoomSize(room.widthMm, sizeUnit));
+      setDraftValue(formatRoomSize(room.widthMm, dimensionUnit));
       return;
     }
 
-    setDraftValue(formatRoomSize(room.heightMm, sizeUnit));
+    setDraftValue(formatRoomSize(room.heightMm, dimensionUnit));
   };
 
   const commitField = () => {
@@ -68,7 +71,7 @@ export const V2RoomMenu = ({
       return;
     }
 
-    const parsedMm = parseRoomSizeToMm(draftValue, sizeUnit);
+    const parsedMm = parseRoomSizeToMm(draftValue, dimensionUnit);
     if (parsedMm == null) {
       setEditingField(null);
       setDraftValue('');
@@ -109,6 +112,30 @@ export const V2RoomMenu = ({
         <Text style={styles.itemText}>← Назад</Text>
       </Pressable>
 
+      <View style={styles.fieldRow}>
+        <Text style={styles.fieldLabel}>Название</Text>
+
+        {editingField === 'name' ? (
+          <View style={styles.inlineEditor}>
+            <TextInput
+              value={draftValue}
+              onChangeText={setDraftValue}
+              autoFocus
+              style={styles.fieldInput}
+              onSubmitEditing={commitField}
+              onBlur={commitField}
+            />
+            <Pressable style={styles.confirmButton} onPress={commitField}>
+              <Text style={styles.confirmButtonText}>✓</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable style={styles.valueBox} onPress={() => startEditField('name')}>
+            <Text numberOfLines={1} style={styles.valueBoxText}>{room.name}</Text>
+          </Pressable>
+        )}
+      </View>
+
       <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Кухня')}>
         <Text style={styles.itemText}>Кухня</Text>
       </Pressable>
@@ -137,34 +164,10 @@ export const V2RoomMenu = ({
         <Text style={styles.itemText}>← Назад</Text>
       </Pressable>
 
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Название</Text>
-
-        {editingField === 'name' ? (
-          <View style={styles.inlineEditor}>
-            <TextInput
-              value={draftValue}
-              onChangeText={setDraftValue}
-              autoFocus
-              style={styles.fieldInput}
-              onSubmitEditing={commitField}
-              onBlur={commitField}
-            />
-            <Pressable style={styles.confirmButton} onPress={commitField}>
-              <Text style={styles.confirmButtonText}>✓</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <Pressable style={styles.valueBox} onPress={() => startEditField('name')}>
-            <Text numberOfLines={1} style={styles.valueBoxText}>{room.name}</Text>
-          </Pressable>
-        )}
-      </View>
-
       <View style={styles.unitRow}>
         {(['mm', 'cm', 'm'] as RoomSizeUnit[]).map((unit) => (
-          <Pressable key={unit} style={[styles.unitChip, sizeUnit === unit ? styles.unitChipActive : null]} onPress={() => setSizeUnit(unit)}>
-            <Text style={[styles.unitChipText, sizeUnit === unit ? styles.unitChipTextActive : null]}>{unit}</Text>
+          <Pressable key={unit} style={[styles.unitChip, dimensionUnit === unit ? styles.unitChipActive : null]} onPress={() => onDimensionUnitChange(unit)}>
+            <Text style={[styles.unitChipText, dimensionUnit === unit ? styles.unitChipTextActive : null]}>{unit}</Text>
           </Pressable>
         ))}
       </View>
@@ -189,7 +192,7 @@ export const V2RoomMenu = ({
           </View>
         ) : (
           <Pressable style={styles.valueBox} onPress={() => startEditField('width')}>
-            <Text style={styles.valueBoxText}>{formatRoomSize(room.widthMm, sizeUnit)}</Text>
+            <Text style={styles.valueBoxText}>{formatRoomSize(room.widthMm, dimensionUnit)}</Text>
           </Pressable>
         )}
       </View>
@@ -214,7 +217,7 @@ export const V2RoomMenu = ({
           </View>
         ) : (
           <Pressable style={styles.valueBox} onPress={() => startEditField('height')}>
-            <Text style={styles.valueBoxText}>{formatRoomSize(room.heightMm, sizeUnit)}</Text>
+            <Text style={styles.valueBoxText}>{formatRoomSize(room.heightMm, dimensionUnit)}</Text>
           </Pressable>
         )}
       </View>
