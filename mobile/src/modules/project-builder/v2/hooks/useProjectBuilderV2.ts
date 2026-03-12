@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { INITIAL_SCENE_V2 } from '../model/defaults';
 import { EditorState, WallSurface } from '../model/editorTypes';
 import { buildSurfaceId } from '../utils/buildSurfaceId';
-import { ROOM_MIN_SIZE_CM } from '../model/metrics';
+import { MM_PER_CANVAS_UNIT, ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
 export const useProjectBuilderV2 = () => {
@@ -33,7 +33,6 @@ export const useProjectBuilderV2 = () => {
     return buildSurfaceId(editorState.activeRoomId, editorState.activeWall);
   }, [editorState.activeRoomId, editorState.activeWall]);
 
-  const MM_PER_CANVAS_UNIT = 10;
 
   const selectRoom = (roomId: string) => {
     setScene((prev) => ({

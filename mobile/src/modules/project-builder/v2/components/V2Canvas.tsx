@@ -442,7 +442,7 @@ export const V2Canvas = ({
         ]}
         pointerEvents="box-none"
       >
-        {showGrid ? <V2Grid /> : null}
+        {showGrid ? <V2Grid sceneWidth={SCENE_WIDTH} sceneHeight={SCENE_HEIGHT} /> : null}
         {renderSceneByLevel()}
       </View>
 
