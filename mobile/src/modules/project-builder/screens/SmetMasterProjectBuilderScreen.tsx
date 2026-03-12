@@ -96,6 +96,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     selectedRoomId: v2SelectedRoomId,
     selectedRoom: v2SelectedRoom,
     selectRoom: selectV2Room,
+    deselectRoom: deselectV2Room,
     moveRoom: moveV2Room,
     resizeRoom: resizeV2Room,
   } = useProjectBuilderV2();
@@ -285,6 +286,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onSelectRoom={selectV2Room}
               onMoveRoom={moveV2Room}
               onResizeRoom={resizeV2Room}
+              onBackgroundPress={deselectV2Room}
             />
             <V2DebugPanel room={v2SelectedRoom} />
           </View>

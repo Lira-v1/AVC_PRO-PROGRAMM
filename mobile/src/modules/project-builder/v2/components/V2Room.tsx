@@ -13,18 +13,27 @@ type Props = {
 export const V2Room = ({ room, selected, onSelect, onMove, onResize }: Props) => {
   const dragOriginRef = useRef({ x: room.x, y: room.y });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
+  const isResizingRef = useRef(false);
 
   const dragResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => !isResizingRef.current,
+        onMoveShouldSetPanResponder: () => !isResizingRef.current,
         onPanResponderGrant: () => {
+          if (isResizingRef.current) return;
           dragOriginRef.current = { x: room.x, y: room.y };
           onSelect(room.id);
         },
         onPanResponderMove: (_, gesture) => {
+          if (isResizingRef.current) return;
           onMove(room.id, dragOriginRef.current.x + gesture.dx, dragOriginRef.current.y + gesture.dy);
+        },
+        onPanResponderRelease: () => {
+          isResizingRef.current = false;
+        },
+        onPanResponderTerminate: () => {
+          isResizingRef.current = false;
         },
       }),
     [onMove, onSelect, room.id, room.x, room.y],
@@ -36,11 +45,18 @@ export const V2Room = ({ room, selected, onSelect, onMove, onResize }: Props) =>
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: () => {
+          isResizingRef.current = true;
           resizeOriginRef.current = { width: room.width, height: room.height };
           onSelect(room.id);
         },
         onPanResponderMove: (_, gesture) => {
           onResize(room.id, resizeOriginRef.current.width + gesture.dx, resizeOriginRef.current.height + gesture.dy);
+        },
+        onPanResponderRelease: () => {
+          isResizingRef.current = false;
+        },
+        onPanResponderTerminate: () => {
+          isResizingRef.current = false;
         },
       }),
     [onResize, onSelect, room.height, room.id, room.width],
@@ -51,6 +67,7 @@ export const V2Room = ({ room, selected, onSelect, onMove, onResize }: Props) =>
       <Pressable {...dragResponder.panHandlers} onPress={() => onSelect(room.id)} style={[styles.room, selected ? styles.roomSelected : null]}>
         <Text style={styles.name}>{room.name}</Text>
       </Pressable>
+
       <Pressable {...resizeResponder.panHandlers} style={styles.resizeHandle} hitSlop={12} />
     </View>
   );
