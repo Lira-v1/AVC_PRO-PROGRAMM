@@ -10,10 +10,10 @@ export type RoomV2 = {
   width: number;
   height: number;
 
-  rotation: RoomRotation;
+  widthMm: number;
+  heightMm: number;
 
-  widthCm?: number;
-  heightCm?: number;
+  rotation: RoomRotation;
 
   isSizeLocked?: boolean;
   projectZone?: 'north' | 'south' | 'west' | 'east' | 'center';
@@ -21,9 +21,7 @@ export type RoomV2 = {
 
 export type InputModeV2 =
   | { type: 'default' }
-  | { type: 'rename-room'; roomId: string }
-  | { type: 'set-room-width'; roomId: string }
-  | { type: 'set-room-height'; roomId: string };
+  | { type: 'rename-room'; roomId: string };
 
 export type SceneStateV2 = {
   rooms: RoomV2[];
