@@ -372,9 +372,11 @@ export const V2Canvas = ({
       {showGrid ? <V2Grid /> : null}
 
       <V2CanvasControls
+        backLabel={editorState.level === 'room' ? '← Проект' : editorState.level === 'wall' ? '← Комната' : null}
         isFullscreen={isFullscreen}
         showGrid={showGrid}
         scale={scale}
+        onBackPress={editorState.level === 'room' ? onBackToProject : editorState.level === 'wall' ? onBackToRoom : undefined}
         onToggleFullscreen={onToggleFullscreen}
         onToggleGrid={onToggleGrid}
         onZoomIn={onZoomIn}
@@ -387,18 +389,6 @@ export const V2Canvas = ({
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
-
-      {editorState.level === 'room' ? (
-        <Pressable style={styles.backButton} onPress={onBackToProject}>
-          <Text style={styles.backButtonText}>← Проект</Text>
-        </Pressable>
-      ) : null}
-
-      {editorState.level === 'wall' ? (
-        <Pressable style={styles.backButton} onPress={onBackToRoom}>
-          <Text style={styles.backButtonText}>← Комната</Text>
-        </Pressable>
-      ) : null}
 
       {renderSceneByLevel()}
     </View>
@@ -472,23 +462,6 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   gearIcon: { fontSize: 18 },
-  backButton: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    zIndex: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#BBC5DC',
-    backgroundColor: 'rgba(255,255,255,0.94)',
-  },
-  backButtonText: {
-    color: '#2A3756',
-    fontSize: 12,
-    fontWeight: '700',
-  },
   roomSceneLayout: {
     position: 'absolute',
     left: ROOM_SCENE_LAYOUT.left,
