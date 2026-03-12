@@ -1,16 +1,27 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { CompassOrientation } from '../model/types';
 
-export const V2Compass = () => {
+type Props = {
+  orientation: CompassOrientation;
+  onToggleOrientation: () => void;
+};
+
+export const V2Compass = ({ orientation, onToggleOrientation }: Props) => {
+  const labels =
+    orientation === 'default'
+      ? { top: 'N', bottom: 'S', left: 'W', right: 'E' }
+      : { top: 'S', bottom: 'N', left: 'E', right: 'W' };
+
   return (
-    <View pointerEvents="none" style={styles.root}>
-      <Text style={[styles.label, styles.north]}>С</Text>
-      <Text style={[styles.label, styles.south]}>Ю</Text>
-      <Text style={[styles.label, styles.west]}>З</Text>
-      <Text style={[styles.label, styles.east]}>В</Text>
+    <Pressable onPress={onToggleOrientation} style={styles.root}>
+      <Text style={[styles.label, styles.north]}>{labels.top}</Text>
+      <Text style={[styles.label, styles.south]}>{labels.bottom}</Text>
+      <Text style={[styles.label, styles.west]}>{labels.left}</Text>
+      <Text style={[styles.label, styles.east]}>{labels.right}</Text>
       <View style={styles.crossVertical} />
       <View style={styles.crossHorizontal} />
-    </View>
+    </Pressable>
   );
 };
 

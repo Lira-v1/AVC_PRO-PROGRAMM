@@ -100,7 +100,12 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     moveRoom: moveV2Room,
     resizeRoom: resizeV2Room,
   } = useProjectBuilderV2();
-  const { canvasUiState, toggleFullscreen: toggleV2Fullscreen, toggleGrid: toggleV2Grid } = useCanvasUiStateV2();
+  const {
+    canvasUiState,
+    toggleFullscreen: toggleV2Fullscreen,
+    toggleGrid: toggleV2Grid,
+    toggleCompassOrientation: toggleV2CompassOrientation,
+  } = useCanvasUiStateV2();
   const v2Viewport = useCanvasViewportV2();
 
   const handleDimensionChange = (field: 'width' | 'height', value: string) => {
@@ -293,6 +298,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onBackgroundPress={deselectV2Room}
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
+              compassOrientation={canvasUiState.compassOrientation}
               isFullscreen={canvasUiState.isFullscreen}
               scale={v2Viewport.scale}
               offsetX={v2Viewport.offsetX}
@@ -303,6 +309,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onZoomOut={v2Viewport.zoomOut}
               onResetZoom={v2Viewport.resetViewport}
               onOpenTools={() => setIsProjectV2ToolsOpen(true)}
+              onToggleCompassOrientation={toggleV2CompassOrientation}
             />
           </View>
 
