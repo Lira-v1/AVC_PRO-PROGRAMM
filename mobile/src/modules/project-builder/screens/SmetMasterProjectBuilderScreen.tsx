@@ -19,9 +19,9 @@ import { WALL_DIRECTION_LABELS } from '../model/orientation';
 import { ROOM_VIEW_MODE_LABELS } from '../model/roomViewMode';
 import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
 import { V2Canvas } from '../v2/components/V2Canvas';
+import { useCanvasCameraV2 } from '../v2/hooks/useCanvasCameraV2';
 import { useCanvasUiStateV2 } from '../v2/hooks/useCanvasUiStateV2';
 import { useProjectBuilderV2 } from '../v2/hooks/useProjectBuilderV2';
-import { useCanvasViewportV2 } from '../v2/hooks/useCanvasViewportV2';
 import { InputModeV2 } from '../v2/model/types';
 
 type MainStackParamList = {
@@ -120,7 +120,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     toggleFullscreen: toggleV2Fullscreen,
     toggleGrid: toggleV2Grid,
   } = useCanvasUiStateV2();
-  const v2Viewport = useCanvasViewportV2();
+  const v2Camera = useCanvasCameraV2();
 
   const handleDimensionChange = (field: 'width' | 'height', value: string) => {
     if (!selectedRoom) return;
@@ -366,17 +366,15 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               showCompass={canvasUiState.showCompass}
               compassViewMode={v2Orientation.viewMode}
               isFullscreen={canvasUiState.isFullscreen}
-              scale={v2Viewport.scale}
-              offsetX={v2Viewport.offsetX}
-              offsetY={v2Viewport.offsetY}
+              camera={v2Camera.camera}
               onToggleGrid={toggleV2Grid}
               onToggleFullscreen={toggleV2Fullscreen}
-              onZoomIn={v2Viewport.zoomIn}
-              onZoomOut={v2Viewport.zoomOut}
-              onResetZoom={v2Viewport.resetViewport}
+              onZoomIn={v2Camera.zoomIn}
+              onZoomOut={v2Camera.zoomOut}
+              onResetZoom={v2Camera.resetCamera}
               onOpenTools={() => setIsProjectV2ToolsOpen(true)}
               onToggleCompassOrientation={toggleV2CompassOrientation}
-              onSetCameraPosition={v2Viewport.setViewportOffset}
+              onSetCameraPosition={v2Camera.setCameraPosition}
               editorState={v2EditorState}
               onBackToProject={backToV2Project}
               onOpenWall={openV2Wall}

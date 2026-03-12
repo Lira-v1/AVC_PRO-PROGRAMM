@@ -38,3 +38,9 @@ export type CanvasViewportStateV2 = {
   offsetX: number;
   offsetY: number;
 };
+
+export type CanvasCameraState = {
+  zoom: number;
+  panX: number;
+  panY: number;
+};

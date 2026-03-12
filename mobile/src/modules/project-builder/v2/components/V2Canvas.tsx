@@ -13,6 +13,7 @@ import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/get
 import { RoomSizeUnit } from '../utils/roomUnits';
 import { RoomSurfaceObject } from '../model/surfaces';
 import { SceneObject } from '../model/sceneObjects';
+import { CanvasCameraState } from '../model/types';
 import { buildSurfaceId } from '../utils/buildSurfaceId';
 import { getSurfaceObjects } from '../utils/getSurfaceObjects';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
@@ -44,9 +45,7 @@ type Props = {
   showCompass: boolean;
   compassViewMode: CompassViewMode;
   isFullscreen: boolean;
-  scale: number;
-  offsetX: number;
-  offsetY: number;
+  camera: CanvasCameraState;
   onToggleGrid: () => void;
   onToggleFullscreen: () => void;
   onZoomIn: () => void;
@@ -59,6 +58,8 @@ type Props = {
   onDimensionUnitChange: (unit: RoomSizeUnit) => void;
 };
 
+const SCENE_WIDTH = 10000;
+const SCENE_HEIGHT = 10000;
 
 
 const ROOM_SCENE_LAYOUT = {
@@ -101,9 +102,7 @@ export const V2Canvas = ({
   showCompass,
   compassViewMode,
   isFullscreen,
-  scale,
-  offsetX,
-  offsetY,
+  camera,
   onToggleGrid,
   onToggleFullscreen,
   onZoomIn,
@@ -141,22 +140,19 @@ export const V2Canvas = ({
     return getSurfaceObjects(sceneObjects, editorState.activeRoomId, activeSurfaceId);
   }, [activeSurfaceId, editorState.activeRoomId, sceneObjects]);
 
-  const handleCanvasMouseDown = (event: any) => {
-    if (editorState.level !== 'project') return;
-
-    if (event?.target === event?.currentTarget) {
-      onBackgroundPress();
-    }
-  };
-
-  const webCanvasProps = Platform.OS === 'web' ? ({ onMouseDown: handleCanvasMouseDown } as any) : {};
-
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [lastCenteredSceneKey, setLastCenteredSceneKey] = useState<string | null>(null);
   const [wallScenePosition, setWallScenePosition] = useState({
     x: WALL_SCENE_LAYOUT.defaultX,
     y: WALL_SCENE_LAYOUT.defaultY,
+  });
+  const panStateRef = useRef({
+    isPanning: false,
+    startX: 0,
+    startY: 0,
+    startPanX: 0,
+    startPanY: 0,
   });
 
   const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
@@ -231,7 +227,7 @@ export const V2Canvas = ({
       }
 
       const bounds = getRoomVisualBounds(firstRoom);
-      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, scale);
+      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
       onSetCameraPosition(centered.panX, centered.panY);
       setLastCenteredSceneKey(sceneCenterKey);
       return;
@@ -243,7 +239,7 @@ export const V2Canvas = ({
       }
 
       const bounds = getSurfaceSceneBounds(roomSurfaceSceneItemsRef.current);
-      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, scale);
+      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
       onSetCameraPosition(centered.panX, centered.panY);
       setLastCenteredSceneKey(sceneCenterKey);
       return;
@@ -255,7 +251,7 @@ export const V2Canvas = ({
         return;
       }
 
-      const centered = centerBoundsInViewport(wallSceneItem, viewportSize.width, viewportSize.height, scale);
+      const centered = centerBoundsInViewport(wallSceneItem, viewportSize.width, viewportSize.height, camera.zoom);
       onSetCameraPosition(centered.panX, centered.panY);
       setLastCenteredSceneKey(sceneCenterKey);
     }
@@ -264,13 +260,60 @@ export const V2Canvas = ({
     lastCenteredSceneKey,
     onSetCameraPosition,
     sceneCenterKey,
-    scale,
+    camera.zoom,
     viewportSize.height,
     viewportSize.width,
   ]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const state = panStateRef.current;
+
+      if (!state.isPanning) {
+        return;
+      }
+
+      const dx = event.clientX - state.startX;
+      const dy = event.clientY - state.startY;
+
+      onSetCameraPosition(state.startPanX + dx, state.startPanY + dy);
+    };
+
+    const handleMouseUp = () => {
+      panStateRef.current.isPanning = false;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [onSetCameraPosition]);
+
+  const startCanvasPan = (event: any) => {
+    const native = event?.nativeEvent;
+
+    panStateRef.current = {
+      isPanning: true,
+      startX: native?.clientX ?? 0,
+      startY: native?.clientY ?? 0,
+      startPanX: camera.panX,
+      startPanY: camera.panY,
+    };
+
+    if (editorState.level === 'project') {
+      onBackgroundPress();
+    }
+  };
+
+  const webBackgroundPanProps = Platform.OS === 'web' ? ({ onMouseDown: startCanvasPan } as any) : {};
+
   const renderProjectScene = () => (
-    <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
+    <View style={styles.transformedScene} pointerEvents="box-none">
       {selectedRoom ? <V2RoomDimensions room={selectedRoom} unit={dimensionUnit} /> : null}
       {rooms.map((room) => (
         <V2Room
@@ -298,7 +341,7 @@ export const V2Canvas = ({
   );
 
   const renderRoomScene = () => (
-    <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
+    <View style={styles.transformedScene} pointerEvents="box-none">
       <View style={styles.roomSceneLayout} pointerEvents="box-none">
         <View style={styles.rowWide}>
           {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
@@ -319,7 +362,7 @@ export const V2Canvas = ({
   );
 
   const renderWallScene = () => (
-    <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
+    <View style={styles.transformedScene} pointerEvents="box-none">
       {activeWallObject ? (
         <V2WallObject
           wall={activeWallObject}
@@ -361,21 +404,17 @@ export const V2Canvas = ({
 
   return (
     <View
-      style={styles.canvas}
+      style={styles.canvasViewport}
       onLayout={(event) => {
         const { width, height } = event.nativeEvent.layout;
         setViewportSize({ width, height });
       }}
-      {...webCanvasProps}
     >
-      {Platform.OS === 'web' ? null : editorState.level === 'project' ? <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} /> : null}
-      {showGrid ? <V2Grid /> : null}
-
       <V2CanvasControls
         backLabel={editorState.level === 'room' ? '← Проект' : editorState.level === 'wall' ? '← Комната' : null}
         isFullscreen={isFullscreen}
         showGrid={showGrid}
-        scale={scale}
+        scale={camera.zoom}
         onBackPress={editorState.level === 'room' ? onBackToProject : editorState.level === 'wall' ? onBackToRoom : undefined}
         onToggleFullscreen={onToggleFullscreen}
         onToggleGrid={onToggleGrid}
@@ -386,11 +425,30 @@ export const V2Canvas = ({
 
       {showCompass ? <V2Compass viewMode={compassViewMode} onToggleOrientation={onToggleCompassOrientation} /> : null}
 
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        {...webBackgroundPanProps}
+        onPress={editorState.level === 'project' ? onBackgroundPress : undefined}
+      />
+
+      <View
+        style={[
+          styles.sceneLayer,
+          {
+            width: SCENE_WIDTH,
+            height: SCENE_HEIGHT,
+            transform: [{ translateX: camera.panX }, { translateY: camera.panY }, { scale: camera.zoom }],
+          },
+        ]}
+        pointerEvents="box-none"
+      >
+        {showGrid ? <V2Grid /> : null}
+        {renderSceneByLevel()}
+      </View>
+
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
-
-      {renderSceneByLevel()}
     </View>
   );
 };
@@ -432,7 +490,7 @@ const renderSurfaceCard = (
 };
 
 const styles = StyleSheet.create({
-  canvas: {
+  canvasViewport: {
     flex: 1,
     backgroundColor: '#F9FBFF',
     borderRadius: 16,
@@ -442,7 +500,9 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   sceneLayer: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0,
+    top: 0,
   },
   transformedScene: {
     zIndex: 5,
