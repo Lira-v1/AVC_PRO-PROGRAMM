@@ -3,7 +3,6 @@ import { INITIAL_SCENE_V2 } from '../model/defaults';
 import { ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
-
 export const useProjectBuilderV2 = () => {
   const [scene, setScene] = useState(INITIAL_SCENE_V2);
   const [orientation, setOrientation] = useState<ProjectOrientationV2>(INITIAL_PROJECT_ORIENTATION_V2);
@@ -46,6 +45,23 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const rotateRoom = (roomId: string) => {
+    setScene((prev) => ({
+      ...prev,
+      rooms: prev.rooms.map((room) => {
+        if (room.id !== roomId) return room;
+
+        const current = room.rotation ?? 0;
+        const next = current === 270 ? 0 : ((current + 90) as 0 | 90 | 180 | 270);
+
+        return {
+          ...room,
+          rotation: next,
+        };
+      }),
+    }));
+  };
+
   const renameRoom = (roomId: string, newName: string) => {
     const safeName = newName.trim();
     if (!safeName) return;
@@ -74,6 +90,7 @@ export const useProjectBuilderV2 = () => {
     deselectRoom,
     moveRoom,
     resizeRoom,
+    rotateRoom,
     renameRoom,
     toggleCompassOrientation,
   };

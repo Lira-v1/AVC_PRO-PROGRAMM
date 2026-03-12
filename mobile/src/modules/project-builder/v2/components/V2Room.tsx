@@ -9,6 +9,7 @@ type Props = {
   onSelect: (roomId: string) => void;
   onMove: (roomId: string, x: number, y: number) => void;
   onResize: (roomId: string, width: number, height: number) => void;
+  onRotate: (roomId: string) => void;
   onRenamePreset: (roomId: string, name: string) => void;
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
@@ -26,6 +27,7 @@ export const V2Room = ({
   onSelect,
   onMove,
   onResize,
+  onRotate,
   onRenamePreset,
   onCustomRename,
   onOpenSettings,
@@ -139,9 +141,22 @@ export const V2Room = ({
 
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
+  const roomRotation = room.rotation ?? 0;
 
   return (
-    <View style={[styles.root, { left: room.x, top: room.y, width: room.width, height: room.height }]} pointerEvents="box-none">
+    <View
+      style={[
+        styles.root,
+        {
+          left: room.x,
+          top: room.y,
+          width: room.width,
+          height: room.height,
+          transform: [{ rotate: `${roomRotation}deg` }],
+        },
+      ]}
+      pointerEvents="box-none"
+    >
       <Pressable
         {...(Platform.OS === 'web' ? {} : dragResponder.panHandlers)}
         {...webDragProps}
@@ -182,12 +197,27 @@ export const V2Room = ({
         ) : null}
       </Pressable>
 
-      <Pressable
-        {...(Platform.OS === 'web' ? {} : resizeResponder.panHandlers)}
-        {...webResizeProps}
-        style={styles.resizeHandle}
-        hitSlop={12}
-      />
+      {selected ? (
+        <Pressable
+          style={styles.rotateHandle}
+          onPress={(event) => {
+            event?.stopPropagation?.();
+            onRotate(room.id);
+          }}
+          hitSlop={8}
+        >
+          <Text style={styles.rotateIcon}>↻</Text>
+        </Pressable>
+      ) : null}
+
+      {selected ? (
+        <Pressable
+          {...(Platform.OS === 'web' ? {} : resizeResponder.panHandlers)}
+          {...webResizeProps}
+          style={styles.resizeHandle}
+          hitSlop={12}
+        />
+      ) : null}
     </View>
   );
 };
@@ -222,6 +252,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#1E2A46',
+  },
+  rotateHandle: {
+    position: 'absolute',
+    left: -10,
+    top: -10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#2D5ED2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
+  rotateIcon: {
+    color: '#2D5ED2',
+    fontSize: 12,
+    fontWeight: '700',
   },
   resizeHandle: {
     position: 'absolute',

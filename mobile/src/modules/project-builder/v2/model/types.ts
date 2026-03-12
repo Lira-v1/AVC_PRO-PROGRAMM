@@ -1,3 +1,5 @@
+export type RoomRotation = 0 | 90 | 180 | 270;
+
 export type RoomV2 = {
   id: string;
   name: string;
@@ -5,6 +7,7 @@ export type RoomV2 = {
   y: number;
   width: number;
   height: number;
+  rotation?: RoomRotation;
   widthCm?: number;
   heightCm?: number;
   projectZone?: 'north' | 'south' | 'west' | 'east' | 'center';
