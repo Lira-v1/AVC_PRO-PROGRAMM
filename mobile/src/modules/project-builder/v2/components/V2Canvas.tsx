@@ -8,6 +8,7 @@ import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
+import { V2WallObject } from './V2WallObject';
 import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/getSurfaceMetrics';
 import { RoomSizeUnit } from '../utils/roomUnits';
 import { RoomSurfaceObject } from '../model/surfaces';
@@ -69,8 +70,8 @@ const ROOM_SCENE_LAYOUT = {
 };
 
 const WALL_SCENE_LAYOUT = {
-  left: 70,
-  top: 100,
+  defaultX: 240,
+  defaultY: 180,
   width: 520,
   activeWallHeight: 220,
 };
@@ -151,6 +152,11 @@ export const V2Canvas = ({
   const webCanvasProps = Platform.OS === 'web' ? ({ onMouseDown: handleCanvasMouseDown } as any) : {};
 
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
+  const [wallScenePosition, setWallScenePosition] = useState({
+    x: WALL_SCENE_LAYOUT.defaultX,
+    y: WALL_SCENE_LAYOUT.defaultY,
+  });
 
   const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
     const rowSplitWidth = (ROOM_SCENE_LAYOUT.width - ROOM_SCENE_LAYOUT.gap) / 2;
@@ -175,12 +181,23 @@ export const V2Canvas = ({
     }
 
     return {
-      x: WALL_SCENE_LAYOUT.left,
-      y: WALL_SCENE_LAYOUT.top,
+      x: wallScenePosition.x,
+      y: wallScenePosition.y,
       width: WALL_SCENE_LAYOUT.width,
       height: WALL_SCENE_LAYOUT.activeWallHeight,
     };
-  }, [activeWallObject]);
+  }, [activeWallObject, wallScenePosition.x, wallScenePosition.y]);
+
+  useEffect(() => {
+    if (editorState.level !== 'wall') {
+      setSelectedWallId(null);
+      return;
+    }
+
+    if (activeWallObject) {
+      setSelectedWallId(activeWallObject.id);
+    }
+  }, [activeWallObject, editorState.level]);
 
   useEffect(() => {
     if (!viewportSize.width || !viewportSize.height) {
@@ -282,7 +299,28 @@ export const V2Canvas = ({
 
   const renderWallScene = () => (
     <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
-      <View style={styles.wallSceneLayout} pointerEvents="box-none">
+      {activeWallObject ? (
+        <V2WallObject
+          wall={activeWallObject}
+          selected={selectedWallId === activeWallObject.id}
+          x={wallScenePosition.x}
+          y={wallScenePosition.y}
+          width={WALL_SCENE_LAYOUT.width}
+          height={WALL_SCENE_LAYOUT.activeWallHeight}
+          onSelect={setSelectedWallId}
+          onMove={(_, x, y) => {
+            setWallScenePosition({ x, y });
+          }}
+          onRotatePlaceholder={(wallId) => {
+            console.log('rotate wall placeholder', wallId);
+          }}
+          onOpenSettingsPlaceholder={(wallId) => {
+            console.log('wall settings placeholder', wallId);
+          }}
+        />
+      ) : null}
+
+      <View style={styles.wallMetaLayer} pointerEvents="none">
         {renderSurfaceCard(activeWallObject, false, onOpenWall, true, activeSurfaceId, wallObjects.length)}
       </View>
     </View>
@@ -437,12 +475,11 @@ const styles = StyleSheet.create({
     width: ROOM_SCENE_LAYOUT.width,
     gap: ROOM_SCENE_LAYOUT.gap,
   },
-  wallSceneLayout: {
+  wallMetaLayer: {
     position: 'absolute',
-    left: WALL_SCENE_LAYOUT.left,
-    top: WALL_SCENE_LAYOUT.top,
-    width: WALL_SCENE_LAYOUT.width,
-    height: 300,
+    left: 16,
+    bottom: 16,
+    width: 260,
   },
   rowWide: {
     flexDirection: 'row',
