@@ -1,22 +1,34 @@
-export type EditorViewMode =
+export type EditorLevel =
   | 'project'
   | 'room'
-  | 'surface';
+  | 'wall';
 
 
 export type RoomSurface =
-  | 'north-wall'
-  | 'east-wall'
-  | 'south-wall'
-  | 'west-wall'
+  | 'north'
+  | 'east'
+  | 'south'
+  | 'west'
   | 'floor'
   | 'ceiling';
 
 
+export type WallSurface = Extract<RoomSurface, 'north' | 'east' | 'south' | 'west'>;
+
+
+export type RoomSurfaceObject = {
+  id: string;
+  roomId: string;
+  surface: RoomSurface;
+  widthMm: number;
+  heightMm: number;
+};
+
+
 export type EditorState = {
-  viewMode: EditorViewMode;
+  level: EditorLevel;
 
   activeRoomId: string | null;
 
-  activeSurface: RoomSurface | null;
+  activeWall: WallSurface | null;
 };

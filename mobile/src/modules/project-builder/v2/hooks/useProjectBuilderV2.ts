@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { INITIAL_SCENE_V2 } from '../model/defaults';
-import { EditorState, RoomSurface } from '../model/editorTypes';
+import { EditorState, WallSurface } from '../model/editorTypes';
 import { ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
@@ -8,9 +8,9 @@ export const useProjectBuilderV2 = () => {
   const [scene, setScene] = useState(INITIAL_SCENE_V2);
   const [orientation, setOrientation] = useState<ProjectOrientationV2>(INITIAL_PROJECT_ORIENTATION_V2);
   const [editorState, setEditorState] = useState<EditorState>({
-    viewMode: 'project',
+    level: 'project',
     activeRoomId: null,
-    activeSurface: null,
+    activeWall: null,
   });
 
   const selectedRoom = useMemo(() => scene.rooms.find((room) => room.id === scene.selectedRoomId) ?? null, [scene.rooms, scene.selectedRoomId]);
@@ -130,33 +130,49 @@ export const useProjectBuilderV2 = () => {
 
   const openRoom = (roomId: string) => {
     setEditorState({
-      viewMode: 'room',
+      level: 'room',
       activeRoomId: roomId,
-      activeSurface: null,
+      activeWall: null,
     });
   };
 
-  const openSurface = (surface: RoomSurface) => {
-    setEditorState((prev) => ({
-      ...prev,
-      viewMode: 'surface',
-      activeSurface: surface,
-    }));
+  const openWall = (wall: WallSurface) => {
+    setEditorState((prev) => {
+      if (!prev.activeRoomId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        level: 'wall',
+        activeWall: wall,
+      };
+    });
   };
 
   const backToRoom = () => {
-    setEditorState((prev) => ({
-      ...prev,
-      viewMode: 'room',
-      activeSurface: null,
-    }));
+    setEditorState((prev) => {
+      if (!prev.activeRoomId) {
+        return {
+          level: 'project',
+          activeRoomId: null,
+          activeWall: null,
+        };
+      }
+
+      return {
+        ...prev,
+        level: 'room',
+        activeWall: null,
+      };
+    });
   };
 
   const backToProject = () => {
     setEditorState({
-      viewMode: 'project',
+      level: 'project',
       activeRoomId: null,
-      activeSurface: null,
+      activeWall: null,
     });
   };
 
@@ -179,7 +195,7 @@ export const useProjectBuilderV2 = () => {
     renameRoom,
     toggleCompassOrientation,
     openRoom,
-    openSurface,
+    openWall,
     backToRoom,
     backToProject,
   };
