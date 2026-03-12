@@ -171,6 +171,9 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
       <View style={styles.editorCard}>
         <Text style={styles.editorTitle}>Редактирование комнаты</Text>
         <Text style={styles.editorMeta}>id: {selectedRoom.id}</Text>
+        <Text style={styles.editorMeta}>
+          debug: x={Math.round(selectedRoom.x * 100) / 100}, y={Math.round(selectedRoom.y * 100) / 100}, width={Math.round(selectedRoom.width * 100) / 100}, height={Math.round(selectedRoom.height * 100) / 100}
+        </Text>
 
         <View style={styles.typeGrid}>
           {ROOM_TYPES.map((type) => {
