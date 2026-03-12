@@ -23,10 +23,10 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
-  const moveRoom = (roomId: string, x: number, y: number) => {
+  const moveRoom = (roomId: string, centerX: number, centerY: number) => {
     setScene((prev) => ({
       ...prev,
-      rooms: prev.rooms.map((room) => (room.id === roomId ? { ...room, x, y } : room)),
+      rooms: prev.rooms.map((room) => (room.id === roomId ? { ...room, centerX, centerY } : room)),
     }));
   };
 

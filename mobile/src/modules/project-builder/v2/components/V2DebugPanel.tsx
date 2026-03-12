@@ -12,8 +12,8 @@ export const V2DebugPanel = ({ room }: Props) => {
   return (
     <View style={styles.root}>
       <Text style={styles.title}>Debug комнаты</Text>
-      <Text style={styles.line}>x: {Math.round(room.x)}</Text>
-      <Text style={styles.line}>y: {Math.round(room.y)}</Text>
+      <Text style={styles.line}>centerX: {Math.round(room.centerX)}</Text>
+      <Text style={styles.line}>centerY: {Math.round(room.centerY)}</Text>
       <Text style={styles.line}>width: {Math.round(room.width)}</Text>
       <Text style={styles.line}>height: {Math.round(room.height)}</Text>
     </View>

@@ -1,13 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { getRoomCorners } from '../utils/getRoomCorners';
+import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { V2RoomMenu } from './V2RoomMenu';
 
 type Props = {
   room: RoomV2;
   selected: boolean;
   onSelect: (roomId: string) => void;
-  onMove: (roomId: string, x: number, y: number) => void;
+  onMove: (roomId: string, centerX: number, centerY: number) => void;
   onResize: (roomId: string, width: number, height: number) => void;
   onRotate: (roomId: string) => void;
   onRenamePreset: (roomId: string, name: string) => void;
@@ -23,8 +25,11 @@ type Props = {
 
 type InteractionState =
   | { mode: 'idle' }
-  | { mode: 'drag'; startMouseX: number; startMouseY: number; startX: number; startY: number }
+  | { mode: 'drag'; startMouseX: number; startMouseY: number; startCenterX: number; startCenterY: number }
   | { mode: 'resize'; startMouseX: number; startMouseY: number; startWidth: number; startHeight: number };
+
+const HANDLE_SIZE = 22;
+const RESIZE_HANDLE_SIZE = 20;
 
 export const V2Room = ({
   room,
@@ -44,10 +49,17 @@ export const V2Room = ({
   onAddWindow,
 }: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
-  const dragOriginRef = useRef({ x: room.x, y: room.y });
+  const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
   const isResizingRef = useRef(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const roomRotation = room.rotation ?? 0;
+  const corners = useMemo(() => getRoomCorners(room), [room]);
+  const visualBounds = useMemo(() => getRoomVisualBounds(room), [room]);
+
+  const roomFrameLeft = room.centerX - room.width / 2;
+  const roomFrameTop = room.centerY - room.height / 2;
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -58,7 +70,7 @@ export const V2Room = ({
       if (state.mode === 'drag') {
         const dx = event.clientX - state.startMouseX;
         const dy = event.clientY - state.startMouseY;
-        onMove(room.id, state.startX + dx, state.startY + dy);
+        onMove(room.id, state.startCenterX + dx, state.startCenterY + dy);
       }
 
       if (state.mode === 'resize') {
@@ -92,12 +104,12 @@ export const V2Room = ({
     onMoveShouldSetPanResponder: () => !isResizingRef.current,
     onPanResponderGrant: () => {
       if (isResizingRef.current) return;
-      dragOriginRef.current = { x: room.x, y: room.y };
+      dragOriginRef.current = { centerX: room.centerX, centerY: room.centerY };
       onSelect(room.id);
     },
     onPanResponderMove: (_, gesture) => {
       if (isResizingRef.current) return;
-      onMove(room.id, dragOriginRef.current.x + gesture.dx, dragOriginRef.current.y + gesture.dy);
+      onMove(room.id, dragOriginRef.current.centerX + gesture.dx, dragOriginRef.current.centerY + gesture.dy);
     },
     onPanResponderRelease: () => {
       isResizingRef.current = false;
@@ -134,8 +146,8 @@ export const V2Room = ({
       mode: 'drag',
       startMouseX: event?.nativeEvent?.clientX ?? 0,
       startMouseY: event?.nativeEvent?.clientY ?? 0,
-      startX: room.x,
-      startY: room.y,
+      startCenterX: room.centerX,
+      startCenterY: room.centerY,
     };
   };
 
@@ -155,17 +167,16 @@ export const V2Room = ({
 
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
-  const roomRotation = room.rotation ?? 0;
 
   return (
     <View
       style={[
         styles.root,
         {
-          left: room.x,
-          top: room.y,
-          width: room.width,
-          height: room.height,
+          left: visualBounds.x,
+          top: visualBounds.y,
+          width: visualBounds.width,
+          height: visualBounds.height,
         },
       ]}
       pointerEvents="box-none"
@@ -180,6 +191,10 @@ export const V2Room = ({
           style={[
             styles.geometryLayer,
             {
+              left: roomFrameLeft - visualBounds.x,
+              top: roomFrameTop - visualBounds.y,
+              width: room.width,
+              height: room.height,
               transform: [{ rotate: `${roomRotation}deg` }],
             },
           ]}
@@ -234,7 +249,13 @@ export const V2Room = ({
 
           {selected ? (
             <Pressable
-              style={styles.settingsHandle}
+              style={[
+                styles.settingsHandle,
+                {
+                  left: corners.topRight.x - visualBounds.x - HANDLE_SIZE / 2,
+                  top: corners.topRight.y - visualBounds.y - HANDLE_SIZE / 2,
+                },
+              ]}
               onPress={(event) => {
                 event?.stopPropagation?.();
                 onSelect(room.id);
@@ -250,7 +271,13 @@ export const V2Room = ({
 
       {selected ? (
         <Pressable
-          style={styles.rotateHandle}
+          style={[
+            styles.rotateHandle,
+            {
+              left: corners.topLeft.x - visualBounds.x - HANDLE_SIZE / 2,
+              top: corners.topLeft.y - visualBounds.y - HANDLE_SIZE / 2,
+            },
+          ]}
           onPress={(event) => {
             event?.stopPropagation?.();
             onRotate(room.id);
@@ -265,7 +292,13 @@ export const V2Room = ({
         <Pressable
           {...(Platform.OS === 'web' ? {} : resizeResponder.panHandlers)}
           {...webResizeProps}
-          style={styles.resizeHandle}
+          style={[
+            styles.resizeHandle,
+            {
+              left: corners.bottomRight.x - visualBounds.x - RESIZE_HANDLE_SIZE / 2,
+              top: corners.bottomRight.y - visualBounds.y - RESIZE_HANDLE_SIZE / 2,
+            },
+          ]}
           hitSlop={12}
         />
       ) : null}
@@ -282,7 +315,7 @@ const styles = StyleSheet.create({
     cursor: 'move' as any,
   },
   geometryLayer: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
   },
   roomBody: {
     flex: 1,
@@ -314,11 +347,9 @@ const styles = StyleSheet.create({
   },
   rotateHandle: {
     position: 'absolute',
-    left: -10,
-    top: -10,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: HANDLE_SIZE,
+    height: HANDLE_SIZE,
+    borderRadius: HANDLE_SIZE / 2,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#2D5ED2',
@@ -333,11 +364,9 @@ const styles = StyleSheet.create({
   },
   settingsHandle: {
     position: 'absolute',
-    right: -10,
-    top: -10,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: HANDLE_SIZE,
+    height: HANDLE_SIZE,
+    borderRadius: HANDLE_SIZE / 2,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#2D5ED2',
@@ -352,11 +381,9 @@ const styles = StyleSheet.create({
   },
   resizeHandle: {
     position: 'absolute',
-    right: -10,
-    bottom: -10,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: RESIZE_HANDLE_SIZE,
+    height: RESIZE_HANDLE_SIZE,
+    borderRadius: RESIZE_HANDLE_SIZE / 2,
     backgroundColor: '#2D5ED2',
     borderWidth: 2,
     borderColor: '#FFFFFF',

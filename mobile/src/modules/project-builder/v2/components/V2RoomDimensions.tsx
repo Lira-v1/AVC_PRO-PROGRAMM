@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 
 type Props = {
   room: RoomV2;
@@ -13,8 +14,7 @@ const formatMeters = (valueCm: number) => `${(valueCm / 100).toFixed(2)} м`;
 
 export const V2RoomDimensions = ({ room }: Props) => {
   const normalizedRotation = ((room.rotation ?? 0) % 360 + 360) % 360;
-  const isVerticalOrientation =
-    normalizedRotation === 90 || normalizedRotation === 270;
+  const isVerticalOrientation = normalizedRotation === 90 || normalizedRotation === 270;
 
   const widthValue = room.widthCm ?? room.width;
   const heightValue = room.heightCm ?? room.height;
@@ -22,8 +22,7 @@ export const V2RoomDimensions = ({ room }: Props) => {
   const topValue = isVerticalOrientation ? heightValue : widthValue;
   const leftValue = isVerticalOrientation ? widthValue : heightValue;
 
-  const topLineLength = isVerticalOrientation ? room.height : room.width;
-  const leftLineLength = isVerticalOrientation ? room.width : room.height;
+  const bounds = getRoomVisualBounds(room);
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -31,9 +30,9 @@ export const V2RoomDimensions = ({ room }: Props) => {
         style={[
           styles.topDimensionLine,
           {
-            left: room.x,
-            top: room.y - DIMENSION_OFFSET,
-            width: topLineLength,
+            left: bounds.x,
+            top: bounds.y - DIMENSION_OFFSET,
+            width: bounds.width,
           },
         ]}
       >
@@ -46,9 +45,9 @@ export const V2RoomDimensions = ({ room }: Props) => {
         style={[
           styles.leftDimensionLine,
           {
-            left: room.x - DIMENSION_OFFSET,
-            top: room.y,
-            height: leftLineLength,
+            left: bounds.x - DIMENSION_OFFSET,
+            top: bounds.y,
+            height: bounds.height,
           },
         ]}
       >

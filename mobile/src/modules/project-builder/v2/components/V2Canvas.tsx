@@ -12,7 +12,7 @@ type Props = {
   rooms: RoomV2[];
   selectedRoomId: string | null;
   onSelectRoom: (roomId: string) => void;
-  onMoveRoom: (roomId: string, x: number, y: number) => void;
+  onMoveRoom: (roomId: string, centerX: number, centerY: number) => void;
   onResizeRoom: (roomId: string, width: number, height: number) => void;
   onRotateRoom: (roomId: string) => void;
   onBackgroundPress: () => void;
