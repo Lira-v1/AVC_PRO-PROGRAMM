@@ -3,7 +3,6 @@ import { INITIAL_SCENE_V2 } from '../model/defaults';
 import { ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
-const MIN_ROOM_SIZE = ROOM_MIN_SIZE_CM;
 
 export const useProjectBuilderV2 = () => {
   const [scene, setScene] = useState(INITIAL_SCENE_V2);
@@ -39,8 +38,8 @@ export const useProjectBuilderV2 = () => {
         room.id === roomId
           ? {
               ...room,
-              width: Math.max(MIN_ROOM_SIZE, width),
-              height: Math.max(MIN_ROOM_SIZE, height),
+              width: Math.max(ROOM_MIN_SIZE_CM, width),
+              height: Math.max(ROOM_MIN_SIZE_CM, height),
             }
           : room,
       ),
