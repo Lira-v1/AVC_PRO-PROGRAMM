@@ -109,7 +109,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     toggleCompassOrientation: toggleV2CompassOrientation,
     editorState: v2EditorState,
     openRoom: openV2Room,
-    openSurface: openV2Surface,
+    openWall: openV2Wall,
     backToRoom: backToV2Room,
     backToProject: backToV2Project,
   } = useProjectBuilderV2();
@@ -379,7 +379,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onToggleCompassOrientation={toggleV2CompassOrientation}
               editorState={v2EditorState}
               onBackToProject={backToV2Project}
-              onOpenSurface={openV2Surface}
+              onOpenWall={openV2Wall}
               onBackToRoom={backToV2Room}
             />
           </View>

@@ -1,15 +1,15 @@
-import { RoomSurface } from '../model/editorTypes';
+import { RoomSurface, RoomSurfaceObject } from '../model/editorTypes';
 import { RoomV2 } from '../model/types';
 
 export const getSurfaceTitle = (surface: RoomSurface) => {
   switch (surface) {
-    case 'north-wall':
+    case 'north':
       return 'Северная стена';
-    case 'east-wall':
+    case 'east':
       return 'Восточная стена';
-    case 'south-wall':
+    case 'south':
       return 'Южная стена';
-    case 'west-wall':
+    case 'west':
       return 'Западная стена';
     case 'floor':
       return 'Пол';
@@ -26,14 +26,14 @@ export const formatMm = (valueMm: number) => {
 
 export const getSurfaceWidthMm = (room: RoomV2, surface: RoomSurface) => {
   switch (surface) {
-    case 'north-wall':
-    case 'south-wall':
+    case 'north':
+    case 'south':
     case 'floor':
     case 'ceiling':
       return room.widthMm;
 
-    case 'east-wall':
-    case 'west-wall':
+    case 'east':
+    case 'west':
       return room.heightMm;
 
     default:
@@ -43,10 +43,10 @@ export const getSurfaceWidthMm = (room: RoomV2, surface: RoomSurface) => {
 
 export const getSurfaceHeightMm = (room: RoomV2, surface: RoomSurface) => {
   switch (surface) {
-    case 'north-wall':
-    case 'south-wall':
-    case 'east-wall':
-    case 'west-wall':
+    case 'north':
+    case 'south':
+    case 'east':
+    case 'west':
       return room.wallHeightMm ?? 2700;
 
     case 'floor':
@@ -56,4 +56,16 @@ export const getSurfaceHeightMm = (room: RoomV2, surface: RoomSurface) => {
     default:
       return room.heightMm;
   }
+};
+
+export const buildRoomSurfaceObjects = (room: RoomV2): RoomSurfaceObject[] => {
+  const surfaces: RoomSurface[] = ['north', 'east', 'south', 'west', 'floor', 'ceiling'];
+
+  return surfaces.map((surface) => ({
+    id: `${room.id}:${surface}`,
+    roomId: room.id,
+    surface,
+    widthMm: getSurfaceWidthMm(room, surface),
+    heightMm: getSurfaceHeightMm(room, surface),
+  }));
 };

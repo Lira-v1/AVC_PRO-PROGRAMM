@@ -1,15 +1,14 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { CompassViewMode } from '../model/orientation';
-import { EditorState, RoomSurface } from '../model/editorTypes';
+import { EditorState, RoomSurfaceObject, WallSurface } from '../model/editorTypes';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
-import { V2SurfaceView } from './V2SurfaceView';
-import { getSurfaceTitle } from '../utils/getSurfaceMetrics';
+import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/getSurfaceMetrics';
 
 type Props = {
   rooms: RoomV2[];
@@ -25,7 +24,7 @@ type Props = {
   onOpenRoom: (roomId: string) => void;
   editorState: EditorState;
   onBackToProject: () => void;
-  onOpenSurface: (surface: RoomSurface) => void;
+  onOpenWall: (wall: WallSurface) => void;
   onBackToRoom: () => void;
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
@@ -47,6 +46,7 @@ type Props = {
   onToggleCompassOrientation: () => void;
 };
 
+
 export const V2Canvas = ({
   rooms,
   selectedRoomId,
@@ -61,7 +61,7 @@ export const V2Canvas = ({
   onOpenRoom,
   editorState,
   onBackToProject,
-  onOpenSurface,
+  onOpenWall,
   onBackToRoom,
   onUpdateRoomSize,
   onToggleSizeLock,
@@ -82,17 +82,15 @@ export const V2Canvas = ({
   onOpenTools,
   onToggleCompassOrientation,
 }: Props) => {
-  const surfaceTabs: Array<{ key: RoomSurface; label: string }> = [
-    { key: 'north-wall', label: 'Север' },
-    { key: 'east-wall', label: 'Восток' },
-    { key: 'south-wall', label: 'Юг' },
-    { key: 'west-wall', label: 'Запад' },
-    { key: 'floor', label: 'Пол' },
-    { key: 'ceiling', label: 'Потолок' },
-  ];
-
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
   const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
+
+  const roomSurfaces = useMemo(() => {
+    if (!activeRoom) return [];
+    return buildRoomSurfaceObjects(activeRoom);
+  }, [activeRoom]);
+
+  const activeWallObject = roomSurfaces.find((surface) => surface.surface === editorState.activeWall) ?? null;
 
   const handleCanvasMouseDown = (event: any) => {
     if (event?.target === event?.currentTarget) {
@@ -102,22 +100,14 @@ export const V2Canvas = ({
 
   const webCanvasProps = Platform.OS === 'web' ? ({ onMouseDown: handleCanvasMouseDown } as any) : {};
 
-  const renderSceneLayer = (interactive: boolean) => (
-    <View
-      style={[
-        styles.sceneLayer,
-        {
-          transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }],
-        },
-      ]}
-      pointerEvents="box-none"
-    >
+  const renderProjectScene = () => (
+    <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
       {rooms.map((room) => (
         <V2Room
           key={room.id}
           room={room}
           selected={selectedRoomId === room.id}
-          interactive={interactive}
+          interactive
           onSelect={onSelectRoom}
           onMove={onMoveRoom}
           onResize={onResizeRoom}
@@ -132,13 +122,54 @@ export const V2Canvas = ({
           onAddWindow={onAddWindow}
         />
       ))}
-
-      {interactive && selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
+      {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
     </View>
   );
 
-  const renderProjectCanvas = () => (
-    <>
+  const renderRoomScene = () => (
+    <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
+      <View style={styles.roomSceneLayout} pointerEvents="box-none">
+        <View style={styles.rowWide}>
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'north') ?? null, true, onOpenWall)}
+        </View>
+        <View style={styles.rowSplit}>
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'west') ?? null, true, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'east') ?? null, true, onOpenWall)}
+        </View>
+        <View style={styles.rowWide}>
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'south') ?? null, true, onOpenWall)}
+        </View>
+        <View style={styles.rowSplit}>
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'floor') ?? null, false, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'ceiling') ?? null, false, onOpenWall)}
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderWallScene = () => (
+    <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
+      <View style={styles.wallSceneLayout} pointerEvents="box-none">
+        {renderSurfaceCard(activeWallObject, false, onOpenWall, true)}
+      </View>
+    </View>
+  );
+
+  const renderSceneByLevel = () => {
+    if (editorState.level === 'wall') {
+      return renderWallScene();
+    }
+
+    if (editorState.level === 'room') {
+      return renderRoomScene();
+    }
+
+    return renderProjectScene();
+  };
+
+  return (
+    <View style={styles.canvas} {...webCanvasProps}>
+      {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
       {showGrid ? <V2Grid /> : null}
 
       <V2CanvasControls
@@ -158,83 +189,52 @@ export const V2Canvas = ({
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
 
-      {renderSceneLayer(true)}
-    </>
-  );
+      {editorState.level === 'room' ? (
+        <Pressable style={styles.backButton} onPress={onBackToProject}>
+          <Text style={styles.backButtonText}>← Проект</Text>
+        </Pressable>
+      ) : null}
 
-  const renderRoomMode = () => (
-    <>
-      {showGrid ? <V2Grid /> : null}
-      {renderSceneLayer(false)}
+      {editorState.level === 'wall' ? (
+        <Pressable style={styles.backButton} onPress={onBackToRoom}>
+          <Text style={styles.backButtonText}>← Комната</Text>
+        </Pressable>
+      ) : null}
 
-      <View style={styles.modeShell}>
-        <View style={styles.modeHeader}>
-          <Pressable style={styles.modeBackButton} onPress={onBackToProject}>
-            <Text style={styles.modeBackButtonText}>← Проект</Text>
-          </Pressable>
-
-          <View style={styles.modeHeaderMeta}>
-            <Text style={styles.modeRoomName}>{activeRoom?.name ?? 'Комната'}</Text>
-            <Text style={styles.modeSubtitle}>Режим комнаты</Text>
-          </View>
-        </View>
-
-        <View style={styles.surfaceTabsRow}>
-          {surfaceTabs.map((tab) => {
-            const isActive = editorState.activeSurface === tab.key;
-
-            return (
-              <Pressable key={tab.key} style={[styles.surfaceTab, isActive ? styles.surfaceTabActive : null]} onPress={() => onOpenSurface(tab.key)}>
-                <Text style={[styles.surfaceTabText, isActive ? styles.surfaceTabTextActive : null]}>{tab.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-    </>
-  );
-
-  const renderSurfaceMode = () => {
-    if (!activeRoom || !editorState.activeSurface) {
-      return null;
-    }
-
-    return (
-      <View style={styles.surfaceWorkspace}>
-        <View style={styles.modeHeader}>
-          <Pressable style={styles.modeBackButton} onPress={onBackToRoom}>
-            <Text style={styles.modeBackButtonText}>← К комнате</Text>
-          </Pressable>
-
-          <View style={styles.modeHeaderMeta}>
-            <Text style={styles.modeRoomName}>{activeRoom.name}</Text>
-            <Text style={styles.modeSubtitle}>{getSurfaceTitle(editorState.activeSurface)}</Text>
-          </View>
-        </View>
-
-        <V2SurfaceView room={activeRoom} surface={editorState.activeSurface} />
-      </View>
-    );
-  };
-
-  const renderViewMode = () => {
-    if (editorState.viewMode === 'surface') {
-      return renderSurfaceMode();
-    }
-
-    if (editorState.viewMode === 'room') {
-      return renderRoomMode();
-    }
-
-    return renderProjectCanvas();
-  };
-
-  return (
-    <View style={styles.canvas} {...webCanvasProps}>
-      {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
-      {renderViewMode()}
+      {renderSceneByLevel()}
     </View>
   );
+};
+
+const renderSurfaceCard = (
+  surface: RoomSurfaceObject | null,
+  clickableWall: boolean,
+  onOpenWall: (wall: WallSurface) => void,
+  wallFocus = false,
+) => {
+  if (!surface) return <View style={styles.surfaceMissing} />;
+
+  const isWall = surface.surface === 'north' || surface.surface === 'east' || surface.surface === 'south' || surface.surface === 'west';
+  const content = (
+    <View style={[styles.surfaceCard, wallFocus ? styles.surfaceCardWallFocus : null]}>
+      <Text style={styles.surfaceTitle}>{getSurfaceTitle(surface.surface)}</Text>
+      <Text style={styles.surfaceMeta}>{surface.id}</Text>
+      <Text style={styles.surfaceMeta}>roomId: {surface.roomId}</Text>
+      <Text style={styles.surfaceMeta}>
+        {formatMm(surface.widthMm)} × {formatMm(surface.heightMm)}
+      </Text>
+    </View>
+  );
+
+  if (clickableWall && isWall) {
+    return (
+      <Pressable onPress={() => onOpenWall(surface.surface as WallSurface)} style={styles.surfacePressable}>
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={styles.surfacePressable}>{content}</View>;
 };
 
 const styles = StyleSheet.create({
@@ -246,6 +246,12 @@ const styles = StyleSheet.create({
     borderColor: '#D5DEEF',
     overflow: 'hidden',
     position: 'relative',
+  },
+  sceneLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  transformedScene: {
+    zIndex: 5,
   },
   gearButton: {
     position: 'absolute',
@@ -262,89 +268,73 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   gearIcon: { fontSize: 18 },
-  sceneLayer: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  modeShell: {
+  backButton: {
     position: 'absolute',
     top: 12,
     left: 12,
-    right: 12,
-    zIndex: 50,
-    gap: 10,
-  },
-  surfaceWorkspace: {
-    ...StyleSheet.absoluteFillObject,
-    padding: 12,
-    zIndex: 50,
-    gap: 10,
-  },
-  modeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  modeBackButton: {
+    zIndex: 20,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#BBC5DC',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.94)',
   },
-  modeBackButtonText: {
+  backButtonText: {
     color: '#2A3756',
     fontSize: 12,
     fontWeight: '700',
   },
-  modeHeaderMeta: {
-    flex: 1,
-    gap: 2,
+  roomSceneLayout: {
+    position: 'absolute',
+    left: 70,
+    top: 70,
+    width: 420,
+    gap: 12,
   },
-  modeRoomName: {
+  wallSceneLayout: {
+    position: 'absolute',
+    left: 70,
+    top: 100,
+    width: 520,
+    height: 300,
+  },
+  rowWide: {
+    flexDirection: 'row',
+  },
+  rowSplit: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  surfacePressable: {
+    flex: 1,
+  },
+  surfaceCard: {
+    minHeight: 86,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#AFC0E6',
+    backgroundColor: '#EAF1FF',
+    padding: 10,
+    gap: 3,
+  },
+  surfaceCardWallFocus: {
+    backgroundColor: '#DFE9FF',
+    borderColor: '#638DF5',
+    minHeight: 220,
+  },
+  surfaceTitle: {
     color: '#1F2A44',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
-  modeSubtitle: {
-    color: '#5D6B89',
-    fontSize: 12,
+  surfaceMeta: {
+    color: '#4A5B7D',
+    fontSize: 11,
     fontWeight: '500',
   },
-  surfaceTabsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DCE3F2',
-    padding: 8,
-  },
-  surfaceTab: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#BBC5DC',
-    backgroundColor: '#FFFFFF',
-  },
-  surfaceTabActive: {
-    borderColor: '#4B84FF',
-    backgroundColor: '#EAF1FF',
-  },
-  surfaceTabText: {
-    color: '#2A3756',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  surfaceTabTextActive: {
-    color: '#1C4CCC',
+  surfaceMissing: {
+    flex: 1,
+    minHeight: 50,
   },
 });
