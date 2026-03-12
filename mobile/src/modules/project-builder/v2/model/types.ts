@@ -18,3 +18,5 @@ export type CanvasViewportStateV2 = {
   offsetX: number;
   offsetY: number;
 };
+
+export type CompassOrientation = 'default' | 'flipped';

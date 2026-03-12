@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { RoomV2 } from '../model/types';
+import { CompassOrientation, RoomV2 } from '../model/types';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
@@ -15,6 +15,7 @@ type Props = {
   onBackgroundPress: () => void;
   showGrid: boolean;
   showCompass: boolean;
+  compassOrientation: CompassOrientation;
   isFullscreen: boolean;
   scale: number;
   offsetX: number;
@@ -25,6 +26,7 @@ type Props = {
   onZoomOut: () => void;
   onResetZoom: () => void;
   onOpenTools: () => void;
+  onToggleCompassOrientation: () => void;
 };
 
 export const V2Canvas = ({
@@ -36,6 +38,7 @@ export const V2Canvas = ({
   onBackgroundPress,
   showGrid,
   showCompass,
+  compassOrientation,
   isFullscreen,
   scale,
   offsetX,
@@ -46,6 +49,7 @@ export const V2Canvas = ({
   onZoomOut,
   onResetZoom,
   onOpenTools,
+  onToggleCompassOrientation,
 }: Props) => {
   const handleCanvasMouseDown = (event: any) => {
     if (event?.target === event?.currentTarget) {
@@ -70,7 +74,9 @@ export const V2Canvas = ({
         onZoomOut={onZoomOut}
         onResetZoom={onResetZoom}
       />
-      {showCompass ? <V2Compass /> : null}
+      {showCompass ? (
+        <V2Compass orientation={compassOrientation} onToggleOrientation={onToggleCompassOrientation} />
+      ) : null}
 
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
