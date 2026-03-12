@@ -102,9 +102,43 @@ export const V2Canvas = ({
 
   const webCanvasProps = Platform.OS === 'web' ? ({ onMouseDown: handleCanvasMouseDown } as any) : {};
 
-  return (
-    <View style={styles.canvas} {...webCanvasProps}>
-      {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
+  const renderSceneLayer = (interactive: boolean) => (
+    <View
+      style={[
+        styles.sceneLayer,
+        {
+          transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }],
+        },
+      ]}
+      pointerEvents="box-none"
+    >
+      {rooms.map((room) => (
+        <V2Room
+          key={room.id}
+          room={room}
+          selected={selectedRoomId === room.id}
+          interactive={interactive}
+          onSelect={onSelectRoom}
+          onMove={onMoveRoom}
+          onResize={onResizeRoom}
+          onRotate={onRotateRoom}
+          onRenamePreset={onRenamePreset}
+          onCustomRename={onCustomRename}
+          onOpenSettings={onOpenSettings}
+          onOpenRoom={onOpenRoom}
+          onUpdateRoomSize={onUpdateRoomSize}
+          onToggleSizeLock={onToggleSizeLock}
+          onAddDoor={onAddDoor}
+          onAddWindow={onAddWindow}
+        />
+      ))}
+
+      {interactive && selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
+    </View>
+  );
+
+  const renderProjectCanvas = () => (
+    <>
       {showGrid ? <V2Grid /> : null}
 
       <V2CanvasControls
@@ -117,93 +151,88 @@ export const V2Canvas = ({
         onZoomOut={onZoomOut}
         onResetZoom={onResetZoom}
       />
-      {showCompass ? (
-        <V2Compass viewMode={compassViewMode} onToggleOrientation={onToggleCompassOrientation} />
-      ) : null}
+
+      {showCompass ? <V2Compass viewMode={compassViewMode} onToggleOrientation={onToggleCompassOrientation} /> : null}
 
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
 
-      {editorState.viewMode === 'room' && activeRoom ? (
-        <View style={styles.modeShell}>
-          <View style={styles.modeHeader}>
-            <Pressable style={styles.modeBackButton} onPress={onBackToProject}>
-              <Text style={styles.modeBackButtonText}>← Проект</Text>
-            </Pressable>
+      {renderSceneLayer(true)}
+    </>
+  );
 
-            <View style={styles.modeHeaderMeta}>
-              <Text style={styles.modeRoomName}>{activeRoom.name}</Text>
-              <Text style={styles.modeSubtitle}>Режим комнаты</Text>
-            </View>
-          </View>
+  const renderRoomMode = () => (
+    <>
+      {showGrid ? <V2Grid /> : null}
+      {renderSceneLayer(false)}
 
-          <View style={styles.surfaceTabsRow}>
-            {surfaceTabs.map((tab) => {
-              const isActive = editorState.activeSurface === tab.key;
+      <View style={styles.modeShell}>
+        <View style={styles.modeHeader}>
+          <Pressable style={styles.modeBackButton} onPress={onBackToProject}>
+            <Text style={styles.modeBackButtonText}>← Проект</Text>
+          </Pressable>
 
-              return (
-                <Pressable
-                  key={tab.key}
-                  style={[styles.surfaceTab, isActive ? styles.surfaceTabActive : null]}
-                  onPress={() => onOpenSurface(tab.key)}
-                >
-                  <Text style={[styles.surfaceTabText, isActive ? styles.surfaceTabTextActive : null]}>{tab.label}</Text>
-                </Pressable>
-              );
-            })}
+          <View style={styles.modeHeaderMeta}>
+            <Text style={styles.modeRoomName}>{activeRoom?.name ?? 'Комната'}</Text>
+            <Text style={styles.modeSubtitle}>Режим комнаты</Text>
           </View>
         </View>
-      ) : null}
 
-      {editorState.viewMode === 'surface' && activeRoom && editorState.activeSurface ? (
-        <View style={styles.surfaceShell}>
-          <View style={styles.modeHeader}>
-            <Pressable style={styles.modeBackButton} onPress={onBackToRoom}>
-              <Text style={styles.modeBackButtonText}>← К комнате</Text>
-            </Pressable>
+        <View style={styles.surfaceTabsRow}>
+          {surfaceTabs.map((tab) => {
+            const isActive = editorState.activeSurface === tab.key;
 
-            <View style={styles.modeHeaderMeta}>
-              <Text style={styles.modeRoomName}>{activeRoom.name}</Text>
-              <Text style={styles.modeSubtitle}>{getSurfaceTitle(editorState.activeSurface)}</Text>
-            </View>
+            return (
+              <Pressable key={tab.key} style={[styles.surfaceTab, isActive ? styles.surfaceTabActive : null]} onPress={() => onOpenSurface(tab.key)}>
+                <Text style={[styles.surfaceTabText, isActive ? styles.surfaceTabTextActive : null]}>{tab.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </>
+  );
+
+  const renderSurfaceMode = () => {
+    if (!activeRoom || !editorState.activeSurface) {
+      return null;
+    }
+
+    return (
+      <View style={styles.surfaceWorkspace}>
+        <View style={styles.modeHeader}>
+          <Pressable style={styles.modeBackButton} onPress={onBackToRoom}>
+            <Text style={styles.modeBackButtonText}>← К комнате</Text>
+          </Pressable>
+
+          <View style={styles.modeHeaderMeta}>
+            <Text style={styles.modeRoomName}>{activeRoom.name}</Text>
+            <Text style={styles.modeSubtitle}>{getSurfaceTitle(editorState.activeSurface)}</Text>
           </View>
-
-          <V2SurfaceView room={activeRoom} surface={editorState.activeSurface} />
         </View>
-      ) : (
-        <View
-          style={[
-            styles.sceneLayer,
-            {
-              transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }],
-            },
-          ]}
-          pointerEvents="box-none"
-        >
-          {rooms.map((room) => (
-            <V2Room
-              key={room.id}
-              room={room}
-              selected={selectedRoomId === room.id}
-              onSelect={onSelectRoom}
-              onMove={onMoveRoom}
-              onResize={onResizeRoom}
-              onRotate={onRotateRoom}
-              onRenamePreset={onRenamePreset}
-              onCustomRename={onCustomRename}
-              onOpenSettings={onOpenSettings}
-              onOpenRoom={onOpenRoom}
-              onUpdateRoomSize={onUpdateRoomSize}
-              onToggleSizeLock={onToggleSizeLock}
-              onAddDoor={onAddDoor}
-              onAddWindow={onAddWindow}
-            />
-          ))}
 
-          {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
-        </View>
-      )}
+        <V2SurfaceView room={activeRoom} surface={editorState.activeSurface} />
+      </View>
+    );
+  };
+
+  const renderViewMode = () => {
+    if (editorState.viewMode === 'surface') {
+      return renderSurfaceMode();
+    }
+
+    if (editorState.viewMode === 'room') {
+      return renderRoomMode();
+    }
+
+    return renderProjectCanvas();
+  };
+
+  return (
+    <View style={styles.canvas} {...webCanvasProps}>
+      {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
+      {renderViewMode()}
     </View>
   );
 };
@@ -244,13 +273,11 @@ const styles = StyleSheet.create({
     zIndex: 50,
     gap: 10,
   },
-  surfaceShell: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
-    bottom: 12,
+  surfaceWorkspace: {
+    ...StyleSheet.absoluteFillObject,
+    padding: 12,
     zIndex: 50,
+    gap: 10,
   },
   modeHeader: {
     flexDirection: 'row',
