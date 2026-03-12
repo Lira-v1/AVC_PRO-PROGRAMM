@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { CompassViewMode } from '../model/orientation';
@@ -19,6 +19,7 @@ import { getSurfaceObjects } from '../utils/getSurfaceObjects';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { centerBoundsInViewport } from '../utils/centerBoundsInViewport';
 import { getSurfaceSceneBounds, SurfaceSceneItem } from '../utils/getSurfaceSceneBounds';
+import { CANVAS_UNITS_PER_METER, GRID_CELLS_PER_METER } from '../model/metrics';
 
 type Props = {
   rooms: RoomV2[];
@@ -60,7 +61,7 @@ type Props = {
 
 const SCENE_WIDTH = 10000;
 const SCENE_HEIGHT = 10000;
-const GRID_CELL_SIZE = 10;
+const GRID_CELL_SIZE = CANVAS_UNITS_PER_METER / GRID_CELLS_PER_METER;
 
 
 const ROOM_SCENE_LAYOUT = {
@@ -201,6 +202,18 @@ export const V2Canvas = ({
       ? `room:${editorState.activeRoomId ?? 'none'}`
       : `wall:${editorState.activeRoomId ?? 'none'}:${editorState.activeWall ?? 'none'}`;
 
+  const sceneOriginX = viewportSize.width / 2 - SCENE_WIDTH / 2;
+  const sceneOriginY = viewportSize.height / 2 - SCENE_HEIGHT / 2;
+
+  const getCenteredCameraPosition = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
+    const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
+
+    return {
+      panX: centered.panX - sceneOriginX,
+      panY: centered.panY - sceneOriginY,
+    };
+  }, [camera.zoom, sceneOriginX, sceneOriginY, viewportSize.height, viewportSize.width]);
+
   useEffect(() => {
     if (editorState.level !== 'wall') {
       setSelectedWallId(null);
@@ -228,7 +241,7 @@ export const V2Canvas = ({
       }
 
       const bounds = getRoomVisualBounds(firstRoom);
-      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
+      const centered = getCenteredCameraPosition(bounds);
       onSetCameraPosition(centered.panX, centered.panY);
       setLastCenteredSceneKey(sceneCenterKey);
       return;
@@ -240,7 +253,7 @@ export const V2Canvas = ({
       }
 
       const bounds = getSurfaceSceneBounds(roomSurfaceSceneItemsRef.current);
-      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
+      const centered = getCenteredCameraPosition(bounds);
       onSetCameraPosition(centered.panX, centered.panY);
       setLastCenteredSceneKey(sceneCenterKey);
       return;
@@ -252,11 +265,12 @@ export const V2Canvas = ({
         return;
       }
 
-      const centered = centerBoundsInViewport(wallSceneItem, viewportSize.width, viewportSize.height, camera.zoom);
+      const centered = getCenteredCameraPosition(wallSceneItem);
       onSetCameraPosition(centered.panX, centered.panY);
       setLastCenteredSceneKey(sceneCenterKey);
     }
   }, [
+    getCenteredCameraPosition,
     editorState.level,
     lastCenteredSceneKey,
     onSetCameraPosition,
@@ -398,7 +412,7 @@ export const V2Canvas = ({
     }
 
     const bounds = getRoomVisualBounds(firstRoom);
-    const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
+    const centered = getCenteredCameraPosition(bounds);
     onSetCameraPosition(centered.panX, centered.panY);
   };
 
@@ -450,7 +464,9 @@ export const V2Canvas = ({
           {
             width: SCENE_WIDTH,
             height: SCENE_HEIGHT,
-            transform: [{ scale: camera.zoom }, { translateX: camera.panX }, { translateY: camera.panY }],
+            left: sceneOriginX,
+            top: sceneOriginY,
+            transform: [{ translateX: camera.panX }, { translateY: camera.panY }, { scale: camera.zoom }],
           },
         ]}
         pointerEvents="box-none"
