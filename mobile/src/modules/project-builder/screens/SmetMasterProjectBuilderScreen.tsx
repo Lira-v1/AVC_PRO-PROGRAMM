@@ -378,6 +378,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onResetZoom={v2Viewport.resetViewport}
               onOpenTools={() => setIsProjectV2ToolsOpen(true)}
               onToggleCompassOrientation={toggleV2CompassOrientation}
+              onSetCameraPosition={v2Viewport.setViewportOffset}
               editorState={v2EditorState}
               onBackToProject={backToV2Project}
               onOpenWall={openV2Wall}
