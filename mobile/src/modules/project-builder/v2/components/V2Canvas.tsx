@@ -26,7 +26,7 @@ type Props = {
   onRotateRoom: (roomId: string) => void;
   onBackgroundPress: () => void;
   onRenamePreset: (roomId: string, name: string) => void;
-  onCustomRename: (roomId: string) => void;
+  onRenameCustom: (roomId: string, name: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
   editorState: EditorState;
@@ -81,7 +81,7 @@ export const V2Canvas = ({
   onRotateRoom,
   onBackgroundPress,
   onRenamePreset,
-  onCustomRename,
+  onRenameCustom,
   onOpenSettings,
   onOpenRoom,
   editorState,
@@ -226,6 +226,7 @@ export const V2Canvas = ({
 
   const renderProjectScene = () => (
     <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
+      {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
       {rooms.map((room) => (
         <V2Room
           key={room.id}
@@ -237,7 +238,7 @@ export const V2Canvas = ({
           onResize={onResizeRoom}
           onRotate={onRotateRoom}
           onRenamePreset={onRenamePreset}
-          onCustomRename={onCustomRename}
+          onRenameCustom={onRenameCustom}
           onOpenSettings={onOpenSettings}
           onOpenRoom={onOpenRoom}
           onUpdateRoomSize={onUpdateRoomSize}
@@ -246,7 +247,6 @@ export const V2Canvas = ({
           onAddWindow={onAddWindow}
         />
       ))}
-      {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
     </View>
   );
 

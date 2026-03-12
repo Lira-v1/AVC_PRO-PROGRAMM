@@ -14,7 +14,7 @@ type Props = {
   onResize: (roomId: string, width: number, height: number) => void;
   onRotate: (roomId: string) => void;
   onRenamePreset: (roomId: string, name: string) => void;
-  onCustomRename: (roomId: string) => void;
+  onRenameCustom: (roomId: string, name: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
@@ -40,7 +40,7 @@ export const V2Room = ({
   onResize,
   onRotate,
   onRenamePreset,
-  onCustomRename,
+  onRenameCustom,
   onOpenSettings,
   onOpenRoom,
   onUpdateRoomSize,
@@ -220,10 +220,7 @@ export const V2Room = ({
                 onRenamePreset(roomId, name);
                 setIsMenuOpen(false);
               }}
-              onCustomRename={(roomId) => {
-                onCustomRename(roomId);
-                setIsMenuOpen(false);
-              }}
+              onRenameCustom={onRenameCustom}
               onOpenSettings={(roomId) => {
                 onOpenSettings(roomId);
               }}

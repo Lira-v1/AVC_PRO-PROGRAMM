@@ -7,7 +7,7 @@ type Props = {
   roomId: string;
   room: RoomV2;
   onRenamePreset: (roomId: string, name: string) => void;
-  onCustomRename: (roomId: string) => void;
+  onRenameCustom: (roomId: string, name: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
@@ -20,7 +20,7 @@ export const V2RoomMenu = ({
   roomId,
   room,
   onRenamePreset,
-  onCustomRename,
+  onRenameCustom,
   onOpenSettings,
   onOpenRoom,
   onToggleSizeLock,
@@ -30,7 +30,7 @@ export const V2RoomMenu = ({
 }: Props) => {
   const [submenu, setSubmenu] = useState<'root' | 'name' | 'settings'>('root');
   const [sizeUnit, setSizeUnit] = useState<RoomSizeUnit>('m');
-  const [editingField, setEditingField] = useState<'width' | 'height' | null>(null);
+  const [editingField, setEditingField] = useState<'name' | 'width' | 'height' | null>(null);
   const [draftValue, setDraftValue] = useState('');
 
   useEffect(() => {
@@ -39,15 +39,34 @@ export const V2RoomMenu = ({
     setDraftValue('');
   }, [roomId]);
 
-  const startEditField = (field: 'width' | 'height') => {
+  const startEditField = (field: 'name' | 'width' | 'height') => {
     setEditingField(field);
 
-    const currentValue = field === 'width' ? formatRoomSize(room.widthMm, sizeUnit) : formatRoomSize(room.heightMm, sizeUnit);
-    setDraftValue(currentValue);
+    if (field === 'name') {
+      setDraftValue(room.name ?? '');
+      return;
+    }
+
+    if (field === 'width') {
+      setDraftValue(formatRoomSize(room.widthMm, sizeUnit));
+      return;
+    }
+
+    setDraftValue(formatRoomSize(room.heightMm, sizeUnit));
   };
 
   const commitField = () => {
     if (!editingField) return;
+
+    if (editingField === 'name') {
+      const trimmed = draftValue.trim();
+      if (trimmed) {
+        onRenameCustom(room.id, trimmed);
+      }
+      setEditingField(null);
+      setDraftValue('');
+      return;
+    }
 
     const parsedMm = parseRoomSizeToMm(draftValue, sizeUnit);
     if (parsedMm == null) {
@@ -109,10 +128,6 @@ export const V2RoomMenu = ({
       <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Холл')}>
         <Text style={styles.itemText}>Холл</Text>
       </Pressable>
-
-      <Pressable style={styles.item} onPress={() => onCustomRename(roomId)}>
-        <Text style={styles.itemText}>Ввести своё название</Text>
-      </Pressable>
     </>
   );
 
@@ -121,6 +136,30 @@ export const V2RoomMenu = ({
       <Pressable style={styles.item} onPress={() => setSubmenu('root')}>
         <Text style={styles.itemText}>← Назад</Text>
       </Pressable>
+
+      <View style={styles.fieldRow}>
+        <Text style={styles.fieldLabel}>Название</Text>
+
+        {editingField === 'name' ? (
+          <View style={styles.inlineEditor}>
+            <TextInput
+              value={draftValue}
+              onChangeText={setDraftValue}
+              autoFocus
+              style={styles.fieldInput}
+              onSubmitEditing={commitField}
+              onBlur={commitField}
+            />
+            <Pressable style={styles.confirmButton} onPress={commitField}>
+              <Text style={styles.confirmButtonText}>✓</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable style={styles.valueBox} onPress={() => startEditField('name')}>
+            <Text numberOfLines={1} style={styles.valueBoxText}>{room.name}</Text>
+          </Pressable>
+        )}
+      </View>
 
       <View style={styles.unitRow}>
         {(['mm', 'cm', 'm'] as RoomSizeUnit[]).map((unit) => (
@@ -210,22 +249,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 28,
     alignSelf: 'center',
-    minWidth: 160,
-    maxWidth: 240,
-    maxHeight: 280,
-    backgroundColor: 'rgba(255,255,255,0.98)',
-    borderRadius: 10,
+    minWidth: 210,
+    maxWidth: 260,
+    maxHeight: 260,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#DCE3F2',
-    zIndex: 30,
+    zIndex: 999,
+    elevation: 20,
     shadowColor: '#0F172A',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     overflow: 'hidden',
   },
   scroll: {
-    maxHeight: 280,
+    maxHeight: 260,
   },
   scrollContent: {
     padding: 6,
@@ -246,6 +286,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 8,
     marginTop: 4,
+    alignSelf: 'flex-end',
   },
   unitChip: {
     paddingHorizontal: 10,
@@ -280,7 +321,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   valueBox: {
-    minWidth: 84,
+    maxWidth: 140,
+    minWidth: 96,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,
@@ -298,6 +340,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    maxWidth: 172,
   },
   fieldInput: {
     minWidth: 84,
