@@ -1,11 +1,17 @@
 import { useMemo, useState } from 'react';
 import { INITIAL_SCENE_V2 } from '../model/defaults';
+import { EditorState, RoomSurface } from '../model/editorTypes';
 import { ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
 export const useProjectBuilderV2 = () => {
   const [scene, setScene] = useState(INITIAL_SCENE_V2);
   const [orientation, setOrientation] = useState<ProjectOrientationV2>(INITIAL_PROJECT_ORIENTATION_V2);
+  const [editorState, setEditorState] = useState<EditorState>({
+    viewMode: 'project',
+    activeRoomId: null,
+    activeSurface: null,
+  });
 
   const selectedRoom = useMemo(() => scene.rooms.find((room) => room.id === scene.selectedRoomId) ?? null, [scene.rooms, scene.selectedRoomId]);
 
@@ -122,6 +128,30 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const openRoom = (roomId: string) => {
+    setEditorState({
+      viewMode: 'room',
+      activeRoomId: roomId,
+      activeSurface: null,
+    });
+  };
+
+  const openSurface = (surface: RoomSurface) => {
+    setEditorState((prev) => ({
+      ...prev,
+      viewMode: 'surface',
+      activeSurface: surface,
+    }));
+  };
+
+  const backToProject = () => {
+    setEditorState({
+      viewMode: 'project',
+      activeRoomId: null,
+      activeSurface: null,
+    });
+  };
+
   return {
     scene,
     rooms: scene.rooms,
@@ -129,6 +159,8 @@ export const useProjectBuilderV2 = () => {
     selectedRoom,
     activeTool: scene.activeTool,
     orientation,
+    editorState,
+    setEditorState,
     selectRoom,
     deselectRoom,
     moveRoom,
@@ -138,5 +170,8 @@ export const useProjectBuilderV2 = () => {
     rotateRoom,
     renameRoom,
     toggleCompassOrientation,
+    openRoom,
+    openSurface,
+    backToProject,
   };
 };
