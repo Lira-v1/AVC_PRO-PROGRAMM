@@ -16,6 +16,7 @@ export const INITIAL_SCENE_V2: SceneStateV2 = {
       isSizeLocked: false,
     },
   ],
+  sceneObjects: [],
   selectedRoomId: null,
   activeTool: 'select',
 };
