@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 type Props = {
@@ -6,37 +6,62 @@ type Props = {
   onRenamePreset: (roomId: string, name: string) => void;
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
+  onOpenRoom: (roomId: string) => void;
 };
 
-export const V2RoomMenu = ({ roomId, onRenamePreset, onCustomRename, onOpenSettings }: Props) => {
+export const V2RoomMenu = ({ roomId, onRenamePreset, onCustomRename, onOpenSettings, onOpenRoom }: Props) => {
+  const [submenu, setSubmenu] = useState<'root' | 'name'>('root');
+
+  useEffect(() => {
+    setSubmenu('root');
+  }, [roomId]);
+
+  if (submenu === 'name') {
+    return (
+      <View style={styles.root}>
+        <Pressable style={styles.item} onPress={() => setSubmenu('root')}>
+          <Text style={styles.itemText}>← Назад</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Кухня')}>
+          <Text style={styles.itemText}>Кухня</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Спальня')}>
+          <Text style={styles.itemText}>Спальня</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Зал')}>
+          <Text style={styles.itemText}>Зал</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Прихожая')}>
+          <Text style={styles.itemText}>Прихожая</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Холл')}>
+          <Text style={styles.itemText}>Холл</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={() => onCustomRename(roomId)}>
+          <Text style={styles.itemText}>Ввести своё название</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <Pressable style={styles.item} onPress={() => onOpenSettings(roomId)}>
         <Text style={styles.itemText}>Настроить комнату</Text>
       </Pressable>
 
-      <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Кухня')}>
-        <Text style={styles.itemText}>Кухня</Text>
+      <Pressable style={styles.item} onPress={() => setSubmenu('name')}>
+        <Text style={styles.itemText}>Имя комнаты</Text>
       </Pressable>
 
-      <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Спальня')}>
-        <Text style={styles.itemText}>Спальня</Text>
-      </Pressable>
-
-      <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Зал')}>
-        <Text style={styles.itemText}>Зал</Text>
-      </Pressable>
-
-      <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Прихожая')}>
-        <Text style={styles.itemText}>Прихожая</Text>
-      </Pressable>
-
-      <Pressable style={styles.item} onPress={() => onRenamePreset(roomId, 'Холл')}>
-        <Text style={styles.itemText}>Холл</Text>
-      </Pressable>
-
-      <Pressable style={styles.item} onPress={() => onCustomRename(roomId)}>
-        <Text style={styles.itemText}>Ввести своё название</Text>
+      <Pressable style={styles.item} onPress={() => onOpenRoom(roomId)}>
+        <Text style={styles.itemText}>Открыть комнату</Text>
       </Pressable>
     </View>
   );
