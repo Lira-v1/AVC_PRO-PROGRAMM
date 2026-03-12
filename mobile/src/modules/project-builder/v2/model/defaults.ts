@@ -5,8 +5,8 @@ export const INITIAL_SCENE_V2: SceneStateV2 = {
     {
       id: 'room-1',
       name: 'Комната 1',
-      centerX: 130,
-      centerY: 130,
+      centerX: 0,
+      centerY: 0,
       width: 100,
       height: 100,
       widthMm: 1000,
