@@ -104,6 +104,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     resizeRoom: resizeV2Room,
     renameRoom: renameV2Room,
     rotateRoom: rotateV2Room,
+    updateRoomSize: updateV2RoomSize,
+    setRoomSizeLocked: setV2RoomSizeLocked,
     toggleCompassOrientation: toggleV2CompassOrientation,
   } = useProjectBuilderV2();
   const {
@@ -129,6 +131,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
   const canSend = useMemo(() => input.trim().length > 0, [input]);
 
   const isV2RenameMode = inputModeV2.type === 'rename-room';
+  const isV2SetWidthMode = inputModeV2.type === 'set-room-width';
+  const isV2SetHeightMode = inputModeV2.type === 'set-room-height';
 
   const handleV2RenamePreset = (roomId: string, name: string) => {
     renameV2Room(roomId, name);
@@ -146,13 +150,70 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     selectV2Room(roomId);
   };
 
+
+  const handleV2StartSetWidth = (roomId: string) => {
+    setInputModeV2({ type: 'set-room-width', roomId });
+    const room = v2Rooms.find((item) => item.id === roomId);
+    const widthMeters = (room?.widthCm ?? room?.width ?? 0) / 100;
+    setInput(widthMeters > 0 ? String(Math.round(widthMeters * 100) / 100) : '');
+  };
+
+  const handleV2StartSetHeight = (roomId: string) => {
+    setInputModeV2({ type: 'set-room-height', roomId });
+    const room = v2Rooms.find((item) => item.id === roomId);
+    const heightMeters = (room?.heightCm ?? room?.height ?? 0) / 100;
+    setInput(heightMeters > 0 ? String(Math.round(heightMeters * 100) / 100) : '');
+  };
+
+  const handleV2ToggleSizeLock = (roomId: string, locked: boolean) => {
+    setV2RoomSizeLocked(roomId, locked);
+  };
+
+  const addDoorPlaceholder = (roomId: string) => {
+    console.log('Добавить дверь placeholder:', roomId);
+  };
+
+  const addWindowPlaceholder = (roomId: string) => {
+    console.log('Добавить окно placeholder:', roomId);
+  };
+
   const openRoomPlaceholder = (roomId: string) => {
     console.log('Открыть комнату placeholder:', roomId);
   };
 
   const handleBottomInputSubmit = () => {
+    const trimmed = input.trim();
+
     if (mode === 'project_v2' && inputModeV2.type === 'rename-room') {
-      renameV2Room(inputModeV2.roomId, input);
+      if (trimmed) {
+        renameV2Room(inputModeV2.roomId, trimmed);
+      }
+      setInputModeV2({ type: 'default' });
+      setInput('');
+      return;
+    }
+
+    if (mode === 'project_v2' && inputModeV2.type === 'set-room-width') {
+      const parsed = Number(trimmed.replace(',', '.'));
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        const room = v2Rooms.find((item) => item.id === inputModeV2.roomId);
+        if (room) {
+          updateV2RoomSize(inputModeV2.roomId, parsed * 100, room.heightCm ?? room.height);
+        }
+      }
+      setInputModeV2({ type: 'default' });
+      setInput('');
+      return;
+    }
+
+    if (mode === 'project_v2' && inputModeV2.type === 'set-room-height') {
+      const parsed = Number(trimmed.replace(',', '.'));
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        const room = v2Rooms.find((item) => item.id === inputModeV2.roomId);
+        if (room) {
+          updateV2RoomSize(inputModeV2.roomId, room.widthCm ?? room.width, parsed * 100);
+        }
+      }
       setInputModeV2({ type: 'default' });
       setInput('');
       return;
@@ -337,11 +398,17 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onBackgroundPress={() => {
                 deselectV2Room();
                 setInputModeV2({ type: 'default' });
+                setInput('');
               }}
               onRenamePreset={handleV2RenamePreset}
               onCustomRename={handleV2CustomRename}
               onOpenSettings={handleV2OpenRoomSettings}
               onOpenRoom={openRoomPlaceholder}
+              onStartSetWidth={handleV2StartSetWidth}
+              onStartSetHeight={handleV2StartSetHeight}
+              onToggleSizeLock={handleV2ToggleSizeLock}
+              onAddDoor={addDoorPlaceholder}
+              onAddWindow={addWindowPlaceholder}
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
               compassViewMode={v2Orientation.viewMode}
@@ -489,8 +556,17 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
             style={styles.chatInput}
             value={input}
             onChangeText={setInput}
-            placeholder={mode === 'project_v2' && isV2RenameMode ? 'Введите название комнаты...' : 'Напишите сообщение...'}
+            placeholder={
+              mode === 'project_v2' && isV2RenameMode
+                ? 'Введите название комнаты...'
+                : mode === 'project_v2' && isV2SetWidthMode
+                  ? 'Введите ширину в метрах (например, 2.7)'
+                  : mode === 'project_v2' && isV2SetHeightMode
+                    ? 'Введите длину в метрах (например, 4.2)'
+                    : 'Напишите сообщение...'
+            }
             placeholderTextColor="#8A94A6"
+            keyboardType={mode === 'project_v2' && (isV2SetWidthMode || isV2SetHeightMode) ? 'numeric' : 'default'}
             multiline
           />
           <Pressable style={[styles.iconButton, styles.sendButton, !canSend && styles.sendButtonDisabled]} onPress={handleBottomInputSubmit}>

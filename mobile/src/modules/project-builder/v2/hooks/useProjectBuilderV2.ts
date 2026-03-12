@@ -52,6 +52,41 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+
+  const updateRoomSize = (roomId: string, widthCm: number, heightCm: number) => {
+    const safeWidth = Math.max(1, widthCm);
+    const safeHeight = Math.max(1, heightCm);
+
+    setScene((prev) => ({
+      ...prev,
+      rooms: prev.rooms.map((room) =>
+        room.id === roomId
+          ? {
+              ...room,
+              widthCm: safeWidth,
+              heightCm: safeHeight,
+              width: safeWidth,
+              height: safeHeight,
+            }
+          : room,
+      ),
+    }));
+  };
+
+  const setRoomSizeLocked = (roomId: string, locked: boolean) => {
+    setScene((prev) => ({
+      ...prev,
+      rooms: prev.rooms.map((room) =>
+        room.id === roomId
+          ? {
+              ...room,
+              isSizeLocked: locked,
+            }
+          : room,
+      ),
+    }));
+  };
+
   const rotateRoom = (roomId: string) => {
     setScene((prev) => ({
       ...prev,
@@ -97,6 +132,8 @@ export const useProjectBuilderV2 = () => {
     deselectRoom,
     moveRoom,
     resizeRoom,
+    updateRoomSize,
+    setRoomSizeLocked,
     rotateRoom,
     renameRoom,
     toggleCompassOrientation,
