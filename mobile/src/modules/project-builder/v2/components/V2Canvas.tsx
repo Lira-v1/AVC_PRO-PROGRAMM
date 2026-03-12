@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { V2Grid } from './V2Grid';
 import { V2Room } from './V2Room';
@@ -14,9 +14,17 @@ type Props = {
 };
 
 export const V2Canvas = ({ rooms, selectedRoomId, onSelectRoom, onMoveRoom, onResizeRoom, onBackgroundPress }: Props) => {
+  const handleCanvasMouseDown = (event: any) => {
+    if (event?.target === event?.currentTarget) {
+      onBackgroundPress();
+    }
+  };
+
+  const webCanvasProps = Platform.OS === 'web' ? ({ onMouseDown: handleCanvasMouseDown } as any) : {};
+
   return (
-    <View style={styles.canvas}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />
+    <View style={styles.canvas} {...webCanvasProps}>
+      {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
       <V2Grid />
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         {rooms.map((room) => (
