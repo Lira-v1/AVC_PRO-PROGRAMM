@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { INITIAL_SCENE_V2 } from '../model/defaults';
+import { ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
-const MIN_ROOM_SIZE = 80;
+const MIN_ROOM_SIZE = ROOM_MIN_SIZE_CM;
 
 export const useProjectBuilderV2 = () => {
   const [scene, setScene] = useState(INITIAL_SCENE_V2);
