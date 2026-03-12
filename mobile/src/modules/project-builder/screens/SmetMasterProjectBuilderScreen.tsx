@@ -144,10 +144,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     setInput('');
   };
 
-  const handleV2CustomRename = (roomId: string) => {
-    setInputModeV2({ type: 'rename-room', roomId });
-    const room = v2Rooms.find((item) => item.id === roomId);
-    setInput(room?.name ?? '');
+  const handleV2RenameCustom = (roomId: string, name: string) => {
+    renameV2Room(roomId, name);
   };
 
   const handleV2OpenRoomSettings = (roomId: string) => {
@@ -357,7 +355,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
                 backToV2Project();
               }}
               onRenamePreset={handleV2RenamePreset}
-              onCustomRename={handleV2CustomRename}
+              onRenameCustom={handleV2RenameCustom}
               onOpenSettings={handleV2OpenRoomSettings}
               onOpenRoom={openV2Room}
               onUpdateRoomSize={updateV2RoomSize}
