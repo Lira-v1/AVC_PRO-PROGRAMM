@@ -95,16 +95,17 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
   const {
     rooms: v2Rooms,
     selectedRoomId: v2SelectedRoomId,
+    orientation: v2Orientation,
     selectRoom: selectV2Room,
     deselectRoom: deselectV2Room,
     moveRoom: moveV2Room,
     resizeRoom: resizeV2Room,
+    toggleCompassOrientation: toggleV2CompassOrientation,
   } = useProjectBuilderV2();
   const {
     canvasUiState,
     toggleFullscreen: toggleV2Fullscreen,
     toggleGrid: toggleV2Grid,
-    toggleCompassOrientation: toggleV2CompassOrientation,
   } = useCanvasUiStateV2();
   const v2Viewport = useCanvasViewportV2();
 
@@ -298,7 +299,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onBackgroundPress={deselectV2Room}
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
-              compassOrientation={canvasUiState.compassOrientation}
+              compassViewMode={v2Orientation.viewMode}
               isFullscreen={canvasUiState.isFullscreen}
               scale={v2Viewport.scale}
               offsetX={v2Viewport.offsetX}

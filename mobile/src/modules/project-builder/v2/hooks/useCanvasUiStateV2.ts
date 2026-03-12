@@ -1,11 +1,9 @@
 import { useCallback, useState } from 'react';
-import { CompassOrientation } from '../model/types';
 
 export type CanvasUiStateV2 = {
   isFullscreen: boolean;
   showGrid: boolean;
   showCompass: boolean;
-  compassOrientation: CompassOrientation;
 };
 
 export const useCanvasUiStateV2 = () => {
@@ -13,7 +11,6 @@ export const useCanvasUiStateV2 = () => {
     isFullscreen: false,
     showGrid: true,
     showCompass: true,
-    compassOrientation: 'default',
   });
 
   const toggleFullscreen = useCallback(() => {
@@ -24,17 +21,9 @@ export const useCanvasUiStateV2 = () => {
     setState((prev) => ({ ...prev, showGrid: !prev.showGrid }));
   }, []);
 
-  const toggleCompassOrientation = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      compassOrientation: prev.compassOrientation === 'default' ? 'flipped' : 'default',
-    }));
-  }, []);
-
   return {
     canvasUiState: state,
     toggleFullscreen,
     toggleGrid,
-    toggleCompassOrientation,
   };
 };
