@@ -53,7 +53,7 @@ export const V2RoomDimensions = ({ room, unit }: Props) => {
       >
         <View style={styles.leftEndCapTop} />
         <View style={styles.leftEndCapBottom} />
-        <Text style={styles.leftDimensionText}>{formatDimensionByUnit(leftValue, unit)}</Text>
+        <Text numberOfLines={1} style={[styles.leftDimensionText, { whiteSpace: 'nowrap' } as any]}>{formatDimensionByUnit(leftValue, unit)}</Text>
       </View>
     </View>
   );
