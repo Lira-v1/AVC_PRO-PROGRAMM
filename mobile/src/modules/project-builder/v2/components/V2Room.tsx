@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { V2RoomMenu } from './V2RoomMenu';
 
 type Props = {
   room: RoomV2;
@@ -8,6 +9,9 @@ type Props = {
   onSelect: (roomId: string) => void;
   onMove: (roomId: string, x: number, y: number) => void;
   onResize: (roomId: string, width: number, height: number) => void;
+  onRenamePreset: (roomId: string, name: string) => void;
+  onCustomRename: (roomId: string) => void;
+  onOpenSettings: (roomId: string) => void;
 };
 
 type InteractionState =
@@ -15,11 +19,21 @@ type InteractionState =
   | { mode: 'drag'; startMouseX: number; startMouseY: number; startX: number; startY: number }
   | { mode: 'resize'; startMouseX: number; startMouseY: number; startWidth: number; startHeight: number };
 
-export const V2Room = ({ room, selected, onSelect, onMove, onResize }: Props) => {
+export const V2Room = ({
+  room,
+  selected,
+  onSelect,
+  onMove,
+  onResize,
+  onRenamePreset,
+  onCustomRename,
+  onOpenSettings,
+}: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ x: room.x, y: room.y });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
   const isResizingRef = useRef(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -52,6 +66,12 @@ export const V2Room = ({ room, selected, onSelect, onMove, onResize }: Props) =>
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [onMove, onResize, room.id]);
+
+  useEffect(() => {
+    if (!selected) {
+      setIsMenuOpen(false);
+    }
+  }, [selected]);
 
   const dragResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => !isResizingRef.current,
@@ -126,7 +146,34 @@ export const V2Room = ({ room, selected, onSelect, onMove, onResize }: Props) =>
         onPress={() => onSelect(room.id)}
         style={[styles.room, selected ? styles.roomSelected : null]}
       >
-        <Text style={styles.name}>{room.name}</Text>
+        <Pressable
+          style={styles.nameButton}
+          onPress={(event) => {
+            event?.stopPropagation?.();
+            onSelect(room.id);
+            setIsMenuOpen((prev) => !prev);
+          }}
+        >
+          <Text style={styles.name}>{room.name}</Text>
+        </Pressable>
+
+        {isMenuOpen ? (
+          <V2RoomMenu
+            roomId={room.id}
+            onRenamePreset={(roomId, name) => {
+              onRenamePreset(roomId, name);
+              setIsMenuOpen(false);
+            }}
+            onCustomRename={(roomId) => {
+              onCustomRename(roomId);
+              setIsMenuOpen(false);
+            }}
+            onOpenSettings={(roomId) => {
+              onOpenSettings(roomId);
+              setIsMenuOpen(false);
+            }}
+          />
+        ) : null}
       </Pressable>
 
       <Pressable
@@ -153,10 +200,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 10,
     cursor: 'move' as any,
+    position: 'relative',
+    overflow: 'visible',
   },
   roomSelected: {
     borderColor: '#2D5ED2',
     backgroundColor: '#EDF3FF',
+  },
+  nameButton: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   name: {
     fontSize: 12,

@@ -46,6 +46,16 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const renameRoom = (roomId: string, newName: string) => {
+    const safeName = newName.trim();
+    if (!safeName) return;
+
+    setScene((prev) => ({
+      ...prev,
+      rooms: prev.rooms.map((room) => (room.id === roomId ? { ...room, name: safeName } : room)),
+    }));
+  };
+
   const toggleCompassOrientation = () => {
     setOrientation((prev) => ({
       ...prev,
@@ -64,6 +74,7 @@ export const useProjectBuilderV2 = () => {
     deselectRoom,
     moveRoom,
     resizeRoom,
+    renameRoom,
     toggleCompassOrientation,
   };
 };

@@ -5,7 +5,12 @@ export type RoomV2 = {
   y: number;
   width: number;
   height: number;
+  projectZone?: 'north' | 'south' | 'west' | 'east' | 'center';
 };
+
+export type InputModeV2 =
+  | { type: 'default' }
+  | { type: 'rename-room'; roomId: string };
 
 export type SceneStateV2 = {
   rooms: RoomV2[];
@@ -18,4 +23,3 @@ export type CanvasViewportStateV2 = {
   offsetX: number;
   offsetY: number;
 };
-

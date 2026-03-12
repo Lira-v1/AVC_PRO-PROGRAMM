@@ -14,6 +14,9 @@ type Props = {
   onMoveRoom: (roomId: string, x: number, y: number) => void;
   onResizeRoom: (roomId: string, width: number, height: number) => void;
   onBackgroundPress: () => void;
+  onRenamePreset: (roomId: string, name: string) => void;
+  onCustomRename: (roomId: string) => void;
+  onOpenRoomSettings: (roomId: string) => void;
   showGrid: boolean;
   showCompass: boolean;
   compassViewMode: CompassViewMode;
@@ -37,6 +40,9 @@ export const V2Canvas = ({
   onMoveRoom,
   onResizeRoom,
   onBackgroundPress,
+  onRenamePreset,
+  onCustomRename,
+  onOpenRoomSettings,
   showGrid,
   showCompass,
   compassViewMode,
@@ -100,6 +106,9 @@ export const V2Canvas = ({
             onSelect={onSelectRoom}
             onMove={onMoveRoom}
             onResize={onResizeRoom}
+            onRenamePreset={onRenamePreset}
+            onCustomRename={onCustomRename}
+            onOpenSettings={onOpenRoomSettings}
           />
         ))}
       </View>
