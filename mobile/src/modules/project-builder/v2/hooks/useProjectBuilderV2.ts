@@ -12,6 +12,7 @@ export const useProjectBuilderV2 = () => {
     level: 'project',
     activeRoomId: null,
     activeWall: null,
+    dimensionUnit: 'm',
   });
 
   const selectedRoom = useMemo(() => scene.rooms.find((room) => room.id === scene.selectedRoomId) ?? null, [scene.rooms, scene.selectedRoomId]);
@@ -145,12 +146,20 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const setDimensionUnit = (unit: 'mm' | 'cm' | 'm') => {
+    setEditorState((prev) => ({
+      ...prev,
+      dimensionUnit: unit,
+    }));
+  };
+
   const openRoom = (roomId: string) => {
-    setEditorState({
+    setEditorState((prev) => ({
       level: 'room',
       activeRoomId: roomId,
       activeWall: null,
-    });
+      dimensionUnit: prev.dimensionUnit,
+    }));
   };
 
   const openWall = (wall: WallSurface) => {
@@ -174,6 +183,7 @@ export const useProjectBuilderV2 = () => {
           level: 'project',
           activeRoomId: null,
           activeWall: null,
+          dimensionUnit: prev.dimensionUnit,
         };
       }
 
@@ -181,16 +191,18 @@ export const useProjectBuilderV2 = () => {
         ...prev,
         level: 'room',
         activeWall: null,
+      dimensionUnit: prev.dimensionUnit,
       };
     });
   };
 
   const backToProject = () => {
-    setEditorState({
+    setEditorState((prev) => ({
       level: 'project',
       activeRoomId: null,
       activeWall: null,
-    });
+      dimensionUnit: prev.dimensionUnit,
+    }));
   };
 
   return {
@@ -214,6 +226,7 @@ export const useProjectBuilderV2 = () => {
     rotateRoom,
     renameRoom,
     toggleCompassOrientation,
+    setDimensionUnit,
     openRoom,
     openWall,
     backToRoom,

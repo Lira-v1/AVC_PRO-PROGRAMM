@@ -113,6 +113,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     openWall: openV2Wall,
     backToRoom: backToV2Room,
     backToProject: backToV2Project,
+    setDimensionUnit: setV2DimensionUnit,
   } = useProjectBuilderV2();
   const {
     canvasUiState,
@@ -352,7 +353,6 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onBackgroundPress={() => {
                 deselectV2Room();
                 setInputModeV2({ type: 'default' });
-                backToV2Project();
               }}
               onRenamePreset={handleV2RenamePreset}
               onRenameCustom={handleV2RenameCustom}
@@ -382,6 +382,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onOpenWall={openV2Wall}
               onBackToRoom={backToV2Room}
               sceneObjects={v2SceneObjects}
+              dimensionUnit={v2EditorState.dimensionUnit}
+              onDimensionUnitChange={setV2DimensionUnit}
             />
           </View>
 

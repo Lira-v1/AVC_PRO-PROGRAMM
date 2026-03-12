@@ -2,17 +2,17 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
+import { formatDimensionByUnit, RoomSizeUnit } from '../utils/roomUnits';
 
 type Props = {
   room: RoomV2;
+  unit: RoomSizeUnit;
 };
 
 const DIMENSION_STROKE = '#334155';
 const DIMENSION_OFFSET = 26;
 
-const formatMeters = (valueMm: number) => `${(valueMm / 1000).toFixed(2)} м`;
-
-export const V2RoomDimensions = ({ room }: Props) => {
+export const V2RoomDimensions = ({ room, unit }: Props) => {
   const normalizedRotation = ((room.rotation ?? 0) % 360 + 360) % 360;
   const isVerticalOrientation = normalizedRotation === 90 || normalizedRotation === 270;
 
@@ -38,7 +38,7 @@ export const V2RoomDimensions = ({ room }: Props) => {
       >
         <View style={styles.topEndCapLeft} />
         <View style={styles.topEndCapRight} />
-        <Text style={styles.topDimensionText}>{formatMeters(topValue)}</Text>
+        <Text style={styles.topDimensionText}>{formatDimensionByUnit(topValue, unit)}</Text>
       </View>
 
       <View
@@ -53,7 +53,7 @@ export const V2RoomDimensions = ({ room }: Props) => {
       >
         <View style={styles.leftEndCapTop} />
         <View style={styles.leftEndCapBottom} />
-        <Text style={styles.leftDimensionText}>{formatMeters(leftValue)}</Text>
+        <Text style={styles.leftDimensionText}>{formatDimensionByUnit(leftValue, unit)}</Text>
       </View>
     </View>
   );

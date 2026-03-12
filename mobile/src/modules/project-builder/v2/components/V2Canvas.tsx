@@ -9,6 +9,7 @@ import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
 import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/getSurfaceMetrics';
+import { RoomSizeUnit } from '../utils/roomUnits';
 import { RoomSurfaceObject } from '../model/surfaces';
 import { SceneObject } from '../model/sceneObjects';
 import { buildSurfaceId } from '../utils/buildSurfaceId';
@@ -53,6 +54,8 @@ type Props = {
   onOpenTools: () => void;
   onToggleCompassOrientation: () => void;
   onSetCameraPosition: (panX: number, panY: number) => void;
+  dimensionUnit: RoomSizeUnit;
+  onDimensionUnitChange: (unit: RoomSizeUnit) => void;
 };
 
 
@@ -108,6 +111,8 @@ export const V2Canvas = ({
   onOpenTools,
   onToggleCompassOrientation,
   onSetCameraPosition,
+  dimensionUnit,
+  onDimensionUnitChange,
 }: Props) => {
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
   const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
@@ -136,6 +141,8 @@ export const V2Canvas = ({
   }, [activeSurfaceId, editorState.activeRoomId, sceneObjects]);
 
   const handleCanvasMouseDown = (event: any) => {
+    if (editorState.level !== 'project') return;
+
     if (event?.target === event?.currentTarget) {
       onBackgroundPress();
     }
@@ -226,7 +233,7 @@ export const V2Canvas = ({
 
   const renderProjectScene = () => (
     <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
-      {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
+      {selectedRoom ? <V2RoomDimensions room={selectedRoom} unit={dimensionUnit} /> : null}
       {rooms.map((room) => (
         <V2Room
           key={room.id}
@@ -245,6 +252,8 @@ export const V2Canvas = ({
           onToggleSizeLock={onToggleSizeLock}
           onAddDoor={onAddDoor}
           onAddWindow={onAddWindow}
+          dimensionUnit={dimensionUnit}
+          onDimensionUnitChange={onDimensionUnitChange}
         />
       ))}
     </View>
@@ -300,7 +309,7 @@ export const V2Canvas = ({
       }}
       {...webCanvasProps}
     >
-      {Platform.OS === 'web' ? null : <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} />}
+      {Platform.OS === 'web' ? null : editorState.level === 'project' ? <Pressable style={StyleSheet.absoluteFill} onPress={onBackgroundPress} /> : null}
       {showGrid ? <V2Grid /> : null}
 
       <V2CanvasControls
