@@ -14,6 +14,11 @@ type Props = {
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
+  onStartSetWidth: (roomId: string) => void;
+  onStartSetHeight: (roomId: string) => void;
+  onToggleSizeLock: (roomId: string, locked: boolean) => void;
+  onAddDoor: (roomId: string) => void;
+  onAddWindow: (roomId: string) => void;
 };
 
 type InteractionState =
@@ -32,6 +37,11 @@ export const V2Room = ({
   onCustomRename,
   onOpenSettings,
   onOpenRoom,
+  onStartSetWidth,
+  onStartSetHeight,
+  onToggleSizeLock,
+  onAddDoor,
+  onAddWindow,
 }: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ x: room.x, y: room.y });
@@ -98,14 +108,16 @@ export const V2Room = ({
   });
 
   const resizeResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponder: () => !room.isSizeLocked,
+    onMoveShouldSetPanResponder: () => !room.isSizeLocked,
     onPanResponderGrant: () => {
+      if (room.isSizeLocked) return;
       isResizingRef.current = true;
       resizeOriginRef.current = { width: room.width, height: room.height };
       onSelect(room.id);
     },
     onPanResponderMove: (_, gesture) => {
+      if (room.isSizeLocked) return;
       onResize(room.id, resizeOriginRef.current.width + gesture.dx, resizeOriginRef.current.height + gesture.dy);
     },
     onPanResponderRelease: () => {
@@ -128,6 +140,8 @@ export const V2Room = ({
   };
 
   const startResizeWeb = (event: any) => {
+    if (room.isSizeLocked) return;
+
     event?.stopPropagation?.();
     onSelect(room.id);
     interactionStateRef.current = {
@@ -180,6 +194,7 @@ export const V2Room = ({
           {isMenuOpen ? (
             <V2RoomMenu
               roomId={room.id}
+              room={room}
               onRenamePreset={(roomId, name) => {
                 onRenamePreset(roomId, name);
                 setIsMenuOpen(false);
@@ -190,10 +205,28 @@ export const V2Room = ({
               }}
               onOpenSettings={(roomId) => {
                 onOpenSettings(roomId);
-                setIsMenuOpen(false);
               }}
               onOpenRoom={(roomId) => {
                 onOpenRoom(roomId);
+                setIsMenuOpen(false);
+              }}
+              onStartSetWidth={(roomId) => {
+                onStartSetWidth(roomId);
+                setIsMenuOpen(false);
+              }}
+              onStartSetHeight={(roomId) => {
+                onStartSetHeight(roomId);
+                setIsMenuOpen(false);
+              }}
+              onToggleSizeLock={(roomId, locked) => {
+                onToggleSizeLock(roomId, locked);
+              }}
+              onAddDoor={(roomId) => {
+                onAddDoor(roomId);
+                setIsMenuOpen(false);
+              }}
+              onAddWindow={(roomId) => {
+                onAddWindow(roomId);
                 setIsMenuOpen(false);
               }}
             />
@@ -228,7 +261,7 @@ export const V2Room = ({
         </Pressable>
       ) : null}
 
-      {selected ? (
+      {selected && !room.isSizeLocked ? (
         <Pressable
           {...(Platform.OS === 'web' ? {} : resizeResponder.panHandlers)}
           {...webResizeProps}

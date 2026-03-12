@@ -13,6 +13,7 @@ export const INITIAL_SCENE_V2: SceneStateV2 = {
       widthCm: ROOM_BASE_SIZE_CM,
       heightCm: ROOM_BASE_SIZE_CM,
       rotation: 0,
+      isSizeLocked: false,
     },
   ],
   selectedRoomId: null,
