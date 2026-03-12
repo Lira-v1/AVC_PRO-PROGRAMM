@@ -2,13 +2,17 @@ import React, { useMemo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { CompassViewMode } from '../model/orientation';
-import { EditorState, RoomSurfaceObject, WallSurface } from '../model/editorTypes';
+import { EditorState, WallSurface } from '../model/editorTypes';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
 import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/getSurfaceMetrics';
+import { RoomSurfaceObject } from '../model/surfaces';
+import { SceneObject } from '../model/sceneObjects';
+import { buildSurfaceId } from '../utils/buildSurfaceId';
+import { getSurfaceObjects } from '../utils/getSurfaceObjects';
 
 type Props = {
   rooms: RoomV2[];
@@ -26,6 +30,7 @@ type Props = {
   onBackToProject: () => void;
   onOpenWall: (wall: WallSurface) => void;
   onBackToRoom: () => void;
+  sceneObjects: SceneObject[];
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
   onAddDoor: (roomId: string) => void;
@@ -63,6 +68,7 @@ export const V2Canvas = ({
   onBackToProject,
   onOpenWall,
   onBackToRoom,
+  sceneObjects,
   onUpdateRoomSize,
   onToggleSizeLock,
   onAddDoor,
@@ -90,7 +96,23 @@ export const V2Canvas = ({
     return buildRoomSurfaceObjects(activeRoom);
   }, [activeRoom]);
 
-  const activeWallObject = roomSurfaces.find((surface) => surface.surface === editorState.activeWall) ?? null;
+  const activeWallObject = roomSurfaces.find((surface) => surface.direction === editorState.activeWall) ?? null;
+
+  const activeSurfaceId = useMemo(() => {
+    if (!editorState.activeRoomId || !editorState.activeWall) {
+      return null;
+    }
+
+    return buildSurfaceId(editorState.activeRoomId, editorState.activeWall);
+  }, [editorState.activeRoomId, editorState.activeWall]);
+
+  const wallObjects = useMemo(() => {
+    if (!editorState.activeRoomId || !activeSurfaceId) {
+      return [];
+    }
+
+    return getSurfaceObjects(sceneObjects, editorState.activeRoomId, activeSurfaceId);
+  }, [activeSurfaceId, editorState.activeRoomId, sceneObjects]);
 
   const handleCanvasMouseDown = (event: any) => {
     if (event?.target === event?.currentTarget) {
@@ -130,18 +152,18 @@ export const V2Canvas = ({
     <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
       <View style={styles.roomSceneLayout} pointerEvents="box-none">
         <View style={styles.rowWide}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'north') ?? null, true, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
         </View>
         <View style={styles.rowSplit}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'west') ?? null, true, onOpenWall)}
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'east') ?? null, true, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
         </View>
         <View style={styles.rowWide}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'south') ?? null, true, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
         </View>
         <View style={styles.rowSplit}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'floor') ?? null, false, onOpenWall)}
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.surface === 'ceiling') ?? null, false, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
         </View>
       </View>
     </View>
@@ -150,7 +172,7 @@ export const V2Canvas = ({
   const renderWallScene = () => (
     <View style={[styles.sceneLayer, styles.transformedScene, { transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale }] }]} pointerEvents="box-none">
       <View style={styles.wallSceneLayout} pointerEvents="box-none">
-        {renderSurfaceCard(activeWallObject, false, onOpenWall, true)}
+        {renderSurfaceCard(activeWallObject, false, onOpenWall, true, activeSurfaceId, wallObjects.length)}
       </View>
     </View>
   );
@@ -211,15 +233,20 @@ const renderSurfaceCard = (
   clickableWall: boolean,
   onOpenWall: (wall: WallSurface) => void,
   wallFocus = false,
+  surfaceId: string | null = null,
+  objectCount?: number,
 ) => {
   if (!surface) return <View style={styles.surfaceMissing} />;
 
-  const isWall = surface.surface === 'north' || surface.surface === 'east' || surface.surface === 'south' || surface.surface === 'west';
+  const isWall = surface.direction === 'north' || surface.direction === 'east' || surface.direction === 'south' || surface.direction === 'west';
   const content = (
     <View style={[styles.surfaceCard, wallFocus ? styles.surfaceCardWallFocus : null]}>
-      <Text style={styles.surfaceTitle}>{getSurfaceTitle(surface.surface)}</Text>
+      <Text style={styles.surfaceTitle}>{getSurfaceTitle(surface.direction)}</Text>
       <Text style={styles.surfaceMeta}>{surface.id}</Text>
       <Text style={styles.surfaceMeta}>roomId: {surface.roomId}</Text>
+      <Text style={styles.surfaceMeta}>surfaceId: {surfaceId ?? surface.id}</Text>
+      <Text style={styles.surfaceMeta}>direction: {surface.direction}</Text>
+      {typeof objectCount === 'number' ? <Text style={styles.surfaceMeta}>objects: {objectCount}</Text> : null}
       <Text style={styles.surfaceMeta}>
         {formatMm(surface.widthMm)} × {formatMm(surface.heightMm)}
       </Text>
@@ -228,7 +255,7 @@ const renderSurfaceCard = (
 
   if (clickableWall && isWall) {
     return (
-      <Pressable onPress={() => onOpenWall(surface.surface as WallSurface)} style={styles.surfacePressable}>
+      <Pressable onPress={() => onOpenWall(surface.direction as WallSurface)} style={styles.surfacePressable}>
         {content}
       </Pressable>
     );

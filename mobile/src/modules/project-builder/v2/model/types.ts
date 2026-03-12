@@ -1,3 +1,5 @@
+import { SceneObject } from './sceneObjects';
+
 export type RoomRotation = 0 | 90 | 180 | 270;
 
 export type RoomV2 = {
@@ -26,6 +28,7 @@ export type InputModeV2 =
 
 export type SceneStateV2 = {
   rooms: RoomV2[];
+  sceneObjects: SceneObject[];
   selectedRoomId: string | null;
   activeTool: 'select';
 };

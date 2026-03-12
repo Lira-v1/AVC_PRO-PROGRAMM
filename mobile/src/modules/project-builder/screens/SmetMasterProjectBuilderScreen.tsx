@@ -98,6 +98,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     rooms: v2Rooms,
     selectedRoomId: v2SelectedRoomId,
     orientation: v2Orientation,
+    sceneObjects: v2SceneObjects,
     selectRoom: selectV2Room,
     deselectRoom: deselectV2Room,
     moveRoom: moveV2Room,
@@ -381,6 +382,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onBackToProject={backToV2Project}
               onOpenWall={openV2Wall}
               onBackToRoom={backToV2Room}
+              sceneObjects={v2SceneObjects}
             />
           </View>
 

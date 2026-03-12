@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { INITIAL_SCENE_V2 } from '../model/defaults';
 import { EditorState, WallSurface } from '../model/editorTypes';
+import { buildSurfaceId } from '../utils/buildSurfaceId';
 import { ROOM_MIN_SIZE_CM } from '../model/metrics';
 import { INITIAL_PROJECT_ORIENTATION_V2, ProjectOrientationV2 } from '../model/orientation';
 
@@ -14,6 +15,22 @@ export const useProjectBuilderV2 = () => {
   });
 
   const selectedRoom = useMemo(() => scene.rooms.find((room) => room.id === scene.selectedRoomId) ?? null, [scene.rooms, scene.selectedRoomId]);
+
+  const activeRoom = useMemo(() => {
+    if (!editorState.activeRoomId) {
+      return null;
+    }
+
+    return scene.rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
+  }, [editorState.activeRoomId, scene.rooms]);
+
+  const activeSurfaceId = useMemo(() => {
+    if (!editorState.activeRoomId || !editorState.activeWall) {
+      return null;
+    }
+
+    return buildSurfaceId(editorState.activeRoomId, editorState.activeWall);
+  }, [editorState.activeRoomId, editorState.activeWall]);
 
   const MM_PER_CANVAS_UNIT = 10;
 
@@ -179,11 +196,14 @@ export const useProjectBuilderV2 = () => {
   return {
     scene,
     rooms: scene.rooms,
+    sceneObjects: scene.sceneObjects,
     selectedRoomId: scene.selectedRoomId,
     selectedRoom,
     activeTool: scene.activeTool,
     orientation,
     editorState,
+    activeRoom,
+    activeSurfaceId,
     setEditorState,
     selectRoom,
     deselectRoom,
