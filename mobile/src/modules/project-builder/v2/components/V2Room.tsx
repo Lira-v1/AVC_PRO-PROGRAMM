@@ -29,10 +29,31 @@ type Props = {
 type InteractionState =
   | { mode: 'idle' }
   | { mode: 'drag'; startMouseX: number; startMouseY: number; startCenterX: number; startCenterY: number }
-  | { mode: 'resize'; startMouseX: number; startMouseY: number; startWidth: number; startHeight: number };
+  | {
+      mode: 'resize';
+      startMouseX: number;
+      startMouseY: number;
+      startWidth: number;
+      startHeight: number;
+      startRotation: RoomV2['rotation'];
+    };
 
 const HANDLE_SIZE = 22;
 const RESIZE_HANDLE_SIZE = 20;
+
+const mapResizeDeltaByRotation = (rotation: RoomV2['rotation'], dx: number, dy: number) => {
+  switch (rotation) {
+    case 90:
+      return { widthDelta: dy, heightDelta: -dx };
+    case 180:
+      return { widthDelta: -dx, heightDelta: -dy };
+    case 270:
+      return { widthDelta: -dy, heightDelta: dx };
+    case 0:
+    default:
+      return { widthDelta: dx, heightDelta: dy };
+  }
+};
 
 export const V2Room = ({
   room,
@@ -55,7 +76,7 @@ export const V2Room = ({
 }: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
-  const resizeOriginRef = useRef({ width: room.width, height: room.height });
+  const resizeOriginRef = useRef({ width: room.width, height: room.height, rotation: room.rotation });
   const isResizingRef = useRef(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -97,7 +118,8 @@ export const V2Room = ({
       if (state.mode === 'resize') {
         const dx = event.clientX - state.startMouseX;
         const dy = event.clientY - state.startMouseY;
-        onResize(room.id, state.startWidth + dx, state.startHeight + dy);
+        const { widthDelta, heightDelta } = mapResizeDeltaByRotation(state.startRotation, dx, dy);
+        onResize(room.id, state.startWidth + widthDelta, state.startHeight + heightDelta);
       }
     };
 
@@ -146,12 +168,17 @@ export const V2Room = ({
     onPanResponderGrant: () => {
       if (room.isSizeLocked) return;
       isResizingRef.current = true;
-      resizeOriginRef.current = { width: room.width, height: room.height };
+      resizeOriginRef.current = { width: room.width, height: room.height, rotation: room.rotation };
       onSelect(room.id);
     },
     onPanResponderMove: (_, gesture) => {
       if (room.isSizeLocked) return;
-      onResize(room.id, resizeOriginRef.current.width + gesture.dx, resizeOriginRef.current.height + gesture.dy);
+      const { widthDelta, heightDelta } = mapResizeDeltaByRotation(
+        resizeOriginRef.current.rotation,
+        gesture.dx,
+        gesture.dy,
+      );
+      onResize(room.id, resizeOriginRef.current.width + widthDelta, resizeOriginRef.current.height + heightDelta);
     },
     onPanResponderRelease: () => {
       isResizingRef.current = false;
@@ -186,6 +213,7 @@ export const V2Room = ({
       startMouseY: event?.nativeEvent?.clientY ?? 0,
       startWidth: room.width,
       startHeight: room.height,
+      startRotation: room.rotation,
     };
   };
 
