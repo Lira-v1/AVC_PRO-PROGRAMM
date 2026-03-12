@@ -38,10 +38,14 @@ type MainStackParamList = {
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Estimate'>;
 
+const GRID_LINE_COUNT = 12;
+const GRID_LINES = Array.from({ length: GRID_LINE_COUNT }, (_, index) => index + 1);
+
 export const SmetMasterProjectBuilderScreen = ({}: Props) => {
-  const [mode, setMode] = useState<'home' | 'intake' | 'project'>('home');
+  const [mode, setMode] = useState<'home' | 'intake' | 'project' | 'project_v2'>('home');
   const [input, setInput] = useState('');
   const [isToolsOpen, setIsToolsOpen] = useState(false);
+  const [isProjectV2ToolsOpen, setIsProjectV2ToolsOpen] = useState(false);
   const {
     project,
     rooms,
@@ -229,9 +233,19 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onPress={() => {
                 setMode('project');
                 setIsToolsOpen(false);
+                setIsProjectV2ToolsOpen(false);
               }}
             >
               <Text style={[styles.primaryActionButtonText, styles.secondaryActionButtonText]}>Создать проект</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryActionButton, styles.secondaryActionButton]}
+              onPress={() => {
+                setMode('project_v2');
+                setIsProjectV2ToolsOpen(false);
+              }}
+            >
+              <Text style={[styles.primaryActionButtonText, styles.secondaryActionButtonText]}>Создать проект V2</Text>
             </Pressable>
           </View>
         </View>
@@ -242,6 +256,51 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
       return (
         <View style={styles.homeContainer}>
           <Text style={styles.homeTitle}>Подготовка данных для сметы</Text>
+        </View>
+      );
+    }
+
+    if (mode === 'project_v2') {
+      return (
+        <View style={styles.projectModeRoot}>
+          <View style={styles.projectTopPanel}>
+            <View>
+              <Text style={styles.headerTitle}>Project Builder V2</Text>
+              <Text style={styles.v2Subtitle}>Новый чистый визуальный редактор. Логика будет подключаться поэтапно.</Text>
+            </View>
+          </View>
+
+          <View style={styles.v2CanvasContainer}>
+            <View style={styles.v2CanvasGrid}>
+              <View style={styles.v2GridOverlay} pointerEvents="none">
+                {GRID_LINES.map((line) => (
+                  <View key={`h-${line}`} style={[styles.v2GridLineHorizontal, { top: `${(line * 100) / (GRID_LINE_COUNT + 1)}%` }]} />
+                ))}
+                {GRID_LINES.map((line) => (
+                  <View key={`v-${line}`} style={[styles.v2GridLineVertical, { left: `${(line * 100) / (GRID_LINE_COUNT + 1)}%` }]} />
+                ))}
+              </View>
+              <Text style={styles.v2CanvasTitle}>Canvas V2 — новый редактор</Text>
+              <Text style={styles.v2CanvasSubtitle}>Скоро здесь появится живая геометрия комнат и элементов</Text>
+            </View>
+          </View>
+
+          {isProjectV2ToolsOpen ? (
+            <View style={styles.toolsDrawer}>
+              <View style={styles.drawerHeader}>
+                <Text style={styles.toolsTitle}>Инструменты V2</Text>
+                <Pressable style={styles.drawerCloseButton} onPress={() => setIsProjectV2ToolsOpen(false)}>
+                  <Text style={styles.drawerCloseText}>Скрыть</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.toolsDescription}>Здесь будет новая система инструментов редактора</Text>
+            </View>
+          ) : (
+            <Pressable style={styles.gearButton} onPress={() => setIsProjectV2ToolsOpen(true)}>
+              <Text style={styles.gearIcon}>⚙️</Text>
+            </Pressable>
+          )}
         </View>
       );
     }
@@ -456,6 +515,44 @@ const styles = StyleSheet.create({
   drawerCloseText: { color: '#2A3756', fontSize: 12, fontWeight: '700' },
   toolsTitle: { color: '#1B2A45', fontSize: 15, fontWeight: '700' },
   toolsDescription: { color: '#61708D', fontSize: 13, lineHeight: 18 },
+  v2Subtitle: { color: '#61708D', fontSize: 13, lineHeight: 18, marginTop: 4, maxWidth: 480 },
+  v2CanvasContainer: {
+    flex: 1,
+    marginTop: 8,
+    marginBottom: 12,
+    marginRight: 64,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D5DEEF',
+    backgroundColor: '#F9FBFF',
+    overflow: 'hidden',
+  },
+  v2CanvasGrid: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: '#F9FBFF',
+  },
+  v2GridOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  v2GridLineHorizontal: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    borderTopWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+  },
+  v2GridLineVertical: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    borderLeftWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+  },
+  v2CanvasTitle: { color: '#1B2A45', fontSize: 20, fontWeight: '700', textAlign: 'center' },
+  v2CanvasSubtitle: { color: '#64748B', fontSize: 13, textAlign: 'center', marginTop: 8, maxWidth: 420 },
   drawerScroll: { flex: 1 },
   drawerScrollContent: { gap: 10, paddingBottom: 6 },
 });
