@@ -5,11 +5,12 @@ import { CANVAS_UNITS_PER_METER, GRID_CELLS_PER_METER } from '../model/metrics';
 type Props = {
   sceneWidth: number;
   sceneHeight: number;
+  cellSize?: number;
 };
 
-export const V2Grid = ({ sceneWidth, sceneHeight }: Props) => {
+export const V2Grid = ({ sceneWidth, sceneHeight, cellSize }: Props) => {
   const meterSizePx = CANVAS_UNITS_PER_METER;
-  const cellSizePx = meterSizePx / GRID_CELLS_PER_METER;
+  const cellSizePx = cellSize ?? meterSizePx / GRID_CELLS_PER_METER;
 
   const verticalLines = useMemo(() => {
     const lineCount = Math.ceil(sceneWidth / cellSizePx) + 1;

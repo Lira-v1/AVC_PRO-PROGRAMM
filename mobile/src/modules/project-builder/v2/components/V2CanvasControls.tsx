@@ -12,6 +12,7 @@ type Props = {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetZoom: () => void;
+  onCenterProject: () => void;
 };
 
 export const V2CanvasControls = ({
@@ -25,6 +26,7 @@ export const V2CanvasControls = ({
   onZoomIn,
   onZoomOut,
   onResetZoom,
+  onCenterProject,
 }: Props) => {
   return (
     <View style={styles.controlsRoot}>
@@ -59,6 +61,9 @@ export const V2CanvasControls = ({
 
         <Pressable style={styles.actionButton} onPress={onToggleGrid}>
           <Text style={styles.buttonText}>{showGrid ? 'Скрыть сетку' : 'Показать сетку'}</Text>
+        </Pressable>
+        <Pressable style={styles.actionButton} onPress={onCenterProject}>
+          <Text style={styles.buttonText}>Центр проекта</Text>
         </Pressable>
       </View>
     </View>

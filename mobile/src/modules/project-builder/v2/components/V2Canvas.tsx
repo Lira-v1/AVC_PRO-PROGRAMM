@@ -60,6 +60,7 @@ type Props = {
 
 const SCENE_WIDTH = 10000;
 const SCENE_HEIGHT = 10000;
+const GRID_CELL_SIZE = 10;
 
 
 const ROOM_SCENE_LAYOUT = {
@@ -390,6 +391,17 @@ export const V2Canvas = ({
     </View>
   );
 
+  const centerOnProject = () => {
+    const firstRoom = roomsRef.current[0] ?? null;
+    if (!firstRoom || !viewportSize.width || !viewportSize.height) {
+      return;
+    }
+
+    const bounds = getRoomVisualBounds(firstRoom);
+    const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
+    onSetCameraPosition(centered.panX, centered.panY);
+  };
+
   const renderSceneByLevel = () => {
     if (editorState.level === 'wall') {
       return renderWallScene();
@@ -421,6 +433,7 @@ export const V2Canvas = ({
         onZoomIn={onZoomIn}
         onZoomOut={onZoomOut}
         onResetZoom={onResetZoom}
+        onCenterProject={centerOnProject}
       />
 
       {showCompass ? <V2Compass viewMode={compassViewMode} onToggleOrientation={onToggleCompassOrientation} /> : null}
@@ -437,12 +450,12 @@ export const V2Canvas = ({
           {
             width: SCENE_WIDTH,
             height: SCENE_HEIGHT,
-            transform: [{ translateX: camera.panX }, { translateY: camera.panY }, { scale: camera.zoom }],
+            transform: [{ scale: camera.zoom }, { translateX: camera.panX }, { translateY: camera.panY }],
           },
         ]}
         pointerEvents="box-none"
       >
-        {showGrid ? <V2Grid sceneWidth={SCENE_WIDTH} sceneHeight={SCENE_HEIGHT} /> : null}
+        {showGrid ? <V2Grid sceneWidth={SCENE_WIDTH} sceneHeight={SCENE_HEIGHT} cellSize={GRID_CELL_SIZE} /> : null}
         {renderSceneByLevel()}
       </View>
 
