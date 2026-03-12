@@ -17,7 +17,6 @@ import { CanvasCameraState } from '../model/types';
 import { buildSurfaceId } from '../utils/buildSurfaceId';
 import { getSurfaceObjects } from '../utils/getSurfaceObjects';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
-import { centerBoundsInViewport } from '../utils/centerBoundsInViewport';
 import { getSurfaceSceneBounds, SurfaceSceneItem } from '../utils/getSurfaceSceneBounds';
 import { CANVAS_UNITS_PER_METER, GRID_CELLS_PER_METER } from '../model/metrics';
 
@@ -49,9 +48,11 @@ type Props = {
   camera: CanvasCameraState;
   onToggleGrid: () => void;
   onToggleFullscreen: () => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onResetZoom: () => void;
+  onZoomTo: (zoom: number, options: { anchorX: number; anchorY: number; baseCamera?: CanvasCameraState }) => void;
+  onCenterOnBounds: (bounds: { x: number; y: number; width: number; height: number }, viewportWidth: number, viewportHeight: number, zoom?: number) => void;
+  zoomStep: number;
+  minZoom: number;
+  maxZoom: number;
   onOpenTools: () => void;
   onToggleCompassOrientation: () => void;
   onSetCameraPosition: (panX: number, panY: number) => void;
@@ -69,6 +70,13 @@ const ROOM_SCENE_LAYOUT = {
   width: 420,
   gap: 12,
   rowHeight: 86,
+};
+
+
+const getTouchDistance = (first: { locationX: number; locationY: number }, second: { locationX: number; locationY: number }) => {
+  const dx = second.locationX - first.locationX;
+  const dy = second.locationY - first.locationY;
+  return Math.sqrt(dx * dx + dy * dy);
 };
 
 const WALL_SCENE_LAYOUT = {
@@ -106,9 +114,11 @@ export const V2Canvas = ({
   camera,
   onToggleGrid,
   onToggleFullscreen,
-  onZoomIn,
-  onZoomOut,
-  onResetZoom,
+  onZoomTo,
+  onCenterOnBounds,
+  zoomStep,
+  minZoom,
+  maxZoom,
   onOpenTools,
   onToggleCompassOrientation,
   onSetCameraPosition,
@@ -202,9 +212,59 @@ export const V2Canvas = ({
       ? `room:${editorState.activeRoomId ?? 'none'}`
       : `wall:${editorState.activeRoomId ?? 'none'}:${editorState.activeWall ?? 'none'}`;
 
-  const getCenteredCameraPosition = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
-    return centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, camera.zoom);
-  }, [camera.zoom, viewportSize.height, viewportSize.width]);
+  const touchStateRef = useRef({
+    pinchStartDistance: 0,
+    pinchStartCamera: null as CanvasCameraState | null,
+    pinchCenterX: 0,
+    pinchCenterY: 0,
+  });
+
+  const getFocusBounds = useCallback(() => {
+    if (editorState.level === 'project') {
+      if (!roomsRef.current.length) {
+        return null;
+      }
+
+      const boundsList = roomsRef.current.map(getRoomVisualBounds);
+      const minX = Math.min(...boundsList.map((item) => item.x));
+      const minY = Math.min(...boundsList.map((item) => item.y));
+      const maxX = Math.max(...boundsList.map((item) => item.x + item.width));
+      const maxY = Math.max(...boundsList.map((item) => item.y + item.height));
+
+      return {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      };
+    }
+
+    if (editorState.level === 'room') {
+      if (!roomSurfaceSceneItemsRef.current.length) {
+        return null;
+      }
+
+      return getSurfaceSceneBounds(roomSurfaceSceneItemsRef.current);
+    }
+
+    return activeWallSceneItemRef.current;
+  }, [editorState.level]);
+
+  const centerCurrentScene = useCallback(
+    (zoom = camera.zoom) => {
+      if (!viewportSize.width || !viewportSize.height) {
+        return;
+      }
+
+      const bounds = getFocusBounds();
+      if (!bounds) {
+        return;
+      }
+
+      onCenterOnBounds(bounds, viewportSize.width, viewportSize.height, zoom);
+    },
+    [camera.zoom, getFocusBounds, onCenterOnBounds, viewportSize.height, viewportSize.width],
+  );
 
   useEffect(() => {
     if (editorState.level !== 'wall') {
@@ -226,51 +286,9 @@ export const V2Canvas = ({
       return;
     }
 
-    if (editorState.level === 'project') {
-      const firstRoom = roomsRef.current[0] ?? null;
-      if (!firstRoom) {
-        return;
-      }
-
-      const bounds = getRoomVisualBounds(firstRoom);
-      const centered = getCenteredCameraPosition(bounds);
-      onSetCameraPosition(centered.panX, centered.panY);
-      setLastCenteredSceneKey(sceneCenterKey);
-      return;
-    }
-
-    if (editorState.level === 'room') {
-      if (!roomSurfaceSceneItemsRef.current.length) {
-        return;
-      }
-
-      const bounds = getSurfaceSceneBounds(roomSurfaceSceneItemsRef.current);
-      const centered = getCenteredCameraPosition(bounds);
-      onSetCameraPosition(centered.panX, centered.panY);
-      setLastCenteredSceneKey(sceneCenterKey);
-      return;
-    }
-
-    if (editorState.level === 'wall') {
-      const wallSceneItem = activeWallSceneItemRef.current;
-      if (!wallSceneItem) {
-        return;
-      }
-
-      const centered = getCenteredCameraPosition(wallSceneItem);
-      onSetCameraPosition(centered.panX, centered.panY);
-      setLastCenteredSceneKey(sceneCenterKey);
-    }
-  }, [
-    getCenteredCameraPosition,
-    editorState.level,
-    lastCenteredSceneKey,
-    onSetCameraPosition,
-    sceneCenterKey,
-    camera.zoom,
-    viewportSize.height,
-    viewportSize.width,
-  ]);
+    centerCurrentScene(camera.zoom);
+    setLastCenteredSceneKey(sceneCenterKey);
+  }, [camera.zoom, centerCurrentScene, lastCenteredSceneKey, sceneCenterKey, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -318,6 +336,88 @@ export const V2Canvas = ({
   };
 
   const webBackgroundPanProps = Platform.OS === 'web' ? ({ onMouseDown: startCanvasPan } as any) : {};
+
+  const handleWheelZoom = useCallback(
+    (event: any) => {
+      if (Platform.OS !== 'web') {
+        return;
+      }
+
+      const native = event?.nativeEvent;
+      const deltaY = native?.deltaY ?? 0;
+      if (!deltaY) {
+        return;
+      }
+
+      event.preventDefault?.();
+      const nextZoom = Number(Math.max(minZoom, Math.min(maxZoom, camera.zoom + (deltaY < 0 ? zoomStep : -zoomStep))).toFixed(2));
+      if (nextZoom === camera.zoom) {
+        return;
+      }
+
+      const anchorX = native?.locationX ?? viewportSize.width / 2;
+      const anchorY = native?.locationY ?? viewportSize.height / 2;
+      onZoomTo(nextZoom, { anchorX, anchorY });
+    },
+    [camera.zoom, maxZoom, minZoom, onZoomTo, viewportSize.height, viewportSize.width, zoomStep],
+  );
+
+  const handleTouchStart = useCallback((event: any) => {
+    const touches = event?.nativeEvent?.touches;
+    if (!touches || touches.length !== 2) {
+      return;
+    }
+
+    const first = touches[0];
+    const second = touches[1];
+    touchStateRef.current = {
+      pinchStartDistance: getTouchDistance(first, second),
+      pinchStartCamera: camera,
+      pinchCenterX: (first.locationX + second.locationX) / 2,
+      pinchCenterY: (first.locationY + second.locationY) / 2,
+    };
+  }, [camera]);
+
+  const handleTouchMove = useCallback(
+    (event: any) => {
+      const touches = event?.nativeEvent?.touches;
+      if (!touches || touches.length !== 2) {
+        return;
+      }
+
+      const pinchState = touchStateRef.current;
+      if (!pinchState.pinchStartDistance || !pinchState.pinchStartCamera) {
+        return;
+      }
+
+      const nextDistance = getTouchDistance(touches[0], touches[1]);
+      if (!nextDistance) {
+        return;
+      }
+
+      const ratio = nextDistance / pinchState.pinchStartDistance;
+      const nextZoom = pinchState.pinchStartCamera.zoom * ratio;
+
+      onZoomTo(nextZoom, {
+        anchorX: pinchState.pinchCenterX,
+        anchorY: pinchState.pinchCenterY,
+        baseCamera: pinchState.pinchStartCamera,
+      });
+    },
+    [onZoomTo],
+  );
+
+  const handleTouchEnd = useCallback((event: any) => {
+    const touches = event?.nativeEvent?.touches;
+    if (!touches || touches.length < 2) {
+      touchStateRef.current = {
+        pinchStartDistance: 0,
+        pinchStartCamera: null,
+        pinchCenterX: 0,
+        pinchCenterY: 0,
+      };
+    }
+  }, []);
 
   const renderProjectScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
@@ -408,57 +508,35 @@ export const V2Canvas = ({
   );
 
 
-  const handleZoomWithFirstRoomFocus = useCallback(
+  const handleZoomStep = useCallback(
     (direction: 'in' | 'out') => {
-      const firstRoom = roomsRef.current[0] ?? null;
-      if (!firstRoom || !viewportSize.width || !viewportSize.height) {
-        if (direction === 'in') {
-          onZoomIn();
-        } else {
-          onZoomOut();
-        }
-        return;
-      }
-
-      const zoomDelta = direction === 'in' ? 0.25 : -0.25;
-      const nextZoom = Number(Math.max(0.25, Math.min(3, camera.zoom + zoomDelta)).toFixed(2));
+      const zoomDelta = direction === 'in' ? zoomStep : -zoomStep;
+      const nextZoom = Number(Math.max(minZoom, Math.min(maxZoom, camera.zoom + zoomDelta)).toFixed(2));
 
       if (nextZoom === camera.zoom) {
         return;
       }
 
-      const bounds = getRoomVisualBounds(firstRoom);
-      const centered = centerBoundsInViewport(bounds, viewportSize.width, viewportSize.height, nextZoom);
-
-      if (direction === 'in') {
-        onZoomIn();
-      } else {
-        onZoomOut();
-      }
-
-      onSetCameraPosition(centered.panX, centered.panY);
+      centerCurrentScene(nextZoom);
     },
-    [camera.zoom, onSetCameraPosition, onZoomIn, onZoomOut, viewportSize.height, viewportSize.width],
+    [camera.zoom, centerCurrentScene, maxZoom, minZoom, zoomStep],
   );
 
   const handleZoomIn = useCallback(() => {
-    handleZoomWithFirstRoomFocus('in');
-  }, [handleZoomWithFirstRoomFocus]);
+    handleZoomStep('in');
+  }, [handleZoomStep]);
 
   const handleZoomOut = useCallback(() => {
-    handleZoomWithFirstRoomFocus('out');
-  }, [handleZoomWithFirstRoomFocus]);
+    handleZoomStep('out');
+  }, [handleZoomStep]);
 
-  const centerOnProject = () => {
-    const firstRoom = roomsRef.current[0] ?? null;
-    if (!firstRoom || !viewportSize.width || !viewportSize.height) {
-      return;
-    }
+  const handleResetZoom = useCallback(() => {
+    centerCurrentScene(1);
+  }, [centerCurrentScene]);
 
-    const bounds = getRoomVisualBounds(firstRoom);
-    const centered = getCenteredCameraPosition(bounds);
-    onSetCameraPosition(centered.panX, centered.panY);
-  };
+  const centerOnProject = useCallback(() => {
+    centerCurrentScene(camera.zoom);
+  }, [camera.zoom, centerCurrentScene]);
 
   const renderSceneByLevel = () => {
     if (editorState.level === 'wall') {
@@ -479,6 +557,10 @@ export const V2Canvas = ({
         const { width, height } = event.nativeEvent.layout;
         setViewportSize({ width, height });
       }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      {...(Platform.OS === 'web' ? ({ onWheel: handleWheelZoom } as any) : {})}
     >
       <V2CanvasControls
         backLabel={editorState.level === 'room' ? '← Проект' : editorState.level === 'wall' ? '← Комната' : null}
@@ -490,7 +572,7 @@ export const V2Canvas = ({
         onToggleGrid={onToggleGrid}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
-        onResetZoom={onResetZoom}
+        onResetZoom={handleResetZoom}
         onCenterProject={centerOnProject}
       />
 
