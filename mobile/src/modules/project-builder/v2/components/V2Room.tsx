@@ -60,7 +60,23 @@ export const V2Room = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const roomRotation = room.rotation ?? 0;
-  const corners = useMemo(() => getRoomCorners(room), [room]);
+  const corners = useMemo(() => {
+    const rawCorners = getRoomCorners(room);
+    const points = [rawCorners.topLeft, rawCorners.topRight, rawCorners.bottomRight, rawCorners.bottomLeft].sort(
+      (a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y),
+    );
+
+    const [firstTop, secondTop, firstBottom, secondBottom] = points;
+    const [topLeft, topRight] = [firstTop, secondTop].sort((a, b) => a.x - b.x);
+    const [bottomLeft, bottomRight] = [firstBottom, secondBottom].sort((a, b) => a.x - b.x);
+
+    return {
+      topLeft,
+      topRight,
+      bottomRight,
+      bottomLeft,
+    };
+  }, [room]);
   const visualBounds = useMemo(() => getRoomVisualBounds(room), [room]);
 
   const roomFrameLeft = room.centerX - room.width / 2;
