@@ -5,6 +5,7 @@ import { CompassViewMode } from '../model/orientation';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
+import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
 
 type Props = {
@@ -62,6 +63,8 @@ export const V2Canvas = ({
   onOpenTools,
   onToggleCompassOrientation,
 }: Props) => {
+  const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
+
   const handleCanvasMouseDown = (event: any) => {
     if (event?.target === event?.currentTarget) {
       onBackgroundPress();
@@ -117,6 +120,8 @@ export const V2Canvas = ({
             onOpenRoom={onOpenRoom}
           />
         ))}
+
+        {selectedRoom ? <V2RoomDimensions room={selectedRoom} /> : null}
       </View>
     </View>
   );

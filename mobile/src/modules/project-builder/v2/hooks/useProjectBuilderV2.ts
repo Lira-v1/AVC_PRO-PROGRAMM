@@ -35,11 +35,18 @@ export const useProjectBuilderV2 = () => {
       ...prev,
       rooms: prev.rooms.map((room) =>
         room.id === roomId
-          ? {
-              ...room,
-              width: Math.max(ROOM_MIN_SIZE_CM, width),
-              height: Math.max(ROOM_MIN_SIZE_CM, height),
-            }
+          ? (() => {
+              const nextWidth = Math.max(ROOM_MIN_SIZE_CM, width);
+              const nextHeight = Math.max(ROOM_MIN_SIZE_CM, height);
+
+              return {
+                ...room,
+                width: nextWidth,
+                height: nextHeight,
+                widthCm: nextWidth,
+                heightCm: nextHeight,
+              };
+            })()
           : room,
       ),
     }));
