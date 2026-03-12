@@ -5,6 +5,8 @@ export type RoomV2 = {
   y: number;
   width: number;
   height: number;
+  widthCm?: number;
+  heightCm?: number;
   projectZone?: 'north' | 'south' | 'west' | 'east' | 'center';
 };
 
