@@ -18,6 +18,9 @@ import { useProjectBuilder } from '../hooks/useProjectBuilder';
 import { WALL_DIRECTION_LABELS } from '../model/orientation';
 import { ROOM_VIEW_MODE_LABELS } from '../model/roomViewMode';
 import { ROOM_TYPES, ROOM_TYPE_LABELS } from '../types';
+import { V2Canvas } from '../v2/components/V2Canvas';
+import { V2DebugPanel } from '../v2/components/V2DebugPanel';
+import { useProjectBuilderV2 } from '../v2/hooks/useProjectBuilderV2';
 
 type MainStackParamList = {
   Home: undefined;
@@ -37,9 +40,6 @@ type MainStackParamList = {
 };
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Estimate'>;
-
-const GRID_LINE_COUNT = 12;
-const GRID_LINES = Array.from({ length: GRID_LINE_COUNT }, (_, index) => index + 1);
 
 export const SmetMasterProjectBuilderScreen = ({}: Props) => {
   const [mode, setMode] = useState<'home' | 'intake' | 'project' | 'project_v2'>('home');
@@ -91,6 +91,14 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     saveProject,
     prepareEstimateDraft,
   } = useProjectBuilder();
+  const {
+    rooms: v2Rooms,
+    selectedRoomId: v2SelectedRoomId,
+    selectedRoom: v2SelectedRoom,
+    selectRoom: selectV2Room,
+    moveRoom: moveV2Room,
+    resizeRoom: resizeV2Room,
+  } = useProjectBuilderV2();
 
   const handleDimensionChange = (field: 'width' | 'height', value: string) => {
     if (!selectedRoom) return;
@@ -271,18 +279,14 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
           </View>
 
           <View style={styles.v2CanvasContainer}>
-            <View style={styles.v2CanvasGrid}>
-              <View style={styles.v2GridOverlay} pointerEvents="none">
-                {GRID_LINES.map((line) => (
-                  <View key={`h-${line}`} style={[styles.v2GridLineHorizontal, { top: `${(line * 100) / (GRID_LINE_COUNT + 1)}%` }]} />
-                ))}
-                {GRID_LINES.map((line) => (
-                  <View key={`v-${line}`} style={[styles.v2GridLineVertical, { left: `${(line * 100) / (GRID_LINE_COUNT + 1)}%` }]} />
-                ))}
-              </View>
-              <Text style={styles.v2CanvasTitle}>Canvas V2 — новый редактор</Text>
-              <Text style={styles.v2CanvasSubtitle}>Скоро здесь появится живая геометрия комнат и элементов</Text>
-            </View>
+            <V2Canvas
+              rooms={v2Rooms}
+              selectedRoomId={v2SelectedRoomId}
+              onSelectRoom={selectV2Room}
+              onMoveRoom={moveV2Room}
+              onResizeRoom={resizeV2Room}
+            />
+            <V2DebugPanel room={v2SelectedRoom} />
           </View>
 
           {isProjectV2ToolsOpen ? (
@@ -521,38 +525,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 12,
     marginRight: 64,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#D5DEEF',
-    backgroundColor: '#F9FBFF',
-    overflow: 'hidden',
+    gap: 8,
   },
-  v2CanvasGrid: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    backgroundColor: '#F9FBFF',
-  },
-  v2GridOverlay: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  v2GridLineHorizontal: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    borderTopWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.25)',
-  },
-  v2GridLineVertical: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    borderLeftWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.25)',
-  },
-  v2CanvasTitle: { color: '#1B2A45', fontSize: 20, fontWeight: '700', textAlign: 'center' },
-  v2CanvasSubtitle: { color: '#64748B', fontSize: 13, textAlign: 'center', marginTop: 8, maxWidth: 420 },
   drawerScroll: { flex: 1 },
   drawerScrollContent: { gap: 10, paddingBottom: 6 },
 });
