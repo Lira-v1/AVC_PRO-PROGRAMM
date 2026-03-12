@@ -1,16 +1,35 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { RoomV2 } from '../model/types';
 
 type Props = {
   roomId: string;
+  room: RoomV2;
   onRenamePreset: (roomId: string, name: string) => void;
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
+  onStartSetWidth: (roomId: string) => void;
+  onStartSetHeight: (roomId: string) => void;
+  onToggleSizeLock: (roomId: string, locked: boolean) => void;
+  onAddDoor: (roomId: string) => void;
+  onAddWindow: (roomId: string) => void;
 };
 
-export const V2RoomMenu = ({ roomId, onRenamePreset, onCustomRename, onOpenSettings, onOpenRoom }: Props) => {
-  const [submenu, setSubmenu] = useState<'root' | 'name'>('root');
+export const V2RoomMenu = ({
+  roomId,
+  room,
+  onRenamePreset,
+  onCustomRename,
+  onOpenSettings,
+  onOpenRoom,
+  onStartSetWidth,
+  onStartSetHeight,
+  onToggleSizeLock,
+  onAddDoor,
+  onAddWindow,
+}: Props) => {
+  const [submenu, setSubmenu] = useState<'root' | 'name' | 'settings'>('root');
 
   useEffect(() => {
     setSubmenu('root');
@@ -18,7 +37,7 @@ export const V2RoomMenu = ({ roomId, onRenamePreset, onCustomRename, onOpenSetti
 
   const renderRootMenu = () => (
     <>
-      <Pressable style={styles.item} onPress={() => onOpenSettings(roomId)}>
+      <Pressable style={styles.item} onPress={() => { onOpenSettings(roomId); setSubmenu('settings'); }}>
         <Text style={styles.itemText}>Настроить комнату</Text>
       </Pressable>
 
@@ -64,10 +83,40 @@ export const V2RoomMenu = ({ roomId, onRenamePreset, onCustomRename, onOpenSetti
     </>
   );
 
+  const renderSettingsMenu = () => (
+    <>
+      <Pressable style={styles.item} onPress={() => setSubmenu('root')}>
+        <Text style={styles.itemText}>← Назад</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onStartSetWidth(roomId)}>
+        <Text style={styles.itemText}>Ширина: {((room.widthCm ?? room.width) / 100).toFixed(2)} м</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onStartSetHeight(roomId)}>
+        <Text style={styles.itemText}>Длина: {((room.heightCm ?? room.height) / 100).toFixed(2)} м</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onToggleSizeLock(roomId, !room.isSizeLocked)}>
+        <Text style={styles.itemText}>{room.isSizeLocked ? '☑ Зафиксировать размеры' : '☐ Зафиксировать размеры'}</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onAddDoor(roomId)}>
+        <Text style={styles.itemText}>Добавить дверь</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onAddWindow(roomId)}>
+        <Text style={styles.itemText}>Добавить окно</Text>
+      </Pressable>
+    </>
+  );
+
   return (
     <View style={styles.root}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator>
-        {submenu === 'root' ? renderRootMenu() : renderNameMenu()}
+        {submenu === 'root' ? renderRootMenu() : null}
+        {submenu === 'name' ? renderNameMenu() : null}
+        {submenu === 'settings' ? renderSettingsMenu() : null}
       </ScrollView>
     </View>
   );

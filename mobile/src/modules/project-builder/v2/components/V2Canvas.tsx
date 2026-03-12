@@ -20,6 +20,11 @@ type Props = {
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
+  onStartSetWidth: (roomId: string) => void;
+  onStartSetHeight: (roomId: string) => void;
+  onToggleSizeLock: (roomId: string, locked: boolean) => void;
+  onAddDoor: (roomId: string) => void;
+  onAddWindow: (roomId: string) => void;
   showGrid: boolean;
   showCompass: boolean;
   compassViewMode: CompassViewMode;
@@ -48,6 +53,11 @@ export const V2Canvas = ({
   onCustomRename,
   onOpenSettings,
   onOpenRoom,
+  onStartSetWidth,
+  onStartSetHeight,
+  onToggleSizeLock,
+  onAddDoor,
+  onAddWindow,
   showGrid,
   showCompass,
   compassViewMode,
@@ -118,6 +128,11 @@ export const V2Canvas = ({
             onCustomRename={onCustomRename}
             onOpenSettings={onOpenSettings}
             onOpenRoom={onOpenRoom}
+            onStartSetWidth={onStartSetWidth}
+            onStartSetHeight={onStartSetHeight}
+            onToggleSizeLock={onToggleSizeLock}
+            onAddDoor={onAddDoor}
+            onAddWindow={onAddWindow}
           />
         ))}
 

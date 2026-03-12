@@ -104,6 +104,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     resizeRoom: resizeV2Room,
     renameRoom: renameV2Room,
     rotateRoom: rotateV2Room,
+    updateRoomSize: updateV2RoomSize,
+    setRoomSizeLocked: setV2RoomSizeLocked,
     toggleCompassOrientation: toggleV2CompassOrientation,
   } = useProjectBuilderV2();
   const {
@@ -129,6 +131,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
   const canSend = useMemo(() => input.trim().length > 0, [input]);
 
   const isV2RenameMode = inputModeV2.type === 'rename-room';
+  const isV2WidthMode = inputModeV2.type === 'set-room-width';
+  const isV2HeightMode = inputModeV2.type === 'set-room-height';
 
   const handleV2RenamePreset = (roomId: string, name: string) => {
     renameV2Room(roomId, name);
@@ -150,9 +154,61 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     console.log('Открыть комнату placeholder:', roomId);
   };
 
+  const startSetV2RoomWidth = (roomId: string) => {
+    setInputModeV2({ type: 'set-room-width', roomId });
+    const room = v2Rooms.find((item) => item.id === roomId);
+    const roomWidthMeters = (room?.widthCm ?? room?.width ?? 0) / 100;
+    setInput(roomWidthMeters ? String(roomWidthMeters) : '');
+  };
+
+  const startSetV2RoomHeight = (roomId: string) => {
+    setInputModeV2({ type: 'set-room-height', roomId });
+    const room = v2Rooms.find((item) => item.id === roomId);
+    const roomHeightMeters = (room?.heightCm ?? room?.height ?? 0) / 100;
+    setInput(roomHeightMeters ? String(roomHeightMeters) : '');
+  };
+
+  const addDoorPlaceholder = (roomId: string) => {
+    console.log('Добавить дверь placeholder:', roomId);
+  };
+
+  const addWindowPlaceholder = (roomId: string) => {
+    console.log('Добавить окно placeholder:', roomId);
+  };
+
   const handleBottomInputSubmit = () => {
+    const trimmed = input.trim();
+
     if (mode === 'project_v2' && inputModeV2.type === 'rename-room') {
-      renameV2Room(inputModeV2.roomId, input);
+      if (trimmed) {
+        renameV2Room(inputModeV2.roomId, trimmed);
+      }
+      setInputModeV2({ type: 'default' });
+      setInput('');
+      return;
+    }
+
+    if (mode === 'project_v2' && inputModeV2.type === 'set-room-width') {
+      const parsed = Number(trimmed.replace(',', '.'));
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        const room = v2Rooms.find((item) => item.id === inputModeV2.roomId);
+        if (room) {
+          updateV2RoomSize(inputModeV2.roomId, parsed * 100, room.heightCm ?? room.height);
+        }
+      }
+      setInputModeV2({ type: 'default' });
+      setInput('');
+      return;
+    }
+
+    if (mode === 'project_v2' && inputModeV2.type === 'set-room-height') {
+      const parsed = Number(trimmed.replace(',', '.'));
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        const room = v2Rooms.find((item) => item.id === inputModeV2.roomId);
+        if (room) {
+          updateV2RoomSize(inputModeV2.roomId, room.widthCm ?? room.width, parsed * 100);
+        }
+      }
       setInputModeV2({ type: 'default' });
       setInput('');
       return;
@@ -342,6 +398,11 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onCustomRename={handleV2CustomRename}
               onOpenSettings={handleV2OpenRoomSettings}
               onOpenRoom={openRoomPlaceholder}
+              onStartSetWidth={startSetV2RoomWidth}
+              onStartSetHeight={startSetV2RoomHeight}
+              onToggleSizeLock={setV2RoomSizeLocked}
+              onAddDoor={addDoorPlaceholder}
+              onAddWindow={addWindowPlaceholder}
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
               compassViewMode={v2Orientation.viewMode}
@@ -489,7 +550,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
             style={styles.chatInput}
             value={input}
             onChangeText={setInput}
-            placeholder={mode === 'project_v2' && isV2RenameMode ? 'Введите название комнаты...' : 'Напишите сообщение...'}
+            keyboardType={mode === 'project_v2' && (isV2WidthMode || isV2HeightMode) ? 'decimal-pad' : 'default'}
+            placeholder={mode === 'project_v2' && isV2RenameMode ? 'Введите название комнаты...' : mode === 'project_v2' && (isV2WidthMode || isV2HeightMode) ? 'Введите размер в метрах...' : 'Напишите сообщение...'}
             placeholderTextColor="#8A94A6"
             multiline
           />
