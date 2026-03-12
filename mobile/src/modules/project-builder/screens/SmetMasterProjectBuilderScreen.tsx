@@ -145,6 +145,10 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     selectV2Room(roomId);
   };
 
+  const openRoomPlaceholder = (roomId: string) => {
+    console.log('Открыть комнату placeholder:', roomId);
+  };
+
   const handleBottomInputSubmit = () => {
     if (mode === 'project_v2' && inputModeV2.type === 'rename-room') {
       renameV2Room(inputModeV2.roomId, input);
@@ -334,7 +338,8 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               }}
               onRenamePreset={handleV2RenamePreset}
               onCustomRename={handleV2CustomRename}
-              onOpenRoomSettings={handleV2OpenRoomSettings}
+              onOpenSettings={handleV2OpenRoomSettings}
+              onOpenRoom={openRoomPlaceholder}
               showGrid={canvasUiState.showGrid}
               showCompass={canvasUiState.showCompass}
               compassViewMode={v2Orientation.viewMode}

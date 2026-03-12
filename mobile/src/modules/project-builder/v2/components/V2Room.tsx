@@ -12,6 +12,7 @@ type Props = {
   onRenamePreset: (roomId: string, name: string) => void;
   onCustomRename: (roomId: string) => void;
   onOpenSettings: (roomId: string) => void;
+  onOpenRoom: (roomId: string) => void;
 };
 
 type InteractionState =
@@ -28,6 +29,7 @@ export const V2Room = ({
   onRenamePreset,
   onCustomRename,
   onOpenSettings,
+  onOpenRoom,
 }: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ x: room.x, y: room.y });
@@ -170,6 +172,10 @@ export const V2Room = ({
             }}
             onOpenSettings={(roomId) => {
               onOpenSettings(roomId);
+              setIsMenuOpen(false);
+            }}
+            onOpenRoom={(roomId) => {
+              onOpenRoom(roomId);
               setIsMenuOpen(false);
             }}
           />
