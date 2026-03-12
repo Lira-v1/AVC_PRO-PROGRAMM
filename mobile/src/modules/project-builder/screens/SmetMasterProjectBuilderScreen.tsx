@@ -157,7 +157,6 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     setV2EditorState((prev) => ({
       ...prev,
       viewMode: 'room',
-      activeSurface: null,
     }));
   };
 
