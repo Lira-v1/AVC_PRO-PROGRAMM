@@ -1,6 +1,7 @@
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CompassOrientation, RoomV2 } from '../model/types';
+import { RoomV2 } from '../model/types';
+import { CompassViewMode } from '../model/orientation';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
 import { V2Grid } from './V2Grid';
@@ -15,7 +16,7 @@ type Props = {
   onBackgroundPress: () => void;
   showGrid: boolean;
   showCompass: boolean;
-  compassOrientation: CompassOrientation;
+  compassViewMode: CompassViewMode;
   isFullscreen: boolean;
   scale: number;
   offsetX: number;
@@ -38,7 +39,7 @@ export const V2Canvas = ({
   onBackgroundPress,
   showGrid,
   showCompass,
-  compassOrientation,
+  compassViewMode,
   isFullscreen,
   scale,
   offsetX,
@@ -75,7 +76,7 @@ export const V2Canvas = ({
         onResetZoom={onResetZoom}
       />
       {showCompass ? (
-        <V2Compass orientation={compassOrientation} onToggleOrientation={onToggleCompassOrientation} />
+        <V2Compass viewMode={compassViewMode} onToggleOrientation={onToggleCompassOrientation} />
       ) : null}
 
       <Pressable style={styles.gearButton} onPress={onOpenTools}>

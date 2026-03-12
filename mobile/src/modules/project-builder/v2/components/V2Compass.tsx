@@ -1,15 +1,15 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { CompassOrientation } from '../model/types';
+import { CompassViewMode } from '../model/orientation';
 
 type Props = {
-  orientation: CompassOrientation;
+  viewMode: CompassViewMode;
   onToggleOrientation: () => void;
 };
 
-export const V2Compass = ({ orientation, onToggleOrientation }: Props) => {
+export const V2Compass = ({ viewMode, onToggleOrientation }: Props) => {
   const labels =
-    orientation === 'default'
+    viewMode === 'default'
       ? { top: 'N', bottom: 'S', left: 'W', right: 'E' }
       : { top: 'S', bottom: 'N', left: 'E', right: 'W' };
 
