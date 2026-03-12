@@ -53,7 +53,9 @@ export const V2RoomDimensions = ({ room, unit }: Props) => {
       >
         <View style={styles.leftEndCapTop} />
         <View style={styles.leftEndCapBottom} />
-        <Text numberOfLines={1} style={[styles.leftDimensionText, { whiteSpace: 'nowrap' } as any]}>{formatDimensionByUnit(leftValue, unit)}</Text>
+        <View style={styles.leftDimensionTextWrapper}>
+          <Text style={[styles.leftDimensionText, { whiteSpace: 'nowrap' } as any]}>{formatDimensionByUnit(leftValue, unit)}</Text>
+        </View>
       </View>
     </View>
   );
@@ -98,6 +100,7 @@ const styles = StyleSheet.create({
     backgroundColor: DIMENSION_STROKE,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'visible',
   },
   leftEndCapTop: {
     position: 'absolute',
@@ -115,14 +118,23 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: DIMENSION_STROKE,
   },
-  leftDimensionText: {
+  leftDimensionTextWrapper: {
     position: 'absolute',
-    left: -18,
+    left: -34,
+    top: '50%',
+    minWidth: 86,
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ translateY: -12 }, { rotate: '-90deg' }],
+  },
+  leftDimensionText: {
     backgroundColor: 'rgba(255,255,255,0.92)',
     paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
     fontSize: 11,
     fontWeight: '700',
     color: '#0F172A',
-    transform: [{ rotate: '-90deg' }],
+    opacity: 1,
   },
 });
