@@ -9,6 +9,7 @@ import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
 import { V2WallObject } from './V2WallObject';
+import { RoomMenuDebugState, V2DeveloperPanel } from './V2DeveloperPanel';
 import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/getSurfaceMetrics';
 import { RoomSizeUnit } from '../utils/roomUnits';
 import { RoomSurfaceObject } from '../model/surfaces';
@@ -155,6 +156,24 @@ export const V2Canvas = ({
 
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
+  const [isDeveloperPanelOpen, setIsDeveloperPanelOpen] = useState(false);
+  const [roomMenuDebugState, setRoomMenuDebugState] = useState<RoomMenuDebugState | null>(null);
+
+  const activeObject = useMemo(() => {
+    if (!wallObjects.length) {
+      return null;
+    }
+
+    return wallObjects.find((item) => item.id === selectedWallId) ?? wallObjects[0];
+  }, [selectedWallId, wallObjects]);
+
+  const selectedRoom = useMemo(() => {
+    if (!selectedRoomId) {
+      return null;
+    }
+
+    return rooms.find((room) => room.id === selectedRoomId) ?? null;
+  }, [rooms, selectedRoomId]);
   const [lastCenteredSceneKey, setLastCenteredSceneKey] = useState<string | null>(null);
   const [wallScenePosition, setWallScenePosition] = useState({
     x: WALL_SCENE_LAYOUT.defaultX,
@@ -350,6 +369,14 @@ export const V2Canvas = ({
   }, [activeWallObject, editorState.level]);
 
   useEffect(() => {
+    if (editorState.level !== 'project') {
+      return;
+    }
+
+    setRoomMenuDebugState(null);
+  }, [editorState.level]);
+
+  useEffect(() => {
     if (!viewportSize.width || !viewportSize.height) {
       return;
     }
@@ -520,6 +547,7 @@ export const V2Canvas = ({
           onAddWindow={onAddWindow}
           dimensionUnit={dimensionUnit}
           onDimensionUnitChange={onDimensionUnitChange}
+          onRoomMenuDebugChange={setRoomMenuDebugState}
           camera={camera}
           viewportWidth={viewportSize.width}
           viewportHeight={viewportSize.height}
@@ -686,6 +714,26 @@ export const V2Canvas = ({
         {renderSceneByLevel()}
       </View>
 
+
+      <Pressable style={styles.devButton} onPress={() => setIsDeveloperPanelOpen((prev) => !prev)}>
+        <Text style={styles.devButtonText}>DEV</Text>
+      </Pressable>
+
+      <V2DeveloperPanel
+        visible={isDeveloperPanelOpen}
+        editorState={editorState}
+        selectedRoomId={selectedRoomId}
+        activeRoom={activeRoom}
+        selectedRoom={selectedRoom}
+        roomSurfaces={roomSurfaces}
+        activeObject={activeObject}
+        showGrid={showGrid}
+        showCompass={showCompass}
+        compassViewMode={compassViewMode}
+        camera={camera}
+        roomMenuState={roomMenuDebugState}
+      />
+
       <Pressable style={styles.gearButton} onPress={onOpenTools}>
         <Text style={styles.gearIcon}>⚙️</Text>
       </Pressable>
@@ -746,6 +794,26 @@ const styles = StyleSheet.create({
   },
   transformedScene: {
     zIndex: 5,
+  },
+  devButton: {
+    position: 'absolute',
+    right: 60,
+    top: 12,
+    minWidth: 44,
+    height: 40,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15,23,42,0.92)',
+    borderWidth: 1,
+    borderColor: '#334155',
+    zIndex: 20,
+  },
+  devButtonText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700',
   },
   gearButton: {
     position: 'absolute',

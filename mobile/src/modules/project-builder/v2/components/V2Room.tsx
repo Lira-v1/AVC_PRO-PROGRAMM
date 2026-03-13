@@ -5,6 +5,7 @@ import { RoomSizeUnit } from '../utils/roomUnits';
 import { getRoomCorners } from '../utils/getRoomCorners';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { V2RoomMenu } from './V2RoomMenu';
+import { RoomMenuDebugState } from './V2DeveloperPanel';
 import { viewportSceneBase, worldToScenePoint, worldToSceneRect } from '../utils/sceneCoordinates';
 
 type Props = {
@@ -26,6 +27,7 @@ type Props = {
   onAddWindow: (roomId: string) => void;
   dimensionUnit: RoomSizeUnit;
   onDimensionUnitChange: (unit: RoomSizeUnit) => void;
+  onRoomMenuDebugChange?: (state: RoomMenuDebugState | null) => void;
   camera: CanvasCameraState;
   viewportWidth: number;
   viewportHeight: number;
@@ -117,6 +119,7 @@ export const V2Room = ({
   onAddWindow,
   dimensionUnit,
   onDimensionUnitChange,
+  onRoomMenuDebugChange,
   camera,
   viewportWidth,
   viewportHeight,
@@ -290,6 +293,20 @@ export const V2Room = ({
     maxHeight: menuPlacement.maxHeight / Math.max(camera.zoom, 0.0001),
   };
 
+  useEffect(() => {
+    if (!selected || !isMenuOpen) {
+      onRoomMenuDebugChange?.(null);
+      return;
+    }
+
+    onRoomMenuDebugChange?.({
+      activeMenu: 'root',
+      activeSubmenu: 'root',
+      isMenuOpen: true,
+      anchorPosition: { x: anchorViewportX, y: anchorViewportY },
+    });
+  }, [anchorViewportX, anchorViewportY, isMenuOpen, onRoomMenuDebugChange, selected]);
+
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
   const shouldShowRoomControls = selected && interactive && !isMenuOpen;
@@ -371,6 +388,14 @@ export const V2Room = ({
               onDimensionUnitChange={onDimensionUnitChange}
               menuStyle={menuStyle}
               scrollStyle={{ maxHeight: menuStyle.maxHeight }}
+              onDebugStateChange={({ submenu, isMenuOpen: isSubmenuOpen }) => {
+                onRoomMenuDebugChange?.({
+                  activeMenu: submenu,
+                  activeSubmenu: submenu,
+                  isMenuOpen: isSubmenuOpen,
+                  anchorPosition: { x: anchorViewportX, y: anchorViewportY },
+                });
+              }}
             />
           ) : null}
 
