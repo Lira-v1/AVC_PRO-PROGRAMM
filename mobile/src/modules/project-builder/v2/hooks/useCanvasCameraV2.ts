@@ -3,7 +3,7 @@ import { CanvasCameraState } from '../model/types';
 import { SceneBounds, centerBoundsInViewport } from '../utils/centerBoundsInViewport';
 
 const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 3;
+const MAX_ZOOM = 6;
 const ZOOM_STEP = 0.25;
 
 type ZoomAnchorOptions = {
