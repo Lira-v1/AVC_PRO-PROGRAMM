@@ -154,6 +154,10 @@ export const V2Room = ({
 
   const roomFrameLeft = room.centerX - room.width / 2;
   const roomFrameTop = room.centerY - room.height / 2;
+  const resizeAnchorScene = useMemo(
+    () => worldToScenePoint({ x: room.centerX + room.width / 2, y: room.centerY + room.height / 2 }),
+    [room.centerX, room.centerY, room.height, room.width],
+  );
   const roomFrameScene = useMemo(
     () => worldToScenePoint({ x: roomFrameLeft, y: roomFrameTop }),
     [roomFrameLeft, roomFrameTop],
@@ -442,8 +446,8 @@ export const V2Room = ({
           style={[
             styles.resizeHandle,
             {
-              left: worldToScenePoint(corners.bottomRight).x - visualBoundsScene.x - RESIZE_HANDLE_SIZE / 2,
-              top: worldToScenePoint(corners.bottomRight).y - visualBoundsScene.y - RESIZE_HANDLE_SIZE / 2,
+              left: resizeAnchorScene.x - visualBoundsScene.x - RESIZE_HANDLE_SIZE / 2,
+              top: resizeAnchorScene.y - visualBoundsScene.y - RESIZE_HANDLE_SIZE / 2,
             },
           ]}
           hitSlop={12}
