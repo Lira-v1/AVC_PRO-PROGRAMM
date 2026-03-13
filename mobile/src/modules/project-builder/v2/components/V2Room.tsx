@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { RoomV2 } from '../model/types';
+import { PanResponder, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { CanvasCameraState, RoomV2 } from '../model/types';
 import { RoomSizeUnit } from '../utils/roomUnits';
 import { getRoomCorners } from '../utils/getRoomCorners';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
@@ -25,6 +25,9 @@ type Props = {
   onAddWindow: (roomId: string) => void;
   dimensionUnit: RoomSizeUnit;
   onDimensionUnitChange: (unit: RoomSizeUnit) => void;
+  camera: CanvasCameraState;
+  viewportWidth: number;
+  viewportHeight: number;
 };
 
 type InteractionState =
@@ -41,6 +44,14 @@ type InteractionState =
 
 const HANDLE_SIZE = 22;
 const RESIZE_HANDLE_SIZE = 20;
+const MENU_MAX_WIDTH = 260;
+const MENU_PREFERRED_MAX_HEIGHT = 320;
+const MENU_SAFE_MARGIN = 12;
+const MENU_VERTICAL_OFFSET = 28;
+const SCENE_WIDTH = 10000;
+const SCENE_HEIGHT = 10000;
+const SCENE_CENTER_X = SCENE_WIDTH / 2;
+const SCENE_CENTER_Y = SCENE_HEIGHT / 2;
 
 const mapResizeDeltaByRotation = (rotation: RoomV2['rotation'], dx: number, dy: number) => {
   switch (rotation) {
@@ -54,6 +65,52 @@ const mapResizeDeltaByRotation = (rotation: RoomV2['rotation'], dx: number, dy: 
     default:
       return { widthDelta: dx, heightDelta: dy };
   }
+};
+
+
+const clamp = (value: number, min: number, max: number) => {
+  if (min > max) return min;
+  return Math.min(Math.max(value, min), max);
+};
+
+const getRoomMenuPlacement = ({
+  anchorX,
+  anchorY,
+  menuWidth,
+  menuMaxHeight,
+  viewportWidth,
+  viewportHeight,
+  margin,
+}: {
+  anchorX: number;
+  anchorY: number;
+  menuWidth: number;
+  menuMaxHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  margin: number;
+}) => {
+  const minLeft = margin;
+  const maxLeft = viewportWidth - menuWidth - margin;
+  const left = clamp(anchorX, minLeft, maxLeft);
+
+  const spaceBelow = viewportHeight - anchorY - margin;
+  const spaceAbove = anchorY - margin;
+  const effectiveMaxHeight = Math.max(120, Math.min(menuMaxHeight, viewportHeight - margin * 2));
+
+  let top = anchorY;
+  if (spaceBelow < effectiveMaxHeight && spaceAbove >= spaceBelow) {
+    top = anchorY - effectiveMaxHeight;
+  }
+
+  const minTop = margin;
+  const maxTop = viewportHeight - effectiveMaxHeight - margin;
+
+  return {
+    left,
+    top: clamp(top, minTop, maxTop),
+    maxHeight: effectiveMaxHeight,
+  };
 };
 
 export const V2Room = ({
@@ -75,12 +132,16 @@ export const V2Room = ({
   onAddWindow,
   dimensionUnit,
   onDimensionUnitChange,
+  camera,
+  viewportWidth,
+  viewportHeight,
 }: Props) => {
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
   const resizeOriginRef = useRef({ width: room.width, height: room.height, rotation: room.rotation });
   const isResizingRef = useRef(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const windowDimensions = useWindowDimensions();
 
   const roomRotation = room.rotation ?? 0;
   const corners = useMemo(() => {
@@ -219,6 +280,30 @@ export const V2Room = ({
     };
   };
 
+
+  const viewportBaseLeft = viewportWidth / 2 - SCENE_CENTER_X;
+  const viewportBaseTop = viewportHeight / 2 - SCENE_CENTER_Y;
+  const rootViewportLeft = viewportBaseLeft + (visualBounds.x + camera.panX) * camera.zoom;
+  const rootViewportTop = viewportBaseTop + (visualBounds.y + camera.panY) * camera.zoom;
+
+  const anchorViewportX = viewportBaseLeft + (corners.topRight.x + camera.panX) * camera.zoom - MENU_MAX_WIDTH / 2;
+  const anchorViewportY = viewportBaseTop + (corners.topRight.y + camera.panY) * camera.zoom + MENU_VERTICAL_OFFSET;
+  const menuPlacement = getRoomMenuPlacement({
+    anchorX: anchorViewportX,
+    anchorY: anchorViewportY,
+    menuWidth: MENU_MAX_WIDTH,
+    menuMaxHeight: MENU_PREFERRED_MAX_HEIGHT,
+    viewportWidth: Math.max(0, viewportWidth || windowDimensions.width || 0),
+    viewportHeight: Math.max(0, viewportHeight || windowDimensions.height || 0),
+    margin: MENU_SAFE_MARGIN,
+  });
+
+  const menuStyle = {
+    left: (menuPlacement.left - rootViewportLeft) / Math.max(camera.zoom, 0.0001),
+    top: (menuPlacement.top - rootViewportTop) / Math.max(camera.zoom, 0.0001),
+    maxHeight: menuPlacement.maxHeight / Math.max(camera.zoom, 0.0001),
+  };
+
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
   const shouldShowRoomControls = selected && interactive && !isMenuOpen;
@@ -298,6 +383,8 @@ export const V2Room = ({
               }}
               dimensionUnit={dimensionUnit}
               onDimensionUnitChange={onDimensionUnitChange}
+              menuStyle={menuStyle}
+              scrollStyle={{ maxHeight: menuStyle.maxHeight }}
             />
           ) : null}
 

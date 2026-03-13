@@ -451,6 +451,9 @@ export const V2Canvas = ({
           onAddWindow={onAddWindow}
           dimensionUnit={dimensionUnit}
           onDimensionUnitChange={onDimensionUnitChange}
+          camera={camera}
+          viewportWidth={viewportSize.width}
+          viewportHeight={viewportSize.height}
         />
       ))}
     </View>
