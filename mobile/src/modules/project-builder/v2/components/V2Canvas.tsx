@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
-import { CompassViewMode } from '../model/orientation';
+import { CompassViewMode, getSurfaceLayoutSlotsByCompass } from '../model/orientation';
 import { EditorState, WallSurface } from '../model/editorTypes';
 import { V2CanvasControls } from './V2CanvasControls';
 import { V2Compass } from './V2Compass';
@@ -450,6 +450,8 @@ export const V2Canvas = ({
     </View>
   );
 
+  const wallLayoutSlots = getSurfaceLayoutSlotsByCompass(compassViewMode);
+
   const renderRoomScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
       <View
@@ -473,25 +475,25 @@ export const V2Canvas = ({
         <View style={styles.rowTriple}>
           <View style={styles.surfaceSlotSpacer} />
           <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.top) ?? null, true, onOpenWall)}
           </View>
           <View style={styles.surfaceSlotSpacer} />
         </View>
         <View style={styles.rowTriple}>
           <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.left) ?? null, true, onOpenWall)}
           </View>
           <View style={styles.surfaceSlot}>
             {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
           </View>
           <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.right) ?? null, true, onOpenWall)}
           </View>
         </View>
         <View style={styles.rowTriple}>
           <View style={styles.surfaceSlotSpacer} />
           <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.bottom) ?? null, true, onOpenWall)}
           </View>
           <View style={styles.surfaceSlotSpacer} />
         </View>
