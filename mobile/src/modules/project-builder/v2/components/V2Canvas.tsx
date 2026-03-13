@@ -67,10 +67,12 @@ const SCENE_CENTER_Y = SCENE_HEIGHT / 2;
 const GRID_CELL_SIZE = CANVAS_UNITS_PER_METER / GRID_CELLS_PER_METER;
 
 const ROOM_SCENE_LAYOUT = {
-  width: 420,
+  cardWidth: 204,
+  cardHeight: 86,
   gap: 12,
-  rowHeight: 86,
 };
+const ROOM_SCENE_WIDTH = ROOM_SCENE_LAYOUT.cardWidth * 3 + ROOM_SCENE_LAYOUT.gap * 2;
+const ROOM_SCENE_HEIGHT = ROOM_SCENE_LAYOUT.cardHeight * 4 + ROOM_SCENE_LAYOUT.gap * 3;
 
 
 const getTouchDistance = (first: { locationX: number; locationY: number }, second: { locationX: number; locationY: number }) => {
@@ -167,20 +169,21 @@ export const V2Canvas = ({
   });
 
   const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
-    const rowSplitWidth = (ROOM_SCENE_LAYOUT.width - ROOM_SCENE_LAYOUT.gap) / 2;
+    const cardWidth = ROOM_SCENE_LAYOUT.cardWidth;
+    const cardHeight = ROOM_SCENE_LAYOUT.cardHeight;
     const gap = ROOM_SCENE_LAYOUT.gap;
-    const rowHeight = ROOM_SCENE_LAYOUT.rowHeight;
-    const layoutHeight = rowHeight * 4 + gap * 3;
-    const left = SCENE_CENTER_X - ROOM_SCENE_LAYOUT.width / 2;
-    const top = SCENE_CENTER_Y - layoutHeight / 2;
+    const left = SCENE_CENTER_X - ROOM_SCENE_WIDTH / 2;
+    const top = SCENE_CENTER_Y - ROOM_SCENE_HEIGHT / 2;
+    const middleColumnX = left + cardWidth + gap;
+    const rightColumnX = middleColumnX + cardWidth + gap;
 
     return [
-      { x: left, y: top, width: ROOM_SCENE_LAYOUT.width, height: rowHeight },
-      { x: left, y: top + rowHeight + gap, width: rowSplitWidth, height: rowHeight },
-      { x: left + rowSplitWidth + gap, y: top + rowHeight + gap, width: rowSplitWidth, height: rowHeight },
-      { x: left, y: top + (rowHeight + gap) * 2, width: ROOM_SCENE_LAYOUT.width, height: rowHeight },
-      { x: left, y: top + (rowHeight + gap) * 3, width: rowSplitWidth, height: rowHeight },
-      { x: left + rowSplitWidth + gap, y: top + (rowHeight + gap) * 3, width: rowSplitWidth, height: rowHeight },
+      { x: middleColumnX, y: top + cardHeight + gap, width: cardWidth, height: cardHeight },
+      { x: left, y: top + (cardHeight + gap) * 2, width: cardWidth, height: cardHeight },
+      { x: rightColumnX, y: top + (cardHeight + gap) * 2, width: cardWidth, height: cardHeight },
+      { x: middleColumnX, y: top + (cardHeight + gap) * 3, width: cardWidth, height: cardHeight },
+      { x: middleColumnX, y: top + (cardHeight + gap) * 2, width: cardWidth, height: cardHeight },
+      { x: middleColumnX, y: top, width: cardWidth, height: cardHeight },
     ];
   }, []);
 
@@ -453,26 +456,44 @@ export const V2Canvas = ({
         style={[
           styles.roomSceneLayout,
           {
-            left: roomSurfaceSceneItems[0]?.x ?? SCENE_CENTER_X - ROOM_SCENE_LAYOUT.width / 2,
-            top: roomSurfaceSceneItems[0]?.y ?? SCENE_CENTER_Y,
-            width: ROOM_SCENE_LAYOUT.width,
+            left: SCENE_CENTER_X - ROOM_SCENE_WIDTH / 2,
+            top: SCENE_CENTER_Y - ROOM_SCENE_HEIGHT / 2,
+            width: ROOM_SCENE_WIDTH,
           },
         ]}
         pointerEvents="box-none"
       >
-        <View style={styles.rowWide}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
+        <View style={styles.rowTriple}>
+          <View style={styles.surfaceSlotSpacer} />
+          <View style={styles.surfaceSlot}>
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
+          </View>
+          <View style={styles.surfaceSlotSpacer} />
         </View>
-        <View style={styles.rowSplit}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
+        <View style={styles.rowTriple}>
+          <View style={styles.surfaceSlotSpacer} />
+          <View style={styles.surfaceSlot}>
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
+          </View>
+          <View style={styles.surfaceSlotSpacer} />
         </View>
-        <View style={styles.rowWide}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
+        <View style={styles.rowTriple}>
+          <View style={styles.surfaceSlot}>
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
+          </View>
+          <View style={styles.surfaceSlot}>
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
+          </View>
+          <View style={styles.surfaceSlot}>
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
+          </View>
         </View>
-        <View style={styles.rowSplit}>
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
-          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
+        <View style={styles.rowTriple}>
+          <View style={styles.surfaceSlotSpacer} />
+          <View style={styles.surfaceSlot}>
+            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
+          </View>
+          <View style={styles.surfaceSlotSpacer} />
         </View>
       </View>
     </View>
@@ -682,12 +703,15 @@ const styles = StyleSheet.create({
     bottom: 16,
     width: 260,
   },
-  rowWide: {
-    flexDirection: 'row',
-  },
-  rowSplit: {
+  rowTriple: {
     flexDirection: 'row',
     gap: 12,
+  },
+  surfaceSlot: {
+    width: ROOM_SCENE_LAYOUT.cardWidth,
+  },
+  surfaceSlotSpacer: {
+    width: ROOM_SCENE_LAYOUT.cardWidth,
   },
   surfacePressable: {
     flex: 1,
