@@ -268,15 +268,16 @@ export const V2Room = ({
 
 
   const viewportBase = viewportSceneBase(viewportWidth, viewportHeight);
-  const rootViewportLeft = viewportBase.left + (visualBoundsScene.x + camera.panX) * camera.zoom;
-  const rootViewportTop = viewportBase.top + (visualBoundsScene.y + camera.panY) * camera.zoom;
+  const safeZoom = Math.max(camera.zoom, 0.0001);
+  const rootViewportLeft = viewportBase.left + camera.panX + visualBoundsScene.x * safeZoom;
+  const rootViewportTop = viewportBase.top + camera.panY + visualBoundsScene.y * safeZoom;
 
   const settingsAnchorSceneX = visualBoundsScene.x + visualBoundsScene.width + SETTINGS_HANDLE_RIGHT_OFFSET + SETTINGS_HANDLE_SIZE / 2;
   const settingsAnchorSceneY = visualBoundsScene.y + SETTINGS_HANDLE_TOP_OFFSET + SETTINGS_HANDLE_SIZE / 2;
   const anchorViewportX =
-    viewportBase.left + (settingsAnchorSceneX + camera.panX) * camera.zoom + MENU_HORIZONTAL_OFFSET;
+    viewportBase.left + camera.panX + settingsAnchorSceneX * safeZoom + MENU_HORIZONTAL_OFFSET;
   const anchorViewportY =
-    viewportBase.top + (settingsAnchorSceneY + camera.panY) * camera.zoom + MENU_VERTICAL_OFFSET;
+    viewportBase.top + camera.panY + settingsAnchorSceneY * safeZoom + MENU_VERTICAL_OFFSET;
   const menuPlacement = getRoomMenuPlacement({
     anchorX: anchorViewportX,
     anchorY: anchorViewportY,
@@ -288,9 +289,9 @@ export const V2Room = ({
   });
 
   const menuStyle = {
-    left: (menuPlacement.left - rootViewportLeft) / Math.max(camera.zoom, 0.0001),
-    top: (menuPlacement.top - rootViewportTop) / Math.max(camera.zoom, 0.0001),
-    maxHeight: menuPlacement.maxHeight / Math.max(camera.zoom, 0.0001),
+    left: (menuPlacement.left - rootViewportLeft) / safeZoom,
+    top: (menuPlacement.top - rootViewportTop) / safeZoom,
+    maxHeight: menuPlacement.maxHeight / safeZoom,
   };
 
   useEffect(() => {
