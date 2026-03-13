@@ -129,8 +129,9 @@ export const V2Room = ({
   const windowDimensions = useWindowDimensions();
 
   const roomRotation = room.rotation ?? 0;
+  const roomCorners = useMemo(() => getRoomCorners(room), [room]);
   const corners = useMemo(() => {
-    const rawCorners = getRoomCorners(room);
+    const rawCorners = roomCorners;
     const points = [rawCorners.topLeft, rawCorners.topRight, rawCorners.bottomRight, rawCorners.bottomLeft].sort(
       (a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y),
     );
@@ -145,15 +146,15 @@ export const V2Room = ({
       bottomRight,
       bottomLeft,
     };
-  }, [room]);
+  }, [roomCorners]);
   const visualBounds = useMemo(() => getRoomVisualBounds(room), [room]);
   const visualBoundsScene = useMemo(() => worldToSceneRect(visualBounds), [visualBounds]);
 
   const roomFrameLeft = room.centerX - room.width / 2;
   const roomFrameTop = room.centerY - room.height / 2;
   const resizeAnchorScene = useMemo(
-    () => worldToScenePoint({ x: room.centerX + room.width / 2, y: room.centerY + room.height / 2 }),
-    [room.centerX, room.centerY, room.height, room.width],
+    () => worldToScenePoint(roomCorners.bottomRight),
+    [roomCorners.bottomRight],
   );
   const roomFrameScene = useMemo(
     () => worldToScenePoint({ x: roomFrameLeft, y: roomFrameTop }),
