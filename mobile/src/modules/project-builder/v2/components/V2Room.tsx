@@ -44,11 +44,11 @@ const RESIZE_HANDLE_SIZE = 20;
 const mapResizeDeltaByRotation = (rotation: RoomV2['rotation'], dx: number, dy: number) => {
   switch (rotation) {
     case 90:
-      return { widthDelta: dy, heightDelta: -dx };
+      return { widthDelta: -dx, heightDelta: dy };
     case 180:
       return { widthDelta: -dx, heightDelta: -dy };
     case 270:
-      return { widthDelta: -dy, heightDelta: dx };
+      return { widthDelta: dx, heightDelta: -dy };
     case 0:
     default:
       return { widthDelta: dx, heightDelta: dy };
