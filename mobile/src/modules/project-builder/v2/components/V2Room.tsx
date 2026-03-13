@@ -49,6 +49,10 @@ const RESIZE_HANDLE_SIZE = 20;
 const MENU_MAX_WIDTH = 260;
 const MENU_PREFERRED_MAX_HEIGHT = 320;
 const MENU_SAFE_MARGIN = 12;
+const SETTINGS_BUTTON_WIDTH = 22;
+const SETTINGS_BUTTON_HEIGHT = 22;
+const SETTINGS_BUTTON_RIGHT_OFFSET = -10;
+const SETTINGS_BUTTON_TOP_OFFSET = -10;
 
 const clamp = (value: number, min: number, max: number) => {
   if (min > max) return min;
@@ -123,7 +127,6 @@ export const V2Room = ({
   const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
   const isResizingRef = useRef(false);
-  const settingsHandleRef = useRef<View | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [menuAnchorPosition, setMenuAnchorPosition] = useState<{ x: number; y: number } | null>(null);
   const windowDimensions = useWindowDimensions();
@@ -277,8 +280,18 @@ export const V2Room = ({
 
   const fallbackViewportWidth = Math.max(0, viewportWidth || windowDimensions.width || 0);
   const fallbackViewportHeight = Math.max(0, viewportHeight || windowDimensions.height || 0);
-  const anchorViewportX = menuAnchorPosition?.x ?? fallbackViewportWidth / 2;
-  const anchorViewportY = menuAnchorPosition?.y ?? fallbackViewportHeight / 2;
+  const settingsButtonAnchorViewport = useMemo(() => {
+    const buttonCenterSceneX = visualBoundsScene.x + visualBoundsScene.width + SETTINGS_BUTTON_RIGHT_OFFSET + SETTINGS_BUTTON_WIDTH / 2;
+    const buttonBottomSceneY = visualBoundsScene.y + SETTINGS_BUTTON_TOP_OFFSET + SETTINGS_BUTTON_HEIGHT;
+
+    return {
+      x: viewportBase.left + camera.panX + buttonCenterSceneX * safeZoom,
+      y: viewportBase.top + camera.panY + buttonBottomSceneY * safeZoom,
+    };
+  }, [camera.panX, camera.panY, safeZoom, viewportBase.left, viewportBase.top, visualBoundsScene.width, visualBoundsScene.x, visualBoundsScene.y]);
+
+  const anchorViewportX = menuAnchorPosition?.x ?? settingsButtonAnchorViewport.x;
+  const anchorViewportY = menuAnchorPosition?.y ?? settingsButtonAnchorViewport.y;
   const menuPlacement = getRoomMenuPlacement({
     anchorX: anchorViewportX,
     anchorY: anchorViewportY,
@@ -309,26 +322,14 @@ export const V2Room = ({
     });
   }, [anchorViewportX, anchorViewportY, isMenuOpen, onRoomMenuDebugChange, selected]);
 
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    setMenuAnchorPosition(settingsButtonAnchorViewport);
+  }, [isMenuOpen, settingsButtonAnchorViewport]);
+
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
   const shouldShowRoomControls = selected && interactive && !isMenuOpen;
-
-  const captureSettingsAnchor = (event?: any) => {
-    const pageX = event?.nativeEvent?.pageX;
-    const pageY = event?.nativeEvent?.pageY;
-
-    if (typeof pageX === 'number' && typeof pageY === 'number') {
-      setMenuAnchorPosition({ x: pageX, y: pageY });
-      return;
-    }
-
-    settingsHandleRef.current?.measureInWindow((x, y, width, height) => {
-      setMenuAnchorPosition({
-        x: x + width / 2,
-        y: y + height,
-      });
-    });
-  };
 
   return (
     <View
@@ -420,7 +421,6 @@ export const V2Room = ({
 
           {shouldShowRoomControls ? (
             <Pressable
-              ref={settingsHandleRef}
               style={styles.settingsHandle}
               onPress={(event) => {
                 event?.stopPropagation?.();
@@ -431,7 +431,7 @@ export const V2Room = ({
                   return;
                 }
 
-                captureSettingsAnchor(event);
+                setMenuAnchorPosition(settingsButtonAnchorViewport);
                 setIsMenuOpen(true);
               }}
               hitSlop={8}
