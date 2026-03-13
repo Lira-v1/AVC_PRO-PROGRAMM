@@ -219,6 +219,7 @@ export const V2Room = ({
 
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
+  const shouldShowRoomControls = selected && interactive && !isMenuOpen;
 
   return (
     <View
@@ -295,7 +296,7 @@ export const V2Room = ({
             />
           ) : null}
 
-          {selected && interactive ? (
+          {shouldShowRoomControls ? (
             <Pressable
               style={[
                 styles.settingsHandle,
@@ -317,7 +318,7 @@ export const V2Room = ({
         </View>
       </Pressable>
 
-      {selected && interactive ? (
+      {shouldShowRoomControls ? (
         <Pressable
           style={[
             styles.rotateHandle,
@@ -336,7 +337,7 @@ export const V2Room = ({
         </Pressable>
       ) : null}
 
-      {selected && interactive && !room.isSizeLocked ? (
+      {shouldShowRoomControls && !room.isSizeLocked ? (
         <Pressable
           {...(Platform.OS === 'web' || !interactive ? {} : resizeResponder.panHandlers)}
           {...webResizeProps}
