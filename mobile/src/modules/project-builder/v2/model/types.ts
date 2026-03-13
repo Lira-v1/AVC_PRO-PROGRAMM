@@ -35,12 +35,6 @@ export type SceneStateV2 = {
   activeTool: 'select';
 };
 
-export type CanvasViewportStateV2 = {
-  scale: number;
-  offsetX: number;
-  offsetY: number;
-};
-
 export type CanvasCameraState = {
   zoom: number;
   panX: number;

@@ -566,12 +566,6 @@ export const V2Canvas = ({
             const nextWorld = sceneToWorldPoint({ x, y });
             setWallScenePosition(nextWorld);
           }}
-          onRotatePlaceholder={(wallId) => {
-            console.log('rotate wall placeholder', wallId);
-          }}
-          onOpenSettingsPlaceholder={(wallId) => {
-            console.log('wall settings placeholder', wallId);
-          }}
         />
       ) : null}
 
