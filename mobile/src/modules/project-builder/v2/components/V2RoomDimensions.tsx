@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
   },
   leftDimensionTextWrapper: {
     position: 'absolute',
-    right: DIMENSION_TEXT_OFFSET,
+    left: -DIMENSION_TEXT_OFFSET,
     top: '50%',
     minWidth: 86,
     alignItems: 'center',
