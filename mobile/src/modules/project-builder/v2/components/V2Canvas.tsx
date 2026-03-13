@@ -530,13 +530,9 @@ export const V2Canvas = ({
     handleZoomStep('out');
   }, [handleZoomStep]);
 
-  const handleResetZoom = useCallback(() => {
+  const handleResetToProjectDefault = useCallback(() => {
     centerCurrentScene(1);
   }, [centerCurrentScene]);
-
-  const centerOnProject = useCallback(() => {
-    centerCurrentScene(camera.zoom);
-  }, [camera.zoom, centerCurrentScene]);
 
   const renderSceneByLevel = () => {
     if (editorState.level === 'wall') {
@@ -572,8 +568,7 @@ export const V2Canvas = ({
         onToggleGrid={onToggleGrid}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
-        onResetZoom={handleResetZoom}
-        onCenterProject={centerOnProject}
+        onResetToProjectDefault={handleResetToProjectDefault}
       />
 
       {showCompass ? <V2Compass viewMode={compassViewMode} onToggleOrientation={onToggleCompassOrientation} /> : null}
