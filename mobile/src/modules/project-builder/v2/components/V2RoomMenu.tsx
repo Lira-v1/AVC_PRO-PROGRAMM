@@ -19,6 +19,7 @@ type Props = {
   onDimensionUnitChange: (unit: RoomSizeUnit) => void;
   menuStyle?: StyleProp<ViewStyle>;
   scrollStyle?: StyleProp<ViewStyle>;
+  onDebugStateChange?: (state: { submenu: 'root' | 'name' | 'settings'; isMenuOpen: boolean }) => void;
 };
 
 export const V2RoomMenu = ({
@@ -37,6 +38,7 @@ export const V2RoomMenu = ({
   onDimensionUnitChange,
   menuStyle,
   scrollStyle,
+  onDebugStateChange,
 }: Props) => {
   const [submenu, setSubmenu] = useState<'root' | 'name' | 'settings'>('root');
   const [editingField, setEditingField] = useState<'name' | 'width' | 'height' | null>(null);
@@ -47,6 +49,10 @@ export const V2RoomMenu = ({
     setEditingField(null);
     setDraftValue('');
   }, [roomId]);
+
+  useEffect(() => {
+    onDebugStateChange?.({ submenu, isMenuOpen: true });
+  }, [onDebugStateChange, submenu]);
 
   const startEditField = (field: 'name' | 'width' | 'height') => {
     setEditingField(field);
