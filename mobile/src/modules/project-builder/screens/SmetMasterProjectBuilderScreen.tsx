@@ -369,9 +369,11 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               camera={v2Camera.camera}
               onToggleGrid={toggleV2Grid}
               onToggleFullscreen={toggleV2Fullscreen}
-              onZoomIn={v2Camera.zoomIn}
-              onZoomOut={v2Camera.zoomOut}
-              onResetZoom={v2Camera.resetCamera}
+              onZoomTo={v2Camera.zoomTo}
+              onCenterOnBounds={v2Camera.centerOnBounds}
+              zoomStep={v2Camera.zoomStep}
+              minZoom={v2Camera.minZoom}
+              maxZoom={v2Camera.maxZoom}
               onOpenTools={() => setIsProjectV2ToolsOpen(true)}
               onToggleCompassOrientation={toggleV2CompassOrientation}
               onSetCameraPosition={v2Camera.setCameraPosition}
