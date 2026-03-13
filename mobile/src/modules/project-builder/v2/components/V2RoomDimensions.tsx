@@ -120,12 +120,12 @@ const styles = StyleSheet.create({
   },
   leftDimensionTextWrapper: {
     position: 'absolute',
-    left: -34,
+    left: -40,
     top: '50%',
     minWidth: 86,
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ translateY: -12 }, { rotate: '-90deg' }],
+    transform: [{ translateY: -20 }, { rotate: '-90deg' }],
   },
   leftDimensionText: {
     backgroundColor: 'rgba(255,255,255,0.92)',
