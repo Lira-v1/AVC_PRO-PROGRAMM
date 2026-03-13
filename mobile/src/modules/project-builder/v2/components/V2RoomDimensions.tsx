@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { RoomV2 } from '../model/types';
+import { worldToSceneRect } from '../utils/sceneCoordinates';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { formatDimensionByUnit, RoomSizeUnit } from '../utils/roomUnits';
 
@@ -23,7 +24,7 @@ export const V2RoomDimensions = ({ room, unit }: Props) => {
   const topValue = isVerticalOrientation ? heightValue : widthValue;
   const leftValue = isVerticalOrientation ? widthValue : heightValue;
 
-  const bounds = getRoomVisualBounds(room);
+  const bounds = worldToSceneRect(getRoomVisualBounds(room));
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
