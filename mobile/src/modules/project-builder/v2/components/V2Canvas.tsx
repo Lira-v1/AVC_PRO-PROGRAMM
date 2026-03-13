@@ -622,6 +622,27 @@ export const V2Canvas = ({
         return;
       }
 
+      if (editorState.level === 'project') {
+        const focusRoom = roomsRef.current.find((room) => room.id === selectedRoomId) ?? roomsRef.current[0];
+        if (!focusRoom) {
+          return;
+        }
+
+        const viewportCenterX = viewportSize.width / 2;
+        const viewportCenterY = viewportSize.height / 2;
+
+        onZoomTo(nextZoom, {
+          anchorX: viewportCenterX,
+          anchorY: viewportCenterY,
+        });
+
+        onSetCameraPosition(
+          +(-focusRoom.centerX * nextZoom).toFixed(2),
+          +(-focusRoom.centerY * nextZoom).toFixed(2),
+        );
+        return;
+      }
+
       const roomCenterX = bounds.x + bounds.width / 2;
       const roomCenterY = bounds.y + bounds.height / 2;
       const viewportCenterX = viewportSize.width / 2;
@@ -637,7 +658,19 @@ export const V2Canvas = ({
         },
       });
     },
-    [camera.zoom, getFocusBounds, maxZoom, minZoom, onZoomTo, viewportSize.height, viewportSize.width, zoomStep],
+    [
+      camera.zoom,
+      editorState.level,
+      getFocusBounds,
+      maxZoom,
+      minZoom,
+      onSetCameraPosition,
+      onZoomTo,
+      selectedRoomId,
+      viewportSize.height,
+      viewportSize.width,
+      zoomStep,
+    ],
   );
 
   const handleZoomIn = useCallback(() => {
