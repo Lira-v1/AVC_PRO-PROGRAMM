@@ -229,18 +229,8 @@ export const V2Canvas = ({
         return null;
       }
 
-      const boundsList = roomsRef.current.map(getRoomVisualBounds);
-      const minX = Math.min(...boundsList.map((item) => item.x));
-      const minY = Math.min(...boundsList.map((item) => item.y));
-      const maxX = Math.max(...boundsList.map((item) => item.x + item.width));
-      const maxY = Math.max(...boundsList.map((item) => item.y + item.height));
-
-      return {
-        x: minX,
-        y: minY,
-        width: maxX - minX,
-        height: maxY - minY,
-      };
+      const focusRoom = roomsRef.current.find((room) => room.id === selectedRoomId) ?? roomsRef.current[0];
+      return getRoomVisualBounds(focusRoom);
     }
 
     if (editorState.level === 'room') {
@@ -252,7 +242,7 @@ export const V2Canvas = ({
     }
 
     return activeWallSceneItemRef.current;
-  }, [editorState.level]);
+  }, [editorState.level, selectedRoomId]);
 
   const centerCurrentScene = useCallback(
     (zoom = camera.zoom) => {
