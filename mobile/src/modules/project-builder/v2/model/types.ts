@@ -6,6 +6,7 @@ export type RoomV2 = {
   id: string;
   name: string;
 
+  // World coordinates: (0, 0) is scene center; +X right, +Y down.
   centerX: number;
   centerY: number;
 

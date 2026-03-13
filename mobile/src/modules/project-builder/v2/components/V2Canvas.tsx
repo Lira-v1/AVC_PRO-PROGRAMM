@@ -19,6 +19,7 @@ import { getSurfaceObjects } from '../utils/getSurfaceObjects';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { getSurfaceSceneBounds, SurfaceSceneItem } from '../utils/getSurfaceSceneBounds';
 import { CANVAS_UNITS_PER_METER, GRID_CELLS_PER_METER } from '../model/metrics';
+import { SCENE_HEIGHT, SCENE_WIDTH, sceneToWorldPoint, viewportSceneBase, worldRectToSceneStyle, worldToSceneRect } from '../utils/sceneCoordinates';
 
 type Props = {
   rooms: RoomV2[];
@@ -61,10 +62,6 @@ type Props = {
   onDimensionUnitChange: (unit: RoomSizeUnit) => void;
 };
 
-const SCENE_WIDTH = 10000;
-const SCENE_HEIGHT = 10000;
-const SCENE_CENTER_X = SCENE_WIDTH / 2;
-const SCENE_CENTER_Y = SCENE_HEIGHT / 2;
 const GRID_CELL_SIZE = CANVAS_UNITS_PER_METER / GRID_CELLS_PER_METER;
 
 const ROOM_SCENE_LAYOUT = {
@@ -83,8 +80,8 @@ const getTouchDistance = (first: { locationX: number; locationY: number }, secon
 };
 
 const WALL_SCENE_LAYOUT = {
-  defaultX: SCENE_CENTER_X - 520 / 2,
-  defaultY: SCENE_CENTER_Y - 220 / 2,
+  defaultX: -520 / 2,
+  defaultY: -220 / 2,
   width: 520,
   activeWallHeight: 220,
 };
@@ -247,19 +244,7 @@ export const V2Canvas = ({
       },
     } as Record<RoomSurfaceObject['direction'], { x: number; y: number; width: number; height: number }>;
 
-    const sceneItems = Object.values(layoutByDirection);
-    const bounds = getSurfaceSceneBounds(sceneItems);
-    const shiftX = SCENE_CENTER_X - (bounds.x + bounds.width / 2);
-    const shiftY = SCENE_CENTER_Y - (bounds.y + bounds.height / 2);
-
-    return {
-      north: { ...layoutByDirection.north, x: layoutByDirection.north.x + shiftX, y: layoutByDirection.north.y + shiftY },
-      south: { ...layoutByDirection.south, x: layoutByDirection.south.x + shiftX, y: layoutByDirection.south.y + shiftY },
-      west: { ...layoutByDirection.west, x: layoutByDirection.west.x + shiftX, y: layoutByDirection.west.y + shiftY },
-      east: { ...layoutByDirection.east, x: layoutByDirection.east.x + shiftX, y: layoutByDirection.east.y + shiftY },
-      floor: { ...layoutByDirection.floor, x: layoutByDirection.floor.x + shiftX, y: layoutByDirection.floor.y + shiftY },
-      ceiling: { ...layoutByDirection.ceiling, x: layoutByDirection.ceiling.x + shiftX, y: layoutByDirection.ceiling.y + shiftY },
-    };
+    return layoutByDirection;
   }, [roomSurfaces, wallLayoutSlots.bottom, wallLayoutSlots.left, wallLayoutSlots.right, wallLayoutSlots.top]);
 
   const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
@@ -285,6 +270,14 @@ export const V2Canvas = ({
       height: WALL_SCENE_LAYOUT.activeWallHeight,
     };
   }, [activeWallObject, wallScenePosition.x, wallScenePosition.y]);
+
+  const activeWallRectScene = useMemo(() => {
+    if (!activeWallSceneItem) {
+      return null;
+    }
+
+    return worldToSceneRect(activeWallSceneItem);
+  }, [activeWallSceneItem]);
 
   const roomsRef = useRef(rooms);
   const roomSurfaceSceneItemsRef = useRef(roomSurfaceSceneItems);
@@ -537,22 +530,22 @@ export const V2Canvas = ({
 
   const renderRoomScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
-      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.north.x, top: roomSurfaceLayout.north.y, width: roomSurfaceLayout.north.width, height: roomSurfaceLayout.north.height }]}> 
+      <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.north)]}>
         {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
       </View>
-      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.floor.x, top: roomSurfaceLayout.floor.y, width: roomSurfaceLayout.floor.width, height: roomSurfaceLayout.floor.height }]}>
+      <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.floor)]}>
         {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
       </View>
-      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.south.x, top: roomSurfaceLayout.south.y, width: roomSurfaceLayout.south.width, height: roomSurfaceLayout.south.height }]}> 
+      <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.south)]}>
         {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
       </View>
-      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.west.x, top: roomSurfaceLayout.west.y, width: roomSurfaceLayout.west.width, height: roomSurfaceLayout.west.height }]}> 
+      <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.west)]}>
         {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
       </View>
-      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.east.x, top: roomSurfaceLayout.east.y, width: roomSurfaceLayout.east.width, height: roomSurfaceLayout.east.height }]}> 
+      <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.east)]}>
         {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
       </View>
-      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.ceiling.x, top: roomSurfaceLayout.ceiling.y, width: roomSurfaceLayout.ceiling.width, height: roomSurfaceLayout.ceiling.height }]}> 
+      <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.ceiling)]}>
         {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
       </View>
     </View>
@@ -564,13 +557,14 @@ export const V2Canvas = ({
         <V2WallObject
           wall={activeWallObject}
           selected={selectedWallId === activeWallObject.id}
-          x={wallScenePosition.x}
-          y={wallScenePosition.y}
+          x={activeWallRectScene?.x ?? 0}
+          y={activeWallRectScene?.y ?? 0}
           width={WALL_SCENE_LAYOUT.width}
           height={WALL_SCENE_LAYOUT.activeWallHeight}
           onSelect={setSelectedWallId}
           onMove={(_, x, y) => {
-            setWallScenePosition({ x, y });
+            const nextWorld = sceneToWorldPoint({ x, y });
+            setWallScenePosition(nextWorld);
           }}
           onRotatePlaceholder={(wallId) => {
             console.log('rotate wall placeholder', wallId);
@@ -687,8 +681,8 @@ export const V2Canvas = ({
           {
             width: SCENE_WIDTH,
             height: SCENE_HEIGHT,
-            left: viewportSize.width / 2 - SCENE_CENTER_X,
-            top: viewportSize.height / 2 - SCENE_CENTER_Y,
+            left: viewportSceneBase(viewportSize.width, viewportSize.height).left,
+            top: viewportSceneBase(viewportSize.width, viewportSize.height).top,
             transform: [{ translateX: camera.panX }, { translateY: camera.panY }, { scale: camera.zoom }],
           },
         ]}

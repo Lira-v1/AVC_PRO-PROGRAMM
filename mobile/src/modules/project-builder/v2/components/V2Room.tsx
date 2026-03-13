@@ -5,6 +5,7 @@ import { RoomSizeUnit } from '../utils/roomUnits';
 import { getRoomCorners } from '../utils/getRoomCorners';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
 import { V2RoomMenu } from './V2RoomMenu';
+import { viewportSceneBase, worldToScenePoint, worldToSceneRect } from '../utils/sceneCoordinates';
 
 type Props = {
   room: RoomV2;
@@ -51,10 +52,6 @@ const MENU_HORIZONTAL_OFFSET = 12;
 const SETTINGS_HANDLE_SIZE = 22;
 const SETTINGS_HANDLE_RIGHT_OFFSET = -10;
 const SETTINGS_HANDLE_TOP_OFFSET = -10;
-const SCENE_WIDTH = 10000;
-const SCENE_HEIGHT = 10000;
-const SCENE_CENTER_X = SCENE_WIDTH / 2;
-const SCENE_CENTER_Y = SCENE_HEIGHT / 2;
 
 const clamp = (value: number, min: number, max: number) => {
   if (min > max) return min;
@@ -150,9 +147,14 @@ export const V2Room = ({
     };
   }, [room]);
   const visualBounds = useMemo(() => getRoomVisualBounds(room), [room]);
+  const visualBoundsScene = useMemo(() => worldToSceneRect(visualBounds), [visualBounds]);
 
   const roomFrameLeft = room.centerX - room.width / 2;
   const roomFrameTop = room.centerY - room.height / 2;
+  const roomFrameScene = useMemo(
+    () => worldToScenePoint({ x: roomFrameLeft, y: roomFrameTop }),
+    [roomFrameLeft, roomFrameTop],
+  );
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -262,17 +264,16 @@ export const V2Room = ({
   };
 
 
-  const viewportBaseLeft = viewportWidth / 2 - SCENE_CENTER_X;
-  const viewportBaseTop = viewportHeight / 2 - SCENE_CENTER_Y;
-  const rootViewportLeft = viewportBaseLeft + (visualBounds.x + camera.panX) * camera.zoom;
-  const rootViewportTop = viewportBaseTop + (visualBounds.y + camera.panY) * camera.zoom;
+  const viewportBase = viewportSceneBase(viewportWidth, viewportHeight);
+  const rootViewportLeft = viewportBase.left + (visualBoundsScene.x + camera.panX) * camera.zoom;
+  const rootViewportTop = viewportBase.top + (visualBoundsScene.y + camera.panY) * camera.zoom;
 
-  const settingsAnchorSceneX = visualBounds.x + visualBounds.width + SETTINGS_HANDLE_RIGHT_OFFSET + SETTINGS_HANDLE_SIZE / 2;
-  const settingsAnchorSceneY = visualBounds.y + SETTINGS_HANDLE_TOP_OFFSET + SETTINGS_HANDLE_SIZE / 2;
+  const settingsAnchorSceneX = visualBoundsScene.x + visualBoundsScene.width + SETTINGS_HANDLE_RIGHT_OFFSET + SETTINGS_HANDLE_SIZE / 2;
+  const settingsAnchorSceneY = visualBoundsScene.y + SETTINGS_HANDLE_TOP_OFFSET + SETTINGS_HANDLE_SIZE / 2;
   const anchorViewportX =
-    viewportBaseLeft + (settingsAnchorSceneX + camera.panX) * camera.zoom + MENU_HORIZONTAL_OFFSET;
+    viewportBase.left + (settingsAnchorSceneX + camera.panX) * camera.zoom + MENU_HORIZONTAL_OFFSET;
   const anchorViewportY =
-    viewportBaseTop + (settingsAnchorSceneY + camera.panY) * camera.zoom + MENU_VERTICAL_OFFSET;
+    viewportBase.top + (settingsAnchorSceneY + camera.panY) * camera.zoom + MENU_VERTICAL_OFFSET;
   const menuPlacement = getRoomMenuPlacement({
     anchorX: anchorViewportX,
     anchorY: anchorViewportY,
@@ -298,10 +299,10 @@ export const V2Room = ({
       style={[
         styles.root,
         {
-          left: visualBounds.x,
-          top: visualBounds.y,
-          width: visualBounds.width,
-          height: visualBounds.height,
+          left: visualBoundsScene.x,
+          top: visualBoundsScene.y,
+          width: visualBoundsScene.width,
+          height: visualBoundsScene.height,
         },
       ]}
       pointerEvents="box-none"
@@ -320,8 +321,8 @@ export const V2Room = ({
           style={[
             styles.geometryLayer,
             {
-              left: roomFrameLeft - visualBounds.x,
-              top: roomFrameTop - visualBounds.y,
+              left: roomFrameScene.x - visualBoundsScene.x,
+              top: roomFrameScene.y - visualBoundsScene.y,
               width: room.width,
               height: room.height,
               transform: [{ rotate: `${roomRotation}deg` }],
@@ -394,8 +395,8 @@ export const V2Room = ({
           style={[
             styles.rotateHandle,
             {
-              left: corners.topLeft.x - visualBounds.x - HANDLE_SIZE / 2,
-              top: corners.topLeft.y - visualBounds.y - HANDLE_SIZE / 2,
+              left: worldToScenePoint(corners.topLeft).x - visualBoundsScene.x - HANDLE_SIZE / 2,
+              top: worldToScenePoint(corners.topLeft).y - visualBoundsScene.y - HANDLE_SIZE / 2,
             },
           ]}
           onPress={(event) => {
@@ -415,8 +416,8 @@ export const V2Room = ({
           style={[
             styles.resizeHandle,
             {
-              left: corners.bottomRight.x - visualBounds.x - RESIZE_HANDLE_SIZE / 2,
-              top: corners.bottomRight.y - visualBounds.y - RESIZE_HANDLE_SIZE / 2,
+              left: worldToScenePoint(corners.bottomRight).x - visualBoundsScene.x - RESIZE_HANDLE_SIZE / 2,
+              top: worldToScenePoint(corners.bottomRight).y - visualBoundsScene.y - RESIZE_HANDLE_SIZE / 2,
             },
           ]}
           hitSlop={12}

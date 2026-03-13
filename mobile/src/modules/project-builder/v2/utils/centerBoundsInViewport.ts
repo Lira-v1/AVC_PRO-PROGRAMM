@@ -1,12 +1,11 @@
+import { worldToScenePoint, SCENE_CENTER_X, SCENE_CENTER_Y } from './sceneCoordinates';
+
 export type SceneBounds = {
   x: number;
   y: number;
   width: number;
   height: number;
 };
-
-const SCENE_CENTER_X = 5000;
-const SCENE_CENTER_Y = 5000;
 
 export const centerBoundsInViewport = (
   bounds: SceneBounds,
@@ -17,11 +16,12 @@ export const centerBoundsInViewport = (
   void viewportWidth;
   void viewportHeight;
 
-  const boundsCenterX = bounds.x + bounds.width / 2;
-  const boundsCenterY = bounds.y + bounds.height / 2;
+  const boundsCenterWorldX = bounds.x + bounds.width / 2;
+  const boundsCenterWorldY = bounds.y + bounds.height / 2;
+  const boundsCenterScene = worldToScenePoint({ x: boundsCenterWorldX, y: boundsCenterWorldY });
 
-  const targetX = SCENE_CENTER_X - boundsCenterX * zoom;
-  const targetY = SCENE_CENTER_Y - boundsCenterY * zoom;
+  const targetX = SCENE_CENTER_X - boundsCenterScene.x * zoom;
+  const targetY = SCENE_CENTER_Y - boundsCenterScene.y * zoom;
 
   return {
     panX: targetX,
