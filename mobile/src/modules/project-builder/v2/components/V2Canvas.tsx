@@ -73,6 +73,17 @@ const ROOM_SCENE_LAYOUT = {
   ceilingGap: 50,
 };
 
+type SurfaceLayoutDirection = RoomSurfaceObject['direction'];
+type SurfaceLayoutItem = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  cardWidth: number;
+  cardHeight: number;
+  rotationDeg: number;
+};
+
 
 const getTouchDistance = (first: { locationX: number; locationY: number }, second: { locationX: number; locationY: number }) => {
   const dx = second.locationX - first.locationX;
@@ -187,7 +198,7 @@ export const V2Canvas = ({
     startPanY: 0,
   });
 
-  const roomSurfaceLayout = useMemo(() => {
+  const roomSurfaceLayout = useMemo<Record<SurfaceLayoutDirection, SurfaceLayoutItem>>(() => {
     const surfaceByDirection = new Map(roomSurfaces.map((surface) => [surface.direction, surface]));
 
     const getVisualSize = (surface: RoomSurfaceObject | undefined) => {
@@ -201,79 +212,90 @@ export const V2Canvas = ({
       };
     };
 
-    const floorSize = getVisualSize(surfaceByDirection.get('floor'));
+    const floorDirection: SurfaceLayoutDirection = 'floor';
+    const ceilingDirection: SurfaceLayoutDirection = 'ceiling';
     const topWallDirection = wallLayoutSlots.top;
     const bottomWallDirection = wallLayoutSlots.bottom;
     const leftWallDirection = wallLayoutSlots.left;
     const rightWallDirection = wallLayoutSlots.right;
 
-    const topSize = getVisualSize(surfaceByDirection.get(topWallDirection));
-    const bottomSize = getVisualSize(surfaceByDirection.get(bottomWallDirection));
-    const leftSize = getVisualSize(surfaceByDirection.get(leftWallDirection));
-    const rightSize = getVisualSize(surfaceByDirection.get(rightWallDirection));
-    const ceilingSize = getVisualSize(surfaceByDirection.get('ceiling'));
+    const slotByDirection: Record<SurfaceLayoutDirection, 'center' | 'top' | 'right' | 'bottom' | 'left' | 'ceilingSlot'> = {
+      north: 'top',
+      east: 'right',
+      south: 'bottom',
+      west: 'left',
+      floor: 'center',
+      ceiling: 'ceilingSlot',
+    };
+
+    slotByDirection[topWallDirection] = 'top';
+    slotByDirection[bottomWallDirection] = 'bottom';
+    slotByDirection[leftWallDirection] = 'left';
+    slotByDirection[rightWallDirection] = 'right';
+
+    const getSlotLayout = (direction: SurfaceLayoutDirection) => {
+      const baseSize = getVisualSize(surfaceByDirection.get(direction));
+      const slot = slotByDirection[direction];
+      const isSideSlot = slot === 'left' || slot === 'right';
+
+      return {
+        slot,
+        cardWidth: baseSize.width,
+        cardHeight: baseSize.height,
+        width: isSideSlot ? baseSize.height : baseSize.width,
+        height: isSideSlot ? baseSize.width : baseSize.height,
+        rotationDeg: slot === 'left' ? -90 : slot === 'right' ? 90 : 0,
+      };
+    };
+
+    const floorLayout = getSlotLayout(floorDirection);
+    const topLayout = getSlotLayout(topWallDirection);
+    const bottomLayout = getSlotLayout(bottomWallDirection);
+    const leftLayout = getSlotLayout(leftWallDirection);
+    const rightLayout = getSlotLayout(rightWallDirection);
+    const ceilingLayout = getSlotLayout(ceilingDirection);
 
     const centers = {
       floor: { x: 0, y: 0 },
-      top: { x: 0, y: -(floorSize.height / 2 + topSize.height / 2 + ROOM_SCENE_LAYOUT.surfaceGap) },
-      bottom: { x: 0, y: floorSize.height / 2 + bottomSize.height / 2 + ROOM_SCENE_LAYOUT.surfaceGap },
-      left: { x: -(floorSize.width / 2 + leftSize.width / 2 + ROOM_SCENE_LAYOUT.surfaceGap), y: 0 },
-      right: { x: floorSize.width / 2 + rightSize.width / 2 + ROOM_SCENE_LAYOUT.surfaceGap, y: 0 },
+      top: { x: 0, y: -(floorLayout.height / 2 + topLayout.height / 2 + ROOM_SCENE_LAYOUT.surfaceGap) },
+      bottom: { x: 0, y: floorLayout.height / 2 + bottomLayout.height / 2 + ROOM_SCENE_LAYOUT.surfaceGap },
+      left: { x: -(floorLayout.width / 2 + leftLayout.width / 2 + ROOM_SCENE_LAYOUT.surfaceGap), y: 0 },
+      right: { x: floorLayout.width / 2 + rightLayout.width / 2 + ROOM_SCENE_LAYOUT.surfaceGap, y: 0 },
     };
 
-    const topWallTopEdge = centers.top.y - topSize.height / 2;
-    const ceilingCenterY = topWallTopEdge - ROOM_SCENE_LAYOUT.ceilingGap - ceilingSize.height / 2;
+    const topWallTopEdge = centers.top.y - topLayout.height / 2;
+    const ceilingCenterY = topWallTopEdge - ROOM_SCENE_LAYOUT.ceilingGap - ceilingLayout.height / 2;
 
-    const layoutByDirection = {
-      floor: {
-        x: centers.floor.x - floorSize.width / 2,
-        y: centers.floor.y - floorSize.height / 2,
-        width: floorSize.width,
-        height: floorSize.height,
-      },
-      [topWallDirection]: {
-        x: centers.top.x - topSize.width / 2,
-        y: centers.top.y - topSize.height / 2,
-        width: topSize.width,
-        height: topSize.height,
-      },
-      [bottomWallDirection]: {
-        x: centers.bottom.x - bottomSize.width / 2,
-        y: centers.bottom.y - bottomSize.height / 2,
-        width: bottomSize.width,
-        height: bottomSize.height,
-      },
-      [leftWallDirection]: {
-        x: centers.left.x - leftSize.width / 2,
-        y: centers.left.y - leftSize.height / 2,
-        width: leftSize.width,
-        height: leftSize.height,
-      },
-      [rightWallDirection]: {
-        x: centers.right.x - rightSize.width / 2,
-        y: centers.right.y - rightSize.height / 2,
-        width: rightSize.width,
-        height: rightSize.height,
-      },
-      ceiling: {
-        x: -ceilingSize.width / 2,
-        y: ceilingCenterY - ceilingSize.height / 2,
-        width: ceilingSize.width,
-        height: ceilingSize.height,
-      },
-    } as Record<RoomSurfaceObject['direction'], { x: number; y: number; width: number; height: number }>;
+    const createLayoutItem = (centerX: number, centerY: number, layout: ReturnType<typeof getSlotLayout>): SurfaceLayoutItem => ({
+      x: centerX - layout.width / 2,
+      y: centerY - layout.height / 2,
+      width: layout.width,
+      height: layout.height,
+      cardWidth: layout.cardWidth,
+      cardHeight: layout.cardHeight,
+      rotationDeg: layout.rotationDeg,
+    });
+
+    const layoutByDirection: Record<SurfaceLayoutDirection, SurfaceLayoutItem> = {
+      north: createLayoutItem(centers.top.x, centers.top.y, getSlotLayout('north')),
+      east: createLayoutItem(centers.right.x, centers.right.y, getSlotLayout('east')),
+      south: createLayoutItem(centers.bottom.x, centers.bottom.y, getSlotLayout('south')),
+      west: createLayoutItem(centers.left.x, centers.left.y, getSlotLayout('west')),
+      floor: createLayoutItem(centers.floor.x, centers.floor.y, floorLayout),
+      ceiling: createLayoutItem(0, ceilingCenterY, ceilingLayout),
+    };
 
     return layoutByDirection;
   }, [roomSurfaces, wallLayoutSlots.bottom, wallLayoutSlots.left, wallLayoutSlots.right, wallLayoutSlots.top]);
 
   const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
     return [
-      roomSurfaceLayout.north,
-      roomSurfaceLayout.south,
-      roomSurfaceLayout.west,
-      roomSurfaceLayout.east,
-      roomSurfaceLayout.floor,
-      roomSurfaceLayout.ceiling,
+      { x: roomSurfaceLayout.north.x, y: roomSurfaceLayout.north.y, width: roomSurfaceLayout.north.width, height: roomSurfaceLayout.north.height },
+      { x: roomSurfaceLayout.south.x, y: roomSurfaceLayout.south.y, width: roomSurfaceLayout.south.width, height: roomSurfaceLayout.south.height },
+      { x: roomSurfaceLayout.west.x, y: roomSurfaceLayout.west.y, width: roomSurfaceLayout.west.width, height: roomSurfaceLayout.west.height },
+      { x: roomSurfaceLayout.east.x, y: roomSurfaceLayout.east.y, width: roomSurfaceLayout.east.width, height: roomSurfaceLayout.east.height },
+      { x: roomSurfaceLayout.floor.x, y: roomSurfaceLayout.floor.y, width: roomSurfaceLayout.floor.width, height: roomSurfaceLayout.floor.height },
+      { x: roomSurfaceLayout.ceiling.x, y: roomSurfaceLayout.ceiling.y, width: roomSurfaceLayout.ceiling.width, height: roomSurfaceLayout.ceiling.height },
     ];
   }, [roomSurfaceLayout]);
 
@@ -559,22 +581,70 @@ export const V2Canvas = ({
   const renderRoomScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
       <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.north)]}>
-        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
+        <View
+          style={[
+            styles.roomSceneSlotCard,
+            {
+              width: roomSurfaceLayout.north.cardWidth,
+              height: roomSurfaceLayout.north.cardHeight,
+              transform: [{ rotate: `${roomSurfaceLayout.north.rotationDeg}deg` }],
+            },
+          ]}
+        >
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
+        </View>
       </View>
       <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.floor)]}>
-        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
+        <View style={[styles.roomSceneSlotCard, { width: roomSurfaceLayout.floor.cardWidth, height: roomSurfaceLayout.floor.cardHeight }]}>
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
+        </View>
       </View>
       <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.south)]}>
-        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
+        <View
+          style={[
+            styles.roomSceneSlotCard,
+            {
+              width: roomSurfaceLayout.south.cardWidth,
+              height: roomSurfaceLayout.south.cardHeight,
+              transform: [{ rotate: `${roomSurfaceLayout.south.rotationDeg}deg` }],
+            },
+          ]}
+        >
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
+        </View>
       </View>
       <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.west)]}>
-        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
+        <View
+          style={[
+            styles.roomSceneSlotCard,
+            {
+              width: roomSurfaceLayout.west.cardWidth,
+              height: roomSurfaceLayout.west.cardHeight,
+              transform: [{ rotate: `${roomSurfaceLayout.west.rotationDeg}deg` }],
+            },
+          ]}
+        >
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
+        </View>
       </View>
       <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.east)]}>
-        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
+        <View
+          style={[
+            styles.roomSceneSlotCard,
+            {
+              width: roomSurfaceLayout.east.cardWidth,
+              height: roomSurfaceLayout.east.cardHeight,
+              transform: [{ rotate: `${roomSurfaceLayout.east.rotationDeg}deg` }],
+            },
+          ]}
+        >
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
+        </View>
       </View>
       <View style={[styles.roomSceneSlot, worldRectToSceneStyle(roomSurfaceLayout.ceiling)]}>
-        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
+        <View style={[styles.roomSceneSlotCard, { width: roomSurfaceLayout.ceiling.cardWidth, height: roomSurfaceLayout.ceiling.cardHeight }]}>
+          {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
+        </View>
       </View>
     </View>
   );
@@ -865,7 +935,10 @@ const styles = StyleSheet.create({
   gearIcon: { fontSize: 18 },
   roomSceneSlot: {
     position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  roomSceneSlotCard: {},
   wallMetaLayer: {
     position: 'absolute',
     left: 16,
