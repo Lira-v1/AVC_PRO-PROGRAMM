@@ -11,8 +11,7 @@ type Props = {
   onToggleGrid: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
-  onResetZoom: () => void;
-  onCenterProject: () => void;
+  onResetToProjectDefault: () => void;
 };
 
 export const V2CanvasControls = ({
@@ -25,8 +24,7 @@ export const V2CanvasControls = ({
   onToggleGrid,
   onZoomIn,
   onZoomOut,
-  onResetZoom,
-  onCenterProject,
+  onResetToProjectDefault,
 }: Props) => {
   return (
     <View style={styles.controlsRoot}>
@@ -39,13 +37,9 @@ export const V2CanvasControls = ({
           <Text style={styles.buttonText}>+</Text>
         </Pressable>
 
-        <Pressable style={styles.scaleBadge} onPress={onResetZoom}>
-          <Text style={styles.buttonText}>100%</Text>
+        <Pressable style={styles.scaleBadge} onPress={onResetToProjectDefault}>
+          <Text style={styles.buttonText}>{Math.round(scale * 100)}%</Text>
         </Pressable>
-
-        <View style={styles.activeScaleBadge}>
-          <Text style={styles.scaleChipText}>{Math.round(scale * 100)}%</Text>
-        </View>
       </View>
 
       <View style={styles.actionsRow}>
@@ -61,9 +55,6 @@ export const V2CanvasControls = ({
 
         <Pressable style={styles.actionButton} onPress={onToggleGrid}>
           <Text style={styles.buttonText}>{showGrid ? 'Скрыть сетку' : 'Показать сетку'}</Text>
-        </Pressable>
-        <Pressable style={styles.actionButton} onPress={onCenterProject}>
-          <Text style={styles.buttonText}>Центр проекта</Text>
         </Pressable>
       </View>
     </View>
@@ -130,19 +121,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 20,
-  },
-  activeScaleBadge: {
-    minWidth: 120,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  scaleChipText: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '700',
   },
 });
