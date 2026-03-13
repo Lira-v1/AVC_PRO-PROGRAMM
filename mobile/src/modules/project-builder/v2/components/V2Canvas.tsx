@@ -39,6 +39,7 @@ type Props = {
   sceneObjects: SceneObject[];
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
+  onToggleDimensionLinesPinned: (roomId: string, pinned: boolean) => void;
   onAddDoor: (roomId: string) => void;
   onAddWindow: (roomId: string) => void;
   showGrid: boolean;
@@ -107,6 +108,7 @@ export const V2Canvas = ({
   sceneObjects,
   onUpdateRoomSize,
   onToggleSizeLock,
+  onToggleDimensionLinesPinned,
   onAddDoor,
   onAddWindow,
   showGrid,
@@ -127,7 +129,6 @@ export const V2Canvas = ({
   dimensionUnit,
   onDimensionUnitChange,
 }: Props) => {
-  const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
   const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
 
   const roomSurfaces = useMemo(() => {
@@ -424,7 +425,11 @@ export const V2Canvas = ({
 
   const renderProjectScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
-      {selectedRoom ? <V2RoomDimensions room={selectedRoom} unit={dimensionUnit} /> : null}
+      {rooms.map((room) => {
+        const shouldShowDimensions = selectedRoomId === room.id || room.showDimensionsPinned;
+
+        return shouldShowDimensions ? <V2RoomDimensions key={`dimensions-${room.id}`} room={room} unit={dimensionUnit} /> : null;
+      })}
       {rooms.map((room) => (
         <V2Room
           key={room.id}
@@ -441,6 +446,7 @@ export const V2Canvas = ({
           onOpenRoom={onOpenRoom}
           onUpdateRoomSize={onUpdateRoomSize}
           onToggleSizeLock={onToggleSizeLock}
+          onToggleDimensionLinesPinned={onToggleDimensionLinesPinned}
           onAddDoor={onAddDoor}
           onAddWindow={onAddWindow}
           dimensionUnit={dimensionUnit}

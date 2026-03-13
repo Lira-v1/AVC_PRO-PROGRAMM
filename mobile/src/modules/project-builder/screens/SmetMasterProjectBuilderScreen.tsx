@@ -107,6 +107,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
     rotateRoom: rotateV2Room,
     updateRoomSize: updateV2RoomSize,
     setRoomSizeLocked: setV2RoomSizeLocked,
+    setRoomDimensionsPinned: setV2RoomDimensionsPinned,
     toggleCompassOrientation: toggleV2CompassOrientation,
     editorState: v2EditorState,
     openRoom: openV2Room,
@@ -360,6 +361,7 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               onOpenRoom={openV2Room}
               onUpdateRoomSize={updateV2RoomSize}
               onToggleSizeLock={setV2RoomSizeLocked}
+              onToggleDimensionLinesPinned={setV2RoomDimensionsPinned}
               onAddDoor={addDoorPlaceholder}
               onAddWindow={addWindowPlaceholder}
               showGrid={canvasUiState.showGrid}

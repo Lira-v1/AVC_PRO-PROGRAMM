@@ -111,6 +111,20 @@ export const useProjectBuilderV2 = () => {
     }));
   };
 
+  const setRoomDimensionsPinned = (roomId: string, pinned: boolean) => {
+    setScene((prev) => ({
+      ...prev,
+      rooms: prev.rooms.map((room) =>
+        room.id === roomId
+          ? {
+              ...room,
+              showDimensionsPinned: pinned,
+            }
+          : room,
+      ),
+    }));
+  };
+
   const rotateRoom = (roomId: string) => {
     setScene((prev) => ({
       ...prev,
@@ -222,6 +236,7 @@ export const useProjectBuilderV2 = () => {
     resizeRoom,
     updateRoomSize,
     setRoomSizeLocked,
+    setRoomDimensionsPinned,
     rotateRoom,
     renameRoom,
     toggleCompassOrientation,
