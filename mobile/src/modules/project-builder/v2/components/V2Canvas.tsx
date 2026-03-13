@@ -202,9 +202,9 @@ export const V2Canvas = ({
         roomId: selectedRoom.id,
         anchor: 'corner-bottom-right',
         coordSpace: 'world',
-        x: selectedRoom.centerX + selectedRoom.width / 2,
-        y: selectedRoom.centerY + selectedRoom.height / 2,
-        source: 'room center + size/2 (V2Room resize anchor)',
+        x: corners.bottomRight.x,
+        y: corners.bottomRight.y,
+        source: 'getRoomCorners()',
       },
       {
         id: `${selectedRoom.id}:rotate-button`,
