@@ -539,9 +539,31 @@ export const V2Canvas = ({
         return;
       }
 
-      centerCurrentScene(nextZoom);
+      if (!viewportSize.width || !viewportSize.height) {
+        return;
+      }
+
+      const bounds = getFocusBounds();
+      if (!bounds) {
+        return;
+      }
+
+      const roomCenterX = bounds.x + bounds.width / 2;
+      const roomCenterY = bounds.y + bounds.height / 2;
+      const viewportCenterX = viewportSize.width / 2;
+      const viewportCenterY = viewportSize.height / 2;
+
+      onZoomTo(nextZoom, {
+        anchorX: viewportCenterX,
+        anchorY: viewportCenterY,
+        baseCamera: {
+          zoom: camera.zoom,
+          panX: viewportCenterX - roomCenterX * camera.zoom,
+          panY: viewportCenterY - roomCenterY * camera.zoom,
+        },
+      });
     },
-    [camera.zoom, centerCurrentScene, maxZoom, minZoom, zoomStep],
+    [camera.zoom, getFocusBounds, maxZoom, minZoom, onZoomTo, viewportSize.height, viewportSize.width, zoomStep],
   );
 
   const handleZoomIn = useCallback(() => {
