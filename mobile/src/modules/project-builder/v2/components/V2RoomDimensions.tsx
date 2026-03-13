@@ -11,6 +11,7 @@ type Props = {
 
 const DIMENSION_STROKE = '#334155';
 const DIMENSION_OFFSET = 26;
+const DIMENSION_TEXT_OFFSET = 18;
 
 export const V2RoomDimensions = ({ room, unit }: Props) => {
   const normalizedRotation = ((room.rotation ?? 0) % 360 + 360) % 360;
@@ -87,7 +88,7 @@ const styles = StyleSheet.create({
   },
   topDimensionText: {
     position: 'absolute',
-    top: -18,
+    top: -DIMENSION_TEXT_OFFSET,
     backgroundColor: 'rgba(255,255,255,0.92)',
     paddingHorizontal: 4,
     fontSize: 11,
@@ -120,7 +121,7 @@ const styles = StyleSheet.create({
   },
   leftDimensionTextWrapper: {
     position: 'absolute',
-    left: -40,
+    right: DIMENSION_TEXT_OFFSET,
     top: '50%',
     minWidth: 86,
     alignItems: 'center',
