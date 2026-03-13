@@ -69,7 +69,8 @@ const GRID_CELL_SIZE = CANVAS_UNITS_PER_METER / GRID_CELLS_PER_METER;
 
 const ROOM_SCENE_LAYOUT = {
   visualScale: 0.08,
-  minSurfaceSize: 72,
+  minSurfaceWidth: 140,
+  minSurfaceHeight: 86,
   surfaceGap: 40,
   ceilingGap: 50,
 };
@@ -175,12 +176,12 @@ export const V2Canvas = ({
 
     const getVisualSize = (surface: RoomSurfaceObject | undefined) => {
       if (!surface) {
-        return { width: ROOM_SCENE_LAYOUT.minSurfaceSize, height: ROOM_SCENE_LAYOUT.minSurfaceSize };
+        return { width: ROOM_SCENE_LAYOUT.minSurfaceWidth, height: ROOM_SCENE_LAYOUT.minSurfaceHeight };
       }
 
       return {
-        width: Math.max(ROOM_SCENE_LAYOUT.minSurfaceSize, surface.widthMm * ROOM_SCENE_LAYOUT.visualScale),
-        height: Math.max(ROOM_SCENE_LAYOUT.minSurfaceSize, surface.heightMm * ROOM_SCENE_LAYOUT.visualScale),
+        width: Math.max(ROOM_SCENE_LAYOUT.minSurfaceWidth, surface.widthMm * ROOM_SCENE_LAYOUT.visualScale),
+        height: Math.max(ROOM_SCENE_LAYOUT.minSurfaceHeight, surface.heightMm * ROOM_SCENE_LAYOUT.visualScale),
       };
     };
 
