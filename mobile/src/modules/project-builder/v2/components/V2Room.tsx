@@ -47,6 +47,10 @@ const MENU_MAX_WIDTH = 260;
 const MENU_PREFERRED_MAX_HEIGHT = 320;
 const MENU_SAFE_MARGIN = 12;
 const MENU_VERTICAL_OFFSET = 28;
+const MENU_HORIZONTAL_OFFSET = 12;
+const SETTINGS_HANDLE_SIZE = 22;
+const SETTINGS_HANDLE_RIGHT_OFFSET = -10;
+const SETTINGS_HANDLE_TOP_OFFSET = -10;
 const SCENE_WIDTH = 10000;
 const SCENE_HEIGHT = 10000;
 const SCENE_CENTER_X = SCENE_WIDTH / 2;
@@ -263,8 +267,12 @@ export const V2Room = ({
   const rootViewportLeft = viewportBaseLeft + (visualBounds.x + camera.panX) * camera.zoom;
   const rootViewportTop = viewportBaseTop + (visualBounds.y + camera.panY) * camera.zoom;
 
-  const anchorViewportX = viewportBaseLeft + (corners.topRight.x + camera.panX) * camera.zoom - MENU_MAX_WIDTH / 2;
-  const anchorViewportY = viewportBaseTop + (corners.topRight.y + camera.panY) * camera.zoom + MENU_VERTICAL_OFFSET;
+  const settingsAnchorSceneX = visualBounds.x + visualBounds.width + SETTINGS_HANDLE_RIGHT_OFFSET + SETTINGS_HANDLE_SIZE / 2;
+  const settingsAnchorSceneY = visualBounds.y + SETTINGS_HANDLE_TOP_OFFSET + SETTINGS_HANDLE_SIZE / 2;
+  const anchorViewportX =
+    viewportBaseLeft + (settingsAnchorSceneX + camera.panX) * camera.zoom + MENU_HORIZONTAL_OFFSET;
+  const anchorViewportY =
+    viewportBaseTop + (settingsAnchorSceneY + camera.panY) * camera.zoom + MENU_VERTICAL_OFFSET;
   const menuPlacement = getRoomMenuPlacement({
     anchorX: anchorViewportX,
     anchorY: anchorViewportY,
