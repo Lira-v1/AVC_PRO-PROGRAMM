@@ -19,6 +19,7 @@ export type RoomV2 = {
   rotation: RoomRotation;
 
   isSizeLocked?: boolean;
+  showDimensionsPinned?: boolean;
   projectZone?: 'north' | 'south' | 'west' | 'east' | 'center';
 };
 

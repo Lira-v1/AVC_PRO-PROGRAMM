@@ -11,6 +11,7 @@ type Props = {
   onOpenSettings: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
+  onToggleDimensionLinesPinned: (roomId: string, pinned: boolean) => void;
   onAddDoor: (roomId: string) => void;
   onAddWindow: (roomId: string) => void;
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
@@ -26,6 +27,7 @@ export const V2RoomMenu = ({
   onOpenSettings,
   onOpenRoom,
   onToggleSizeLock,
+  onToggleDimensionLinesPinned,
   onAddDoor,
   onAddWindow,
   onUpdateRoomSize,
@@ -224,6 +226,10 @@ export const V2RoomMenu = ({
 
       <Pressable style={styles.item} onPress={() => onToggleSizeLock(roomId, !room.isSizeLocked)}>
         <Text style={styles.itemText}>{room.isSizeLocked ? '☑ Зафиксировать размеры' : '☐ Зафиксировать размеры'}</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onToggleDimensionLinesPinned(roomId, !room.showDimensionsPinned)}>
+        <Text style={styles.itemText}>{room.showDimensionsPinned ? '☑ Зафиксировать размерные линии' : '☐ Зафиксировать размерные линии'}</Text>
       </Pressable>
 
       <Pressable style={styles.item} onPress={() => onAddDoor(roomId)}>

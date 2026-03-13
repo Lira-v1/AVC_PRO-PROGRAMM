@@ -20,6 +20,7 @@ type Props = {
   onOpenRoom: (roomId: string) => void;
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
   onToggleSizeLock: (roomId: string, locked: boolean) => void;
+  onToggleDimensionLinesPinned: (roomId: string, pinned: boolean) => void;
   onAddDoor: (roomId: string) => void;
   onAddWindow: (roomId: string) => void;
   dimensionUnit: RoomSizeUnit;
@@ -69,6 +70,7 @@ export const V2Room = ({
   onOpenRoom,
   onUpdateRoomSize,
   onToggleSizeLock,
+  onToggleDimensionLinesPinned,
   onAddDoor,
   onAddWindow,
   dimensionUnit,
@@ -282,6 +284,9 @@ export const V2Room = ({
               onUpdateRoomSize={onUpdateRoomSize}
               onToggleSizeLock={(roomId, locked) => {
                 onToggleSizeLock(roomId, locked);
+              }}
+              onToggleDimensionLinesPinned={(roomId, pinned) => {
+                onToggleDimensionLinesPinned(roomId, pinned);
               }}
               onAddDoor={(roomId) => {
                 onAddDoor(roomId);
