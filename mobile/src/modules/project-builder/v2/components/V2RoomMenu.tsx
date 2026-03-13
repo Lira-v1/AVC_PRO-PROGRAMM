@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
 import { RoomV2 } from '../model/types';
 import { formatRoomSize, parseRoomSizeToMm, RoomSizeUnit } from '../utils/roomUnits';
 
@@ -17,6 +17,8 @@ type Props = {
   onUpdateRoomSize: (roomId: string, widthMm: number, heightMm: number) => void;
   dimensionUnit: RoomSizeUnit;
   onDimensionUnitChange: (unit: RoomSizeUnit) => void;
+  menuStyle?: StyleProp<ViewStyle>;
+  scrollStyle?: StyleProp<ViewStyle>;
 };
 
 export const V2RoomMenu = ({
@@ -33,6 +35,8 @@ export const V2RoomMenu = ({
   onUpdateRoomSize,
   dimensionUnit,
   onDimensionUnitChange,
+  menuStyle,
+  scrollStyle,
 }: Props) => {
   const [submenu, setSubmenu] = useState<'root' | 'name' | 'settings'>('root');
   const [editingField, setEditingField] = useState<'name' | 'width' | 'height' | null>(null);
@@ -243,8 +247,8 @@ export const V2RoomMenu = ({
   );
 
   return (
-    <View style={styles.root}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator>
+    <View style={[styles.root, menuStyle]}>
+      <ScrollView style={[styles.scroll, scrollStyle]} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator>
         {submenu === 'root' ? renderRootMenu() : null}
         {submenu === 'name' ? renderNameMenu() : null}
         {submenu === 'settings' ? renderSettingsMenu() : null}
