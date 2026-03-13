@@ -9,7 +9,7 @@ import { V2Grid } from './V2Grid';
 import { V2RoomDimensions } from './V2RoomDimensions';
 import { V2Room } from './V2Room';
 import { V2WallObject } from './V2WallObject';
-import { RoomMenuDebugState, V2DeveloperPanel } from './V2DeveloperPanel';
+import { RoomMenuDebugState, UiDebugElement, V2DeveloperPanel } from './V2DeveloperPanel';
 import { buildRoomSurfaceObjects, formatMm, getSurfaceTitle } from '../utils/getSurfaceMetrics';
 import { RoomSizeUnit } from '../utils/roomUnits';
 import { RoomSurfaceObject } from '../model/surfaces';
@@ -18,6 +18,7 @@ import { CanvasCameraState } from '../model/types';
 import { buildSurfaceId } from '../utils/buildSurfaceId';
 import { getSurfaceObjects } from '../utils/getSurfaceObjects';
 import { getRoomVisualBounds } from '../utils/getRoomVisualBounds';
+import { getRoomCorners } from '../utils/getRoomCorners';
 import { getSurfaceSceneBounds, SurfaceSceneItem } from '../utils/getSurfaceSceneBounds';
 import { CANVAS_UNITS_PER_METER, GRID_CELLS_PER_METER } from '../model/metrics';
 import { SCENE_HEIGHT, SCENE_WIDTH, sceneToWorldPoint, viewportSceneBase, worldRectToSceneStyle, worldToSceneRect } from '../utils/sceneCoordinates';
@@ -178,6 +179,7 @@ export const V2Canvas = ({
     return wallObjects.find((item) => item.id === selectedWallId) ?? wallObjects[0];
   }, [selectedWallId, wallObjects]);
 
+
   const selectedRoom = useMemo(() => {
     if (!selectedRoomId) {
       return null;
@@ -185,6 +187,82 @@ export const V2Canvas = ({
 
     return rooms.find((room) => room.id === selectedRoomId) ?? null;
   }, [rooms, selectedRoomId]);
+
+  const uiElements = useMemo<UiDebugElement[]>(() => {
+    if (!selectedRoom) {
+      return [];
+    }
+
+    const corners = getRoomCorners(selectedRoom);
+    const bounds = getRoomVisualBounds(selectedRoom);
+    const elements: UiDebugElement[] = [
+      {
+        id: `${selectedRoom.id}:resize-handle`,
+        type: 'resizeHandle',
+        roomId: selectedRoom.id,
+        anchor: 'corner-bottom-right',
+        coordSpace: 'world',
+        x: selectedRoom.centerX + selectedRoom.width / 2,
+        y: selectedRoom.centerY + selectedRoom.height / 2,
+        source: 'room center + size/2 (V2Room resize anchor)',
+      },
+      {
+        id: `${selectedRoom.id}:rotate-button`,
+        type: 'rotateButton',
+        roomId: selectedRoom.id,
+        anchor: 'corner-top-left',
+        coordSpace: 'world',
+        x: corners.topLeft.x,
+        y: corners.topLeft.y,
+        source: 'getRoomCorners()',
+      },
+      {
+        id: `${selectedRoom.id}:settings-button`,
+        type: 'settingsButton',
+        roomId: selectedRoom.id,
+        anchor: 'corner-top-right',
+        coordSpace: 'world',
+        x: corners.topRight.x,
+        y: corners.topRight.y,
+        source: 'getRoomCorners() + overlay offset',
+      },
+      {
+        id: `${selectedRoom.id}:dimension-label-horizontal`,
+        type: 'dimensionLabel',
+        roomId: selectedRoom.id,
+        anchor: 'room-top-edge-center',
+        coordSpace: 'world',
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y - 26,
+        source: 'getRoomVisualBounds() + DIMENSION_OFFSET',
+      },
+      {
+        id: `${selectedRoom.id}:dimension-label-vertical`,
+        type: 'dimensionLabel',
+        roomId: selectedRoom.id,
+        anchor: 'room-left-edge-center',
+        coordSpace: 'world',
+        x: bounds.x - 26,
+        y: bounds.y + bounds.height / 2,
+        source: 'getRoomVisualBounds() + DIMENSION_OFFSET',
+      },
+    ];
+
+    if (roomMenuDebugState?.anchorPosition) {
+      elements.push({
+        id: `${selectedRoom.id}:menu`,
+        type: 'popupMenu',
+        roomId: selectedRoom.id,
+        anchor: 'button-anchor',
+        coordSpace: 'screen',
+        x: roomMenuDebugState.anchorPosition.x,
+        y: roomMenuDebugState.anchorPosition.y,
+        source: 'room menu anchor state',
+      });
+    }
+
+    return elements;
+  }, [roomMenuDebugState?.anchorPosition, selectedRoom]);
   const [lastCenteredSceneKey, setLastCenteredSceneKey] = useState<string | null>(null);
   const [wallScenePosition, setWallScenePosition] = useState({
     x: WALL_SCENE_LAYOUT.defaultX,
@@ -835,6 +913,7 @@ export const V2Canvas = ({
         compassViewMode={compassViewMode}
         camera={camera}
         roomMenuState={roomMenuDebugState}
+        uiElements={uiElements}
       />
 
       <Pressable style={styles.gearButton} onPress={onOpenTools}>

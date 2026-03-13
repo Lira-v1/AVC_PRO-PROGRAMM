@@ -13,6 +13,18 @@ type RoomMenuDebugState = {
   anchorPosition: { x: number; y: number } | null;
 };
 
+type UiDebugElement = {
+  id: string;
+  type: string;
+  roomId?: string | null;
+  surfaceId?: string | null;
+  anchor: string;
+  coordSpace: 'world' | 'room' | 'screen' | 'viewport';
+  x: number;
+  y: number;
+  source: string;
+};
+
 type Props = {
   visible: boolean;
   editorState: EditorState;
@@ -26,6 +38,7 @@ type Props = {
   compassViewMode: CompassViewMode;
   camera: CanvasCameraState;
   roomMenuState: RoomMenuDebugState | null;
+  uiElements: UiDebugElement[];
 };
 
 const line = (label: string, value: unknown) => `${label}: ${value == null ? 'null' : String(value)}`;
@@ -43,6 +56,7 @@ export const V2DeveloperPanel = ({
   compassViewMode,
   camera,
   roomMenuState,
+  uiElements,
 }: Props) => {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
@@ -129,8 +143,30 @@ export const V2DeveloperPanel = ({
       );
     }
 
+    if (uiElements.length) {
+      sections.push(
+        [
+          '=== UI ELEMENTS ===',
+          ...uiElements.map((ui) =>
+            [
+              line('ui.id', ui.id),
+              line('ui.type', ui.type),
+              line('ui.roomId', ui.roomId ?? null),
+              line('ui.surfaceId', ui.surfaceId ?? null),
+              line('ui.anchor', ui.anchor),
+              line('ui.coordSpace', ui.coordSpace),
+              line('ui.x', ui.x),
+              line('ui.y', ui.y),
+              line('ui.source', ui.source),
+              '---',
+            ].join('\n'),
+          ),
+        ].join('\n'),
+      );
+    }
+
     return sections.join('\n\n');
-  }, [activeObject, activeRoom, camera.panX, camera.panY, camera.zoom, compassViewMode, editorState.activeRoomId, editorState.activeWall, editorState.level, roomMenuState, roomSurfaces, selectedRoom, selectedRoomId, showCompass, showGrid]);
+  }, [activeObject, activeRoom, camera.panX, camera.panY, camera.zoom, compassViewMode, editorState.activeRoomId, editorState.activeWall, editorState.level, roomMenuState, roomSurfaces, selectedRoom, selectedRoomId, showCompass, showGrid, uiElements]);
 
   if (!visible) {
     return null;
@@ -236,3 +272,4 @@ const styles = StyleSheet.create({
 });
 
 export type { RoomMenuDebugState };
+export type { UiDebugElement };
