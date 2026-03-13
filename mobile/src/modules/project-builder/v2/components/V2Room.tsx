@@ -49,11 +49,6 @@ const RESIZE_HANDLE_SIZE = 20;
 const MENU_MAX_WIDTH = 260;
 const MENU_PREFERRED_MAX_HEIGHT = 320;
 const MENU_SAFE_MARGIN = 12;
-const MENU_VERTICAL_OFFSET = 28;
-const MENU_HORIZONTAL_OFFSET = 12;
-const SETTINGS_HANDLE_SIZE = 22;
-const SETTINGS_HANDLE_RIGHT_OFFSET = -10;
-const SETTINGS_HANDLE_TOP_OFFSET = -10;
 
 const clamp = (value: number, min: number, max: number) => {
   if (min > max) return min;
@@ -128,7 +123,9 @@ export const V2Room = ({
   const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
   const isResizingRef = useRef(false);
+  const settingsHandleRef = useRef<View | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [menuAnchorPosition, setMenuAnchorPosition] = useState<{ x: number; y: number } | null>(null);
   const windowDimensions = useWindowDimensions();
 
   const roomRotation = room.rotation ?? 0;
@@ -198,6 +195,7 @@ export const V2Room = ({
   useEffect(() => {
     if (!selected) {
       setIsMenuOpen(false);
+      setMenuAnchorPosition(null);
     }
   }, [selected]);
 
@@ -276,19 +274,17 @@ export const V2Room = ({
   const rootViewportLeft = viewportBase.left + camera.panX + visualBoundsScene.x * safeZoom;
   const rootViewportTop = viewportBase.top + camera.panY + visualBoundsScene.y * safeZoom;
 
-  const settingsAnchorSceneX = visualBoundsScene.x + visualBoundsScene.width + SETTINGS_HANDLE_RIGHT_OFFSET + SETTINGS_HANDLE_SIZE / 2;
-  const settingsAnchorSceneY = visualBoundsScene.y + SETTINGS_HANDLE_TOP_OFFSET + SETTINGS_HANDLE_SIZE / 2;
-  const anchorViewportX =
-    viewportBase.left + camera.panX + settingsAnchorSceneX * safeZoom + MENU_HORIZONTAL_OFFSET;
-  const anchorViewportY =
-    viewportBase.top + camera.panY + settingsAnchorSceneY * safeZoom + MENU_VERTICAL_OFFSET;
+  const fallbackViewportWidth = Math.max(0, viewportWidth || windowDimensions.width || 0);
+  const fallbackViewportHeight = Math.max(0, viewportHeight || windowDimensions.height || 0);
+  const anchorViewportX = menuAnchorPosition?.x ?? fallbackViewportWidth / 2;
+  const anchorViewportY = menuAnchorPosition?.y ?? fallbackViewportHeight / 2;
   const menuPlacement = getRoomMenuPlacement({
     anchorX: anchorViewportX,
     anchorY: anchorViewportY,
     menuWidth: MENU_MAX_WIDTH,
     menuMaxHeight: MENU_PREFERRED_MAX_HEIGHT,
-    viewportWidth: Math.max(0, viewportWidth || windowDimensions.width || 0),
-    viewportHeight: Math.max(0, viewportHeight || windowDimensions.height || 0),
+    viewportWidth: fallbackViewportWidth,
+    viewportHeight: fallbackViewportHeight,
     margin: MENU_SAFE_MARGIN,
   });
 
@@ -315,6 +311,23 @@ export const V2Room = ({
   const webDragProps = Platform.OS === 'web' ? ({ onMouseDown: startDragWeb } as any) : {};
   const webResizeProps = Platform.OS === 'web' ? ({ onMouseDown: startResizeWeb } as any) : {};
   const shouldShowRoomControls = selected && interactive && !isMenuOpen;
+
+  const captureSettingsAnchor = (event?: any) => {
+    const pageX = event?.nativeEvent?.pageX;
+    const pageY = event?.nativeEvent?.pageY;
+
+    if (typeof pageX === 'number' && typeof pageY === 'number') {
+      setMenuAnchorPosition({ x: pageX, y: pageY });
+      return;
+    }
+
+    settingsHandleRef.current?.measureInWindow((x, y, width, height) => {
+      setMenuAnchorPosition({
+        x: x + width / 2,
+        y: y + height,
+      });
+    });
+  };
 
   return (
     <View
@@ -406,11 +419,19 @@ export const V2Room = ({
 
           {shouldShowRoomControls ? (
             <Pressable
+              ref={settingsHandleRef}
               style={styles.settingsHandle}
               onPress={(event) => {
                 event?.stopPropagation?.();
                 onSelect(room.id);
-                setIsMenuOpen((prev) => !prev);
+                if (isMenuOpen) {
+                  setIsMenuOpen(false);
+                  setMenuAnchorPosition(null);
+                  return;
+                }
+
+                captureSettingsAnchor(event);
+                setIsMenuOpen(true);
               }}
               hitSlop={8}
             >
