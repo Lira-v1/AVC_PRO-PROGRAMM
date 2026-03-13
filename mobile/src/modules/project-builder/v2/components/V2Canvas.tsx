@@ -72,8 +72,8 @@ const ROOM_SCENE_LAYOUT = {
   cardHeight: 86,
   gap: 12,
 };
-const ROOM_SCENE_WIDTH = ROOM_SCENE_LAYOUT.cardWidth * 3 + ROOM_SCENE_LAYOUT.gap * 2;
-const ROOM_SCENE_HEIGHT = ROOM_SCENE_LAYOUT.cardHeight * 4 + ROOM_SCENE_LAYOUT.gap * 3;
+const ROOM_SCENE_CEILING_OFFSET_MM = 500;
+const ROOM_SCENE_CEILING_OFFSET = ROOM_SCENE_CEILING_OFFSET_MM / 10;
 
 
 const getTouchDistance = (first: { locationX: number; locationY: number }, second: { locationX: number; locationY: number }) => {
@@ -129,6 +129,8 @@ export const V2Canvas = ({
   dimensionUnit,
   onDimensionUnitChange,
 }: Props) => {
+  const wallLayoutSlots = getSurfaceLayoutSlotsByCompass(compassViewMode);
+
   const activeRoom = rooms.find((room) => room.id === editorState.activeRoomId) ?? null;
 
   const roomSurfaces = useMemo(() => {
@@ -169,24 +171,62 @@ export const V2Canvas = ({
     startPanY: 0,
   });
 
-  const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
+  const roomSurfaceLayout = useMemo(() => {
     const cardWidth = ROOM_SCENE_LAYOUT.cardWidth;
     const cardHeight = ROOM_SCENE_LAYOUT.cardHeight;
     const gap = ROOM_SCENE_LAYOUT.gap;
-    const left = SCENE_CENTER_X - ROOM_SCENE_WIDTH / 2;
-    const top = SCENE_CENTER_Y - ROOM_SCENE_HEIGHT / 2;
-    const middleColumnX = left + cardWidth + gap;
-    const rightColumnX = middleColumnX + cardWidth + gap;
+    const topY = 0;
+    const middleY = cardHeight + gap;
+    const bottomY = (cardHeight + gap) * 2;
+
+    const basePositions = {
+      [wallLayoutSlots.top]: { x: 0, y: topY },
+      [wallLayoutSlots.left]: { x: -(cardWidth + gap), y: middleY },
+      [wallLayoutSlots.right]: { x: cardWidth + gap, y: middleY },
+      [wallLayoutSlots.bottom]: { x: 0, y: bottomY },
+    } as Record<WallSurface, { x: number; y: number }>;
+
+    const eastWallPosition = basePositions.east;
+    const ceilingPosition = {
+      x: eastWallPosition.x + cardWidth + ROOM_SCENE_CEILING_OFFSET,
+      y: eastWallPosition.y,
+    };
+
+    const surfacesToCenter: SurfaceSceneItem[] = [
+      { x: basePositions.north.x, y: basePositions.north.y, width: cardWidth, height: cardHeight },
+      { x: basePositions.south.x, y: basePositions.south.y, width: cardWidth, height: cardHeight },
+      { x: basePositions.west.x, y: basePositions.west.y, width: cardWidth, height: cardHeight },
+      { x: basePositions.east.x, y: basePositions.east.y, width: cardWidth, height: cardHeight },
+      { x: ceilingPosition.x, y: ceilingPosition.y, width: cardWidth, height: cardHeight },
+    ];
+
+    const bounds = getSurfaceSceneBounds(surfacesToCenter);
+    const boundsCenterX = bounds.x + bounds.width / 2;
+    const boundsCenterY = bounds.y + bounds.height / 2;
+    const shiftX = SCENE_CENTER_X - boundsCenterX;
+    const shiftY = SCENE_CENTER_Y - boundsCenterY;
+
+    return {
+      north: { x: basePositions.north.x + shiftX, y: basePositions.north.y + shiftY },
+      south: { x: basePositions.south.x + shiftX, y: basePositions.south.y + shiftY },
+      west: { x: basePositions.west.x + shiftX, y: basePositions.west.y + shiftY },
+      east: { x: basePositions.east.x + shiftX, y: basePositions.east.y + shiftY },
+      ceiling: { x: ceilingPosition.x + shiftX, y: ceilingPosition.y + shiftY },
+    };
+  }, [wallLayoutSlots.bottom, wallLayoutSlots.left, wallLayoutSlots.right, wallLayoutSlots.top]);
+
+  const roomSurfaceSceneItems = useMemo<SurfaceSceneItem[]>(() => {
+    const cardWidth = ROOM_SCENE_LAYOUT.cardWidth;
+    const cardHeight = ROOM_SCENE_LAYOUT.cardHeight;
 
     return [
-      { x: middleColumnX, y: top + cardHeight + gap, width: cardWidth, height: cardHeight },
-      { x: left, y: top + (cardHeight + gap) * 2, width: cardWidth, height: cardHeight },
-      { x: rightColumnX, y: top + (cardHeight + gap) * 2, width: cardWidth, height: cardHeight },
-      { x: middleColumnX, y: top + (cardHeight + gap) * 3, width: cardWidth, height: cardHeight },
-      { x: middleColumnX, y: top + (cardHeight + gap) * 2, width: cardWidth, height: cardHeight },
-      { x: middleColumnX, y: top, width: cardWidth, height: cardHeight },
+      { x: roomSurfaceLayout.north.x, y: roomSurfaceLayout.north.y, width: cardWidth, height: cardHeight },
+      { x: roomSurfaceLayout.south.x, y: roomSurfaceLayout.south.y, width: cardWidth, height: cardHeight },
+      { x: roomSurfaceLayout.west.x, y: roomSurfaceLayout.west.y, width: cardWidth, height: cardHeight },
+      { x: roomSurfaceLayout.east.x, y: roomSurfaceLayout.east.y, width: cardWidth, height: cardHeight },
+      { x: roomSurfaceLayout.ceiling.x, y: roomSurfaceLayout.ceiling.y, width: cardWidth, height: cardHeight },
     ];
-  }, []);
+  }, [roomSurfaceLayout]);
 
   const activeWallSceneItem = useMemo<SurfaceSceneItem | null>(() => {
     if (!activeWallObject) {
@@ -280,9 +320,10 @@ export const V2Canvas = ({
       return;
     }
 
-    centerCurrentScene(camera.zoom);
+    const targetZoom = editorState.level === 'room' ? 1 : camera.zoom;
+    centerCurrentScene(targetZoom);
     setLastCenteredSceneKey(sceneCenterKey);
-  }, [camera.zoom, centerCurrentScene, lastCenteredSceneKey, sceneCenterKey, viewportSize.height, viewportSize.width]);
+  }, [camera.zoom, centerCurrentScene, editorState.level, lastCenteredSceneKey, sceneCenterKey, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -449,53 +490,22 @@ export const V2Canvas = ({
     </View>
   );
 
-  const wallLayoutSlots = getSurfaceLayoutSlotsByCompass(compassViewMode);
-
   const renderRoomScene = () => (
     <View style={styles.transformedScene} pointerEvents="box-none">
-      <View
-        style={[
-          styles.roomSceneLayout,
-          {
-            left: SCENE_CENTER_X - ROOM_SCENE_WIDTH / 2,
-            top: SCENE_CENTER_Y - ROOM_SCENE_HEIGHT / 2,
-            width: ROOM_SCENE_WIDTH,
-          },
-        ]}
-        pointerEvents="box-none"
-      >
-        <View style={styles.rowTriple}>
-          <View style={styles.surfaceSlotSpacer} />
-          <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
-          </View>
-          <View style={styles.surfaceSlotSpacer} />
-        </View>
-        <View style={styles.rowTriple}>
-          <View style={styles.surfaceSlotSpacer} />
-          <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.top) ?? null, true, onOpenWall)}
-          </View>
-          <View style={styles.surfaceSlotSpacer} />
-        </View>
-        <View style={styles.rowTriple}>
-          <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.left) ?? null, true, onOpenWall)}
-          </View>
-          <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'floor') ?? null, false, onOpenWall)}
-          </View>
-          <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.right) ?? null, true, onOpenWall)}
-          </View>
-        </View>
-        <View style={styles.rowTriple}>
-          <View style={styles.surfaceSlotSpacer} />
-          <View style={styles.surfaceSlot}>
-            {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === wallLayoutSlots.bottom) ?? null, true, onOpenWall)}
-          </View>
-          <View style={styles.surfaceSlotSpacer} />
-        </View>
+      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.north.x, top: roomSurfaceLayout.north.y }]}>
+        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'north') ?? null, true, onOpenWall)}
+      </View>
+      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.south.x, top: roomSurfaceLayout.south.y }]}>
+        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'south') ?? null, true, onOpenWall)}
+      </View>
+      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.west.x, top: roomSurfaceLayout.west.y }]}>
+        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'west') ?? null, true, onOpenWall)}
+      </View>
+      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.east.x, top: roomSurfaceLayout.east.y }]}>
+        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'east') ?? null, true, onOpenWall)}
+      </View>
+      <View style={[styles.roomSceneSlot, { left: roomSurfaceLayout.ceiling.x, top: roomSurfaceLayout.ceiling.y }]}>
+        {renderSurfaceCard(roomSurfaces.find((surface) => surface.direction === 'ceiling') ?? null, false, onOpenWall)}
       </View>
     </View>
   );
@@ -716,25 +726,15 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   gearIcon: { fontSize: 18 },
-  roomSceneLayout: {
+  roomSceneSlot: {
     position: 'absolute',
-    gap: ROOM_SCENE_LAYOUT.gap,
+    width: ROOM_SCENE_LAYOUT.cardWidth,
   },
   wallMetaLayer: {
     position: 'absolute',
     left: 16,
     bottom: 16,
     width: 260,
-  },
-  rowTriple: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  surfaceSlot: {
-    width: ROOM_SCENE_LAYOUT.cardWidth,
-  },
-  surfaceSlotSpacer: {
-    width: ROOM_SCENE_LAYOUT.cardWidth,
   },
   surfacePressable: {
     flex: 1,
