@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CoordinateSystem } from '../../engineering/canvasV3/CoordinateSystem';
 import { CanvasSnapshot } from '../../engineering/canvasV3/CanvasTypes';
 
 const createEngine = () => new CanvasEngine(1000, 1000);
@@ -23,8 +22,8 @@ export const CanvasV3DevScreen = () => {
   };
 
   const onCanvasPress = (event: GestureResponderEvent) => {
-    const world = CoordinateSystem.screenToWorld(engineRef.current.camera, { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY }, snapshot.canvasState.viewport);
-    const snapped = engineRef.current.grid.snap(world, snapshot.camera.zoom);
+    const world = engineRef.current.screenToWorld({ x: event.nativeEvent.locationX, y: event.nativeEvent.locationY });
+    const snapped = engineRef.current.snapToGrid(world);
     console.log('[CanvasV3Dev] world:', world, 'snapped:', snapped);
   };
 
@@ -47,11 +46,10 @@ export const CanvasV3DevScreen = () => {
     [],
   );
 
-  const centerWorld = CoordinateSystem.screenToWorld(
-    engineRef.current.camera,
-    { x: snapshot.canvasState.viewport.width / 2, y: snapshot.canvasState.viewport.height / 2 },
-    snapshot.canvasState.viewport,
-  );
+  const centerWorld = engineRef.current.screenToWorld({
+    x: snapshot.canvasState.viewport.width / 2,
+    y: snapshot.canvasState.viewport.height / 2,
+  });
 
   return (
     <View style={styles.root}>
