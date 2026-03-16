@@ -4,15 +4,18 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 export class CameraSystem {
   private state: CameraState;
+  private readonly initialState: CameraState;
 
   constructor(initial?: Partial<CameraState>) {
-    this.state = {
+    this.initialState = {
       zoom: initial?.zoom ?? 1,
       panX: initial?.panX ?? 0,
       panY: initial?.panY ?? 0,
       minZoom: initial?.minZoom ?? 0.25,
       maxZoom: initial?.maxZoom ?? 4,
     };
+
+    this.state = { ...this.initialState };
   }
 
   getState(): CameraState {
@@ -25,6 +28,10 @@ export class CameraSystem {
 
   zoomBy(factor: number) {
     this.setZoom(this.state.zoom * factor);
+  }
+
+  resetView() {
+    this.state = { ...this.initialState };
   }
 
   panByScreenDelta(deltaX: number, deltaY: number) {

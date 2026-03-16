@@ -46,3 +46,15 @@ export type CanvasSnapshot = {
   grid: GridState;
   canvasState: CanvasState;
 };
+
+export type CanvasDebugState = {
+  zoom: number;
+  panX: number;
+  panY: number;
+  minZoom: number;
+  maxZoom: number;
+  viewport: Viewport;
+  worldCenter: WorldPoint;
+  screenCenter: ScreenPoint;
+  worldAtScreenCenter: WorldPoint;
+};
