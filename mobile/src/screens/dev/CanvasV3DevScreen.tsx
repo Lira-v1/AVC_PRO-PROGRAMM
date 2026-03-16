@@ -2,23 +2,25 @@ import React, { useMemo, useRef, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CanvasSnapshot } from '../../engineering/canvasV3/CanvasTypes';
+import { CanvasDebugState, CanvasSnapshot, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
 const createEngine = () => new CanvasEngine(1000, 1000);
 
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
+  const [debugState, setDebugState] = useState<CanvasDebugState>(engineRef.current.getDebugState());
   const dragRef = useRef({ x: 0, y: 0 });
 
-  const refreshSnapshot = () => {
+  const refreshState = () => {
     setSnapshot(engineRef.current.getSnapshot());
+    setDebugState(engineRef.current.getDebugState());
   };
 
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     engineRef.current.setViewport({ width, height });
-    refreshSnapshot();
+    refreshState();
   };
 
   const onCanvasPress = (event: GestureResponderEvent) => {
@@ -40,32 +42,45 @@ export const CanvasV3DevScreen = () => {
           dragRef.current = { x: gestureState.dx, y: gestureState.dy };
 
           engineRef.current.panBy(deltaX, deltaY);
-          refreshSnapshot();
+          refreshState();
         },
       }),
     [],
   );
 
-  const centerWorld = engineRef.current.screenToWorld({
-    x: snapshot.canvasState.viewport.width / 2,
-    y: snapshot.canvasState.viewport.height / 2,
-  });
+  const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
+  const worldCenterMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
 
   return (
     <View style={styles.root}>
       <AppHeader title="Canvas V3 Dev" />
-      <View style={styles.metaPanel}>
-        <Text style={styles.metaText}>zoom: {snapshot.camera.zoom.toFixed(2)}</Text>
-        <Text style={styles.metaText}>pan: ({snapshot.camera.panX.toFixed(1)}, {snapshot.camera.panY.toFixed(1)})</Text>
-        <Text style={styles.metaText}>center world: ({centerWorld.x.toFixed(1)}, {centerWorld.y.toFixed(1)})</Text>
+
+      <View style={styles.inspectorPanel}>
+        <Text style={styles.inspectorTitle}>Dev Inspector</Text>
+        <Text style={styles.metaText}>zoom: {debugState.zoom.toFixed(2)}</Text>
+        <Text style={styles.metaText}>
+          pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})
+        </Text>
+        <Text style={styles.metaText}>
+          viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}
+        </Text>
+        <Text style={styles.metaText}>
+          world center: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})
+        </Text>
+        <Text style={styles.metaText}>
+          screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})
+        </Text>
+        <Text style={styles.metaText}>
+          world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
+        </Text>
       </View>
 
-      <View style={styles.zoomControls}>
+      <View style={styles.controlsRow}>
         <Pressable
           style={styles.zoomButton}
           onPress={() => {
             engineRef.current.zoomBy(0.8);
-            refreshSnapshot();
+            refreshState();
           }}
         >
           <Text style={styles.zoomButtonText}>−</Text>
@@ -74,10 +89,19 @@ export const CanvasV3DevScreen = () => {
           style={styles.zoomButton}
           onPress={() => {
             engineRef.current.zoomBy(1.25);
-            refreshSnapshot();
+            refreshState();
           }}
         >
           <Text style={styles.zoomButtonText}>+</Text>
+        </Pressable>
+        <Pressable
+          style={styles.resetButton}
+          onPress={() => {
+            engineRef.current.resetView();
+            refreshState();
+          }}
+        >
+          <Text style={styles.resetButtonText}>Reset View</Text>
         </Pressable>
       </View>
 
@@ -104,7 +128,60 @@ export const CanvasV3DevScreen = () => {
               ]}
             />
           ))}
-          <View style={styles.centerMarker} />
+
+          <View
+            style={[
+              styles.viewportXAxis,
+              {
+                top: debugState.screenCenter.y,
+              },
+            ]}
+          />
+          <View
+            style={[
+              styles.viewportYAxis,
+              {
+                left: debugState.screenCenter.x,
+              },
+            ]}
+          />
+
+          <View
+            style={[
+              styles.worldXAxis,
+              {
+                top: worldOrigin.y,
+              },
+            ]}
+          />
+          <View
+            style={[
+              styles.worldYAxis,
+              {
+                left: worldOrigin.x,
+              },
+            ]}
+          />
+
+          <View
+            style={[
+              styles.worldCenterMarker,
+              {
+                left: worldCenterMarker.x - 4,
+                top: worldCenterMarker.y - 4,
+              },
+            ]}
+          />
+
+          <View
+            style={[
+              styles.viewportCenterMarker,
+              {
+                left: debugState.screenCenter.x - 5,
+                top: debugState.screenCenter.y - 5,
+              },
+            ]}
+          />
         </View>
       </Pressable>
     </View>
@@ -116,21 +193,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  metaPanel: {
+  inspectorPanel: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#E9EEF7',
     gap: 4,
+    backgroundColor: '#F5F8FF',
+  },
+  inspectorTitle: {
+    color: '#1D2D4A',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   metaText: {
     color: '#24324A',
     fontSize: 13,
   },
-  zoomControls: {
+  controlsRow: {
     flexDirection: 'row',
     gap: 8,
     padding: 12,
+    alignItems: 'center',
   },
   zoomButton: {
     width: 42,
@@ -146,6 +231,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 28,
   },
+  resetButton: {
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#203054',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  resetButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   canvasArea: {
     flex: 1,
     margin: 12,
@@ -159,14 +257,48 @@ const styles = StyleSheet.create({
     position: 'absolute',
     backgroundColor: '#D3DFF5',
   },
-  centerMarker: {
+  viewportXAxis: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255, 122, 0, 0.45)',
+  },
+  viewportYAxis: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: 'rgba(255, 122, 0, 0.45)',
+  },
+  worldXAxis: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: 'rgba(220, 38, 38, 0.6)',
+  },
+  worldYAxis: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 2,
+    backgroundColor: 'rgba(220, 38, 38, 0.6)',
+  },
+  worldCenterMarker: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+  },
+  viewportCenterMarker: {
     position: 'absolute',
     width: 10,
     height: 10,
     borderRadius: 5,
     backgroundColor: '#2D5BFF',
-    left: '50%',
-    top: '50%',
-    transform: [{ translateX: -5 }, { translateY: -5 }],
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
   },
 });
