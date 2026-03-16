@@ -1,6 +1,7 @@
 import { CameraSystem } from './CameraSystem';
+import { CoordinateSystem } from './CoordinateSystem';
 import { GridSystem } from './GridSystem';
-import { CanvasSnapshot, CanvasState, Viewport } from './CanvasTypes';
+import { CanvasSnapshot, CanvasState, ScreenPoint, Viewport, WorldPoint } from './CanvasTypes';
 
 export class CanvasEngine {
   worldWidth: number;
@@ -34,6 +35,18 @@ export class CanvasEngine {
 
   zoomBy(factor: number) {
     this.camera.zoomBy(factor);
+  }
+
+  screenToWorld(point: ScreenPoint): WorldPoint {
+    return CoordinateSystem.screenToWorld(this.camera, point, this.canvasState.viewport);
+  }
+
+  worldToScreen(point: WorldPoint): ScreenPoint {
+    return CoordinateSystem.worldToScreen(this.camera, point, this.canvasState.viewport);
+  }
+
+  snapToGrid(point: WorldPoint): WorldPoint {
+    return this.grid.snap(point, this.camera.getState().zoom);
   }
 
   getSnapshot(): CanvasSnapshot {
