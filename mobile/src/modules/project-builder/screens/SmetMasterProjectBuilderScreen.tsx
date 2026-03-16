@@ -39,11 +39,12 @@ type MainStackParamList = {
   Registration: undefined;
   Placeholder: { title: string };
   ChatMaster: undefined;
+  CanvasV3Dev: undefined;
 };
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Estimate'>;
 
-export const SmetMasterProjectBuilderScreen = ({}: Props) => {
+export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
   const [mode, setMode] = useState<'home' | 'intake' | 'project' | 'project_v2'>('home');
   const [input, setInput] = useState('');
   const [isToolsOpen, setIsToolsOpen] = useState(false);
@@ -317,6 +318,14 @@ export const SmetMasterProjectBuilderScreen = ({}: Props) => {
               }}
             >
               <Text style={[styles.primaryActionButtonText, styles.secondaryActionButtonText]}>Создать проект V2</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryActionButton, styles.secondaryActionButton]}
+              onPress={() => {
+                navigation.navigate('CanvasV3Dev');
+              }}
+            >
+              <Text style={[styles.primaryActionButtonText, styles.secondaryActionButtonText]}>Создать проект V3</Text>
             </Pressable>
           </View>
         </View>

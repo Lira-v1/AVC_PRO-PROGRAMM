@@ -9,6 +9,7 @@ import { RegistrationScreen } from '../screens/RegistrationScreen';
 import { ServicesScreen } from '../screens/ServicesScreen';
 import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
 import { ChatMasterScreen } from '../screens/ChatMasterScreen';
+import { CanvasV3DevScreen } from '../screens/dev/CanvasV3DevScreen';
 import { SmetMasterProjectBuilderScreen } from '../modules/project-builder';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
@@ -27,6 +28,7 @@ type MainStackParamList = {
   Registration: undefined;
   Placeholder: { title: string };
   ChatMaster: undefined;
+  CanvasV3Dev: undefined;
 };
 
 type RootStackParamList = {
@@ -117,6 +119,7 @@ const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.
       <MainStack.Screen name="Registration" component={RegistrationScreen} />
       <MainStack.Screen name="Placeholder" component={PlatformPlaceholderScreen} />
       <MainStack.Screen name="ChatMaster" component={ChatMasterScreen} />
+      <MainStack.Screen name="CanvasV3Dev" component={CanvasV3DevScreen} />
     </MainStack.Navigator>
   );
 };
