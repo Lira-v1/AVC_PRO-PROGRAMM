@@ -37,6 +37,8 @@ export type ScreenEdge = {
   center: ScreenPoint;
 };
 
+export type RoomResizeHandleId = 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left';
+
 export type RoomModel = {
   roomId: string;
   centerX: number;
@@ -68,6 +70,13 @@ export type RoomScreenGeometry = {
     width: number;
     height: number;
   };
+};
+
+export type RoomResizeHandleScreenGeometry = {
+  roomId: string;
+  handleId: RoomResizeHandleId;
+  point: ScreenPoint;
+  isActive: boolean;
 };
 
 export type CameraState = {
@@ -120,6 +129,8 @@ export type CanvasDebugState = {
   worldAtScreenCenter: WorldPoint;
   activeRoomId: string | null;
   isDraggingRoom: boolean;
+  isResizingRoom: boolean;
+  activeResizeHandleId: RoomResizeHandleId | null;
   roomIds: string[];
   lastPointerWorldX: number | null;
   lastPointerWorldY: number | null;

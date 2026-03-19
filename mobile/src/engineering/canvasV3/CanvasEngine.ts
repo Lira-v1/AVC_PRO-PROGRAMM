@@ -6,6 +6,8 @@ import {
   CanvasSnapshot,
   CanvasState,
   RoomModel,
+  RoomResizeHandleId,
+  RoomResizeHandleScreenGeometry,
   RoomScreenGeometry,
   RoomWorldGeometry,
   ScreenPoint,
@@ -16,6 +18,7 @@ import { RoomGeometry } from './RoomGeometry';
 import { RoomRenderer } from './RoomRenderer';
 import { RoomSelectionSystem } from './RoomSelectionSystem';
 import { RoomTransformSystem } from './RoomTransformSystem';
+import { RoomResizeSystem } from './RoomResizeSystem';
 
 const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
 const BASE_ZOOM = 0.03;
@@ -55,6 +58,7 @@ export class CanvasEngine {
   canvasState: CanvasState;
   selection: RoomSelectionSystem;
   transform: RoomTransformSystem;
+  resize: RoomResizeSystem;
   private rooms: RoomModel[] = [];
   private lastPointerWorldPoint: WorldPoint | null = null;
 
@@ -65,6 +69,7 @@ export class CanvasEngine {
     this.grid = new GridSystem(1);
     this.selection = new RoomSelectionSystem();
     this.transform = new RoomTransformSystem();
+    this.resize = new RoomResizeSystem();
     this.canvasState = {
       isReady: false,
       viewport: { width: 0, height: 0 },
@@ -84,6 +89,8 @@ export class CanvasEngine {
     this.selection.setRooms(this.rooms);
     this.transform.setRooms(this.rooms);
     this.transform.setActiveRoomId(this.selection.getActiveRoomId());
+    this.resize.setRooms(this.rooms);
+    this.resize.setActiveRoomId(this.selection.getActiveRoomId());
   }
 
   getRooms(): RoomModel[] {
@@ -101,12 +108,14 @@ export class CanvasEngine {
   selectRoom(roomId: string): string | null {
     const activeRoomId = this.selection.selectRoom(roomId);
     this.transform.setActiveRoomId(activeRoomId);
+    this.resize.setActiveRoomId(activeRoomId);
     return activeRoomId;
   }
 
   clearActiveRoom(): string | null {
     const activeRoomId = this.selection.clearSelection();
     this.transform.setActiveRoomId(activeRoomId);
+    this.resize.setActiveRoomId(activeRoomId);
     return activeRoomId;
   }
 
@@ -124,11 +133,18 @@ export class CanvasEngine {
     const worldPoint = this.updateLastPointer(point);
     const activeRoomId = this.selection.selectRoomAt(worldPoint);
     this.transform.setActiveRoomId(activeRoomId);
+    this.resize.setActiveRoomId(activeRoomId);
     return activeRoomId;
   }
 
   startDrag(): boolean {
+    this.resize.endResize();
     return this.transform.startDrag();
+  }
+
+  startResize(handleId: RoomResizeHandleId): boolean {
+    this.transform.endDrag();
+    return this.resize.startResize(handleId);
   }
 
   dragBy(screenDelta: ScreenPoint): RoomModel | null {
@@ -140,6 +156,17 @@ export class CanvasEngine {
 
   endDrag() {
     this.transform.endDrag();
+  }
+
+  resizeBy(screenDelta: ScreenPoint): RoomModel | null {
+    const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
+    const room = this.resize.resizeByWorldDelta(worldDelta);
+
+    return room ? { ...room } : null;
+  }
+
+  endResize() {
+    this.resize.endResize();
   }
 
   panBy(deltaX: number, deltaY: number) {
@@ -187,6 +214,8 @@ export class CanvasEngine {
       worldAtScreenCenter: this.screenToWorld(screenCenter),
       activeRoomId: this.getActiveRoomId(),
       isDraggingRoom: this.transform.isDragActive(),
+      isResizingRoom: this.resize.isResizeActive(),
+      activeResizeHandleId: this.resize.getActiveHandleId(),
       roomIds: this.rooms.map((room) => room.roomId),
       lastPointerWorldX: this.lastPointerWorldPoint?.x ?? null,
       lastPointerWorldY: this.lastPointerWorldPoint?.y ?? null,
@@ -211,6 +240,30 @@ export class CanvasEngine {
 
   getRoomScreenGeometry(room: RoomModel): RoomScreenGeometry {
     return RoomRenderer.toScreenGeometry(this, this.getRoomGeometry(room));
+  }
+
+  getActiveRoomResizeHandles(): RoomResizeHandleScreenGeometry[] {
+    const activeRoom = this.getActiveRoom();
+
+    if (!activeRoom || Math.abs(activeRoom.rotationDeg) > 0.001) {
+      return [];
+    }
+
+    return RoomRenderer.getResizeHandles(this, this.getRoomGeometry(activeRoom), this.resize.getActiveHandleId());
+  }
+
+  getResizeHandleAtScreenPoint(point: ScreenPoint, hitRadiusPx = 14): RoomResizeHandleId | null {
+    const handles = this.getActiveRoomResizeHandles();
+
+    for (const handle of handles) {
+      const distance = Math.hypot(point.x - handle.point.x, point.y - handle.point.y);
+
+      if (distance <= hitRadiusPx) {
+        return handle.handleId;
+      }
+    }
+
+    return null;
   }
 
   getSnapshot(): CanvasSnapshot {

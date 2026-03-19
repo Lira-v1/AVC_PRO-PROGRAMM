@@ -8,7 +8,7 @@ const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
 const DRAG_THRESHOLD_PX = 3;
 
-type DragMode = 'idle' | 'room' | 'pan';
+type DragMode = 'idle' | 'room' | 'resize' | 'pan';
 
 type DragSession = {
   mode: DragMode;
@@ -62,6 +62,8 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `roomIds: ${roomIds}`,
     `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
     `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
+    `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
+    `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
   ].join('\n');
 };
 
@@ -110,6 +112,7 @@ export const CanvasV3DevScreen = () => {
   const resetDragSession = useCallback(() => {
     dragSessionRef.current = { ...IDLE_DRAG_SESSION };
     engineRef.current.endDrag();
+    engineRef.current.endResize();
   }, []);
 
   const toScreenPoint = useCallback((nativeEvent: { locationX?: number; locationY?: number; offsetX?: number; offsetY?: number }) => {
@@ -129,13 +132,15 @@ export const CanvasV3DevScreen = () => {
 
   const beginInteraction = useCallback(
     (screenPoint: ScreenPoint, pointerId?: number) => {
+      const resizeHandleId = engineRef.current.getResizeHandleAtScreenPoint(screenPoint);
       const activeRoomIdBeforePress = engineRef.current.getActiveRoomId();
       const hitRoomId = engineRef.current.getRoomIdAtScreenPoint(screenPoint);
-      const activeRoomId = engineRef.current.handleTap(screenPoint);
-      const shouldDragRoom = Boolean(hitRoomId && activeRoomIdBeforePress === hitRoomId && activeRoomId === hitRoomId);
+      const shouldResizeRoom = Boolean(resizeHandleId && activeRoomIdBeforePress);
+      const activeRoomId = shouldResizeRoom ? activeRoomIdBeforePress : engineRef.current.handleTap(screenPoint);
+      const shouldDragRoom = !shouldResizeRoom && Boolean(hitRoomId && activeRoomIdBeforePress === hitRoomId && activeRoomId === hitRoomId);
 
       dragSessionRef.current = {
-        mode: shouldDragRoom ? 'room' : 'pan',
+        mode: shouldResizeRoom ? 'resize' : shouldDragRoom ? 'room' : 'pan',
         pointerId: pointerId ?? null,
         started: true,
         moved: false,
@@ -145,10 +150,13 @@ export const CanvasV3DevScreen = () => {
         lastY: screenPoint.y,
       };
 
-      if (shouldDragRoom) {
+      if (shouldResizeRoom && resizeHandleId) {
+        engineRef.current.startResize(resizeHandleId);
+      } else if (shouldDragRoom) {
         engineRef.current.startDrag();
       } else {
         engineRef.current.endDrag();
+        engineRef.current.endResize();
       }
 
       refreshState();
@@ -190,6 +198,8 @@ export const CanvasV3DevScreen = () => {
 
       if (session.mode === 'room') {
         engineRef.current.dragBy({ x: deltaX, y: deltaY });
+      } else if (session.mode === 'resize') {
+        engineRef.current.resizeBy({ x: deltaX, y: deltaY });
       } else {
         engineRef.current.panBy(deltaX, deltaY);
       }
@@ -287,6 +297,7 @@ export const CanvasV3DevScreen = () => {
   );
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
+  const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
   const roomData = engineRef.current.getRooms();
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
@@ -399,20 +410,22 @@ export const CanvasV3DevScreen = () => {
                   />
                 ))}
 
-                {roomGeometry.corners.map((corner, index) => (
-                  <View
-                    key={`${roomGeometry.roomId}-corner-${index}`}
-                    pointerEvents="none"
-                    style={[
-                      styles.roomCornerMarker,
-                      roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
-                      {
-                        left: corner.x - (roomGeometry.isActive ? 4 : 3),
-                        top: corner.y - (roomGeometry.isActive ? 4 : 3),
-                      },
-                    ]}
-                  />
-                ))}
+                {roomGeometry.isActive
+                  ? roomGeometry.corners.map((corner, index) => (
+                      <View
+                        key={`${roomGeometry.roomId}-corner-${index}`}
+                        pointerEvents="none"
+                        style={[
+                          styles.roomCornerMarker,
+                          styles.roomCornerMarkerActive,
+                          {
+                            left: corner.x - 4,
+                            top: corner.y - 4,
+                          },
+                        ]}
+                      />
+                    ))
+                  : null}
 
                 <View
                   style={[
@@ -426,6 +439,21 @@ export const CanvasV3DevScreen = () => {
                   pointerEvents="none"
                 />
               </React.Fragment>
+            ))}
+
+            {resizeHandles.map((handle) => (
+              <View
+                key={`${handle.roomId}-${handle.handleId}-resize-handle`}
+                pointerEvents="none"
+                style={[
+                  styles.resizeHandle,
+                  handle.isActive ? styles.resizeHandleActive : null,
+                  {
+                    left: handle.point.x - (handle.isActive ? 6 : 5),
+                    top: handle.point.y - (handle.isActive ? 6 : 5),
+                  },
+                ]}
+              />
             ))}
 
             {isInspectorVisible ? (
@@ -452,6 +480,8 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
                   <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>activeResizeHandleId: {debugState.activeResizeHandleId ?? 'null'}</Text>
                   <Text style={styles.metaText}>
                     lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
                   </Text>
@@ -716,6 +746,27 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  resizeHandle: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  resizeHandleActive: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#DBEAFE',
+    borderColor: '#1D4ED8',
+    borderWidth: 2,
   },
   roomCenterMarker: {
     position: 'absolute',
