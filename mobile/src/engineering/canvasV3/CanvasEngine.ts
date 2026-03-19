@@ -23,32 +23,17 @@ import { RoomRotateSystem } from './RoomRotateSystem';
 
 const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
 const BASE_ZOOM = 0.03;
+const DISPLAY_ZOOM_STEP = 20;
 const MIN_ZOOM = 0.005;
 const MAX_ZOOM = 6;
 const ZOOM_EPSILON = 1e-9;
 
-const getDisplayZoom = (cameraZoom: number, minZoom: number, baseZoom: number, maxZoom: number) => {
+const getDisplayZoom = (cameraZoom: number, _minZoom: number, baseZoom: number, _maxZoom: number) => {
   if (Math.abs(cameraZoom - baseZoom) <= ZOOM_EPSILON) {
     return 0;
   }
 
-  if (cameraZoom > baseZoom) {
-    const positiveRange = Math.log(maxZoom / baseZoom);
-
-    if (positiveRange === 0) {
-      return 0;
-    }
-
-    return Math.min(6, Math.max(0, (Math.log(cameraZoom / baseZoom) / positiveRange) * 6));
-  }
-
-  const negativeRange = Math.log(baseZoom / minZoom);
-
-  if (negativeRange === 0) {
-    return 0;
-  }
-
-  return Math.max(-6, Math.min(0, (Math.log(cameraZoom / baseZoom) / negativeRange) * 6));
+  return Math.log(cameraZoom / baseZoom) / Math.log(2) * DISPLAY_ZOOM_STEP;
 };
 
 export class CanvasEngine {
@@ -68,7 +53,7 @@ export class CanvasEngine {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
     this.camera = new CameraSystem({ zoom: BASE_ZOOM, panX: 0, panY: 0, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
-    this.grid = new GridSystem(1);
+    this.grid = new GridSystem(250);
     this.selection = new RoomSelectionSystem();
     this.transform = new RoomTransformSystem();
     this.resize = new RoomResizeSystem();
@@ -221,6 +206,8 @@ export class CanvasEngine {
     const screenCenter = this.getScreenCenter();
     const displayZoom = getDisplayZoom(camera.zoom, camera.minZoom, BASE_ZOOM, camera.maxZoom);
 
+    const gridMetrics = this.grid.getGridMetrics(displayZoom);
+
     return {
       cameraZoom: camera.zoom,
       displayZoom,
@@ -239,6 +226,9 @@ export class CanvasEngine {
       activeResizeHandleId: this.resize.getActiveHandleId(),
       activeRoomRotationDeg: this.getActiveRoom()?.rotationDeg ?? null,
       roomIds: this.rooms.map((room) => room.roomId),
+      gridStepMm: gridMetrics.gridStepMm,
+      gridLevel: gridMetrics.gridLevel,
+      cellsPerMeter: gridMetrics.cellsPerMeter,
       lastPointerWorldX: this.lastPointerWorldPoint?.x ?? null,
       lastPointerWorldY: this.lastPointerWorldPoint?.y ?? null,
     };
@@ -253,7 +243,10 @@ export class CanvasEngine {
   }
 
   snapToGrid(point: WorldPoint): WorldPoint {
-    return this.grid.snap(point, this.camera.getState().zoom);
+    const camera = this.camera.getState();
+    const displayZoom = getDisplayZoom(camera.zoom, camera.minZoom, BASE_ZOOM, camera.maxZoom);
+
+    return this.grid.snap(point, camera.zoom, displayZoom);
   }
 
   getRoomGeometry(room: RoomModel): RoomWorldGeometry {
@@ -293,7 +286,7 @@ export class CanvasEngine {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       camera: this.camera.getState(),
-      grid: this.grid.getGridState(this.camera, this.canvasState.viewport),
+      grid: this.grid.getGridState(this.camera, this.canvasState.viewport, getDisplayZoom(this.camera.getState().zoom, this.camera.getState().minZoom, BASE_ZOOM, this.camera.getState().maxZoom)),
       canvasState: this.canvasState,
       activeRoomId: this.getActiveRoomId(),
       roomIds: this.rooms.map((room) => room.roomId),

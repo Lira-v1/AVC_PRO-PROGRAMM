@@ -98,6 +98,9 @@ export type GridLine = {
 export type GridState = {
   baseStep: number;
   snapStep: number;
+  gridStepMm: number;
+  gridLevel: string;
+  cellsPerMeter: number;
   lines: GridLine[];
 };
 
@@ -134,6 +137,9 @@ export type CanvasDebugState = {
   activeResizeHandleId: RoomResizeHandleId | null;
   activeRoomRotationDeg: number | null;
   roomIds: string[];
+  gridStepMm: number;
+  gridLevel: string;
+  cellsPerMeter: number;
   lastPointerWorldX: number | null;
   lastPointerWorldY: number | null;
 };
