@@ -107,7 +107,8 @@ export type CanvasSnapshot = {
 };
 
 export type CanvasDebugState = {
-  zoom: number;
+  cameraZoom: number;
+  displayZoom: number;
   zoomPercent: number;
   panX: number;
   panY: number;

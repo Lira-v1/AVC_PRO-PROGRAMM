@@ -18,6 +18,34 @@ import { RoomSelectionSystem } from './RoomSelectionSystem';
 import { RoomTransformSystem } from './RoomTransformSystem';
 
 const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
+const BASE_ZOOM = 0.03;
+const MIN_ZOOM = 0.005;
+const MAX_ZOOM = 6;
+const ZOOM_EPSILON = 1e-9;
+
+const getDisplayZoom = (cameraZoom: number, minZoom: number, baseZoom: number, maxZoom: number) => {
+  if (Math.abs(cameraZoom - baseZoom) <= ZOOM_EPSILON) {
+    return 0;
+  }
+
+  if (cameraZoom > baseZoom) {
+    const positiveRange = Math.log(maxZoom / baseZoom);
+
+    if (positiveRange === 0) {
+      return 0;
+    }
+
+    return Math.min(6, Math.max(0, (Math.log(cameraZoom / baseZoom) / positiveRange) * 6));
+  }
+
+  const negativeRange = Math.log(baseZoom / minZoom);
+
+  if (negativeRange === 0) {
+    return 0;
+  }
+
+  return Math.max(-6, Math.min(0, (Math.log(cameraZoom / baseZoom) / negativeRange) * 6));
+};
 
 export class CanvasEngine {
   worldWidth: number;
@@ -33,7 +61,7 @@ export class CanvasEngine {
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.camera = new CameraSystem({ zoom: 0.2, panX: 0, panY: 0, minZoom: 0.03, maxZoom: 6 });
+    this.camera = new CameraSystem({ zoom: BASE_ZOOM, panX: 0, panY: 0, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
     this.grid = new GridSystem(1);
     this.selection = new RoomSelectionSystem();
     this.transform = new RoomTransformSystem();
@@ -143,9 +171,11 @@ export class CanvasEngine {
   getDebugState(): CanvasDebugState {
     const camera = this.camera.getState();
     const screenCenter = this.getScreenCenter();
+    const displayZoom = getDisplayZoom(camera.zoom, camera.minZoom, BASE_ZOOM, camera.maxZoom);
 
     return {
-      zoom: camera.zoom,
+      cameraZoom: camera.zoom,
+      displayZoom,
       zoomPercent: Math.round(camera.zoom * 100),
       panX: camera.panX,
       panY: camera.panY,

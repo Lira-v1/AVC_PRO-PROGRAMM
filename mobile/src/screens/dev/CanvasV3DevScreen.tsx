@@ -52,9 +52,11 @@ const createEngine = () => {
 const formatDebugText = (debugState: CanvasDebugState) => {
   const viewport = `${debugState.viewport.width.toFixed(0)} × ${debugState.viewport.height.toFixed(0)}`;
   const roomIds = debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none';
+  const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
 
   return [
-    `zoom: ${debugState.zoom.toFixed(2)}`,
+    `cameraZoom: ${debugState.cameraZoom.toFixed(3)}`,
+    `displayZoom: ${displayZoomLabel}`,
     `zoomPercent: ${debugState.zoomPercent}%`,
     `panX: ${debugState.panX.toFixed(1)}`,
     `panY: ${debugState.panY.toFixed(1)}`,
@@ -282,6 +284,7 @@ export const CanvasV3DevScreen = () => {
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
+  const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
 
   const handleCopyInspector = useCallback(async () => {
     try {
@@ -416,7 +419,7 @@ export const CanvasV3DevScreen = () => {
               <View style={styles.inspectorHeader}>
                 <View style={styles.inspectorTitleBlock}>
                   <Text style={styles.inspectorTitle}>Dev Inspector</Text>
-                  <Text style={styles.zoomIndicator}>Zoom: {debugState.zoomPercent}%</Text>
+                  <Text style={styles.zoomIndicator}>Display Zoom: {displayZoomLabel}</Text>
                 </View>
                 <Pressable style={styles.inspectorCloseButton} onPress={() => setInspectorVisible(false)}>
                   <Text style={styles.inspectorCloseButtonText}>✕</Text>
@@ -424,10 +427,13 @@ export const CanvasV3DevScreen = () => {
               </View>
 
               <Text style={styles.metaText}>
-                zoom: {debugState.zoom.toFixed(2)} ({debugState.zoomPercent}%)
+                cameraZoom: {debugState.cameraZoom.toFixed(3)}
               </Text>
               <Text style={styles.metaText}>
-                zoom range: {debugState.minZoom.toFixed(2)}–{debugState.maxZoom.toFixed(2)} ({Math.round(debugState.minZoom * 100)}%–{Math.round(debugState.maxZoom * 100)}%)
+                displayZoom: {displayZoomLabel}
+              </Text>
+              <Text style={styles.metaText}>
+                camera zoom range: {debugState.minZoom.toFixed(3)}–{debugState.maxZoom.toFixed(2)}
               </Text>
               <Text style={styles.metaText}>
                 pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})
