@@ -25,8 +25,10 @@ import { RoomResizeSystem } from './RoomResizeSystem';
 import { RoomRotateSystem } from './RoomRotateSystem';
 
 const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
-const BASE_ZOOM = 0.03;
 const DISPLAY_ZOOM_STEP = 20;
+const BASELINE_DISPLAY_ZOOM_OFFSET = 30;
+const LEGACY_BASE_ZOOM = 0.03;
+const BASE_ZOOM = LEGACY_BASE_ZOOM * 2 ** (BASELINE_DISPLAY_ZOOM_OFFSET / DISPLAY_ZOOM_STEP);
 const MIN_ZOOM = 0.005;
 const MAX_ZOOM = 6;
 const ZOOM_EPSILON = 1e-9;
