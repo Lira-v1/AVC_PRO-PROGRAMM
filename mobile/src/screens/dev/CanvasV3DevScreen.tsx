@@ -36,8 +36,8 @@ const DEV_ROOM: RoomModel = {
   roomId: 'room-1',
   centerX: 0,
   centerY: 0,
-  widthMm: 4000,
-  heightMm: 3000,
+  widthMm: 1000,
+  heightMm: 1000,
   rotationDeg: 0,
 };
 
@@ -65,6 +65,9 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
     `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
     `activeRoomRotationDeg: ${debugState.activeRoomRotationDeg ?? 'null'}`,
+    `gridStepMm: ${debugState.gridStepMm}`,
+    `gridLevel: ${debugState.gridLevel}`,
+    `cellsPerMeter: ${debugState.cellsPerMeter}`,
   ].join('\n');
 };
 
@@ -90,7 +93,7 @@ const copyTextToClipboard = async (text: string) => {
   throw new Error('Clipboard API is unavailable');
 };
 
-const formatZoomState = (displayZoom: number) => `${displayZoom > 0 ? '+' : ''}${Math.round(displayZoom * 20)}%`;
+const formatZoomState = (displayZoom: number) => `${displayZoom > 0 ? '+' : ''}${displayZoom.toFixed(0)}`;
 const formatRoomTitle = (_roomId: string, index: number) => `Комната ${index + 1}`;
 
 export const CanvasV3DevScreen = () => {
@@ -490,6 +493,9 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})</Text>
                   <Text style={styles.metaText}>world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})</Text>
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
+                  <Text style={styles.metaText}>gridStepMm: {debugState.gridStepMm}</Text>
+                  <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
+                  <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
                   <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
@@ -546,6 +552,9 @@ export const CanvasV3DevScreen = () => {
                     <Text style={styles.roomDataMeta}>widthMm: {room.widthMm}</Text>
                     <Text style={styles.roomDataMeta}>heightMm: {room.heightMm}</Text>
                     <Text style={styles.roomDataMeta}>rotationDeg: {room.rotationDeg}</Text>
+                    <Text style={styles.roomDataMeta}>gridStepMm: {debugState.gridStepMm}</Text>
+                    <Text style={styles.roomDataMeta}>gridLevel: {debugState.gridLevel}</Text>
+                    <Text style={styles.roomDataMeta}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
                   </View>
                 ))}
               </View>
