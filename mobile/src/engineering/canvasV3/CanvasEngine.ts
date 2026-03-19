@@ -30,6 +30,7 @@ const DISPLAY_ZOOM_STEP = 20;
 const MIN_ZOOM = 0.005;
 const MAX_ZOOM = 6;
 const ZOOM_EPSILON = 1e-9;
+const DEFAULT_GRID_STEP_MM = 100;
 
 const getDisplayZoom = (cameraZoom: number, _minZoom: number, baseZoom: number, _maxZoom: number) => {
   if (Math.abs(cameraZoom - baseZoom) <= ZOOM_EPSILON) {
@@ -56,7 +57,7 @@ export class CanvasEngine {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
     this.camera = new CameraSystem({ zoom: BASE_ZOOM, panX: 0, panY: 0, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
-    this.grid = new GridSystem(250);
+    this.grid = new GridSystem(DEFAULT_GRID_STEP_MM);
     this.selection = new RoomSelectionSystem();
     this.transform = new RoomTransformSystem();
     this.resize = new RoomResizeSystem();
@@ -209,7 +210,7 @@ export class CanvasEngine {
     const screenCenter = this.getScreenCenter();
     const displayZoom = getDisplayZoom(camera.zoom, camera.minZoom, BASE_ZOOM, camera.maxZoom);
 
-    const gridMetrics = this.grid.getGridMetrics(displayZoom);
+    const gridMetrics = this.grid.getGridMetrics();
 
     return {
       cameraZoom: camera.zoom,
@@ -246,10 +247,7 @@ export class CanvasEngine {
   }
 
   snapToGrid(point: WorldPoint): WorldPoint {
-    const camera = this.camera.getState();
-    const displayZoom = getDisplayZoom(camera.zoom, camera.minZoom, BASE_ZOOM, camera.maxZoom);
-
-    return this.grid.snap(point, camera.zoom, displayZoom);
+    return this.grid.snap(point);
   }
 
   getRoomGeometry(room: RoomModel): RoomWorldGeometry {
@@ -302,7 +300,7 @@ export class CanvasEngine {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       camera: this.camera.getState(),
-      grid: this.grid.getGridState(this.camera, this.canvasState.viewport, getDisplayZoom(this.camera.getState().zoom, this.camera.getState().minZoom, BASE_ZOOM, this.camera.getState().maxZoom)),
+      grid: this.grid.getGridState(this.camera, this.canvasState.viewport),
       canvasState: this.canvasState,
       activeRoomId: this.getActiveRoomId(),
       roomIds: this.rooms.map((room) => room.roomId),
