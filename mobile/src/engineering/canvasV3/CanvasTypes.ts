@@ -57,6 +57,7 @@ export type RoomWorldGeometry = {
 
 export type RoomScreenGeometry = {
   roomId: string;
+  isActive: boolean;
   center: ScreenPoint;
   corners: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
   edges: [ScreenEdge, ScreenEdge, ScreenEdge, ScreenEdge];
@@ -102,6 +103,8 @@ export type CanvasSnapshot = {
   camera: CameraState;
   grid: GridState;
   canvasState: CanvasState;
+  activeRoomId: string | null;
+  roomIds: string[];
 };
 
 export type CanvasDebugState = {
@@ -114,4 +117,5 @@ export type CanvasDebugState = {
   worldCenter: WorldPoint;
   screenCenter: ScreenPoint;
   worldAtScreenCenter: WorldPoint;
+  activeRoomId: string | null;
 };
