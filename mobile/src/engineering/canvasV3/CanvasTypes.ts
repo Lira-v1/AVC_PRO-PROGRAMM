@@ -118,4 +118,5 @@ export type CanvasDebugState = {
   screenCenter: ScreenPoint;
   worldAtScreenCenter: WorldPoint;
   activeRoomId: string | null;
+  isDraggingRoom: boolean;
 };

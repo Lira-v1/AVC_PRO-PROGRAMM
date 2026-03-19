@@ -48,16 +48,39 @@ export const CanvasV3DevScreen = () => {
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: () => {
+        onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2,
+        onPanResponderGrant: (event) => {
           dragRef.current = { x: 0, y: 0 };
+          const screenPoint = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
+          const activeRoomId = engineRef.current.handleTap(screenPoint);
+
+          if (activeRoomId) {
+            engineRef.current.startDrag();
+          }
+
+          refreshState();
         },
         onPanResponderMove: (_, gestureState) => {
           const deltaX = gestureState.dx - dragRef.current.x;
           const deltaY = gestureState.dy - dragRef.current.y;
           dragRef.current = { x: gestureState.dx, y: gestureState.dy };
 
-          engineRef.current.panBy(deltaX, deltaY);
+          const movedRoom = engineRef.current.dragBy({ x: deltaX, y: deltaY });
+
+          if (!movedRoom) {
+            engineRef.current.panBy(deltaX, deltaY);
+          }
+
+          refreshState();
+        },
+        onPanResponderRelease: () => {
+          engineRef.current.endDrag();
+          dragRef.current = { x: 0, y: 0 };
+          refreshState();
+        },
+        onPanResponderTerminate: () => {
+          engineRef.current.endDrag();
+          dragRef.current = { x: 0, y: 0 };
           refreshState();
         },
       }),
@@ -66,7 +89,8 @@ export const CanvasV3DevScreen = () => {
 
   const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
   const worldOriginMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
-  const roomGeometry = engineRef.current.getRoomScreenGeometry(DEV_ROOM);
+  const room = engineRef.current.getRooms()[0] ?? DEV_ROOM;
+  const roomGeometry = engineRef.current.getRoomScreenGeometry(room);
 
   return (
     <View style={styles.root}>
@@ -91,6 +115,7 @@ export const CanvasV3DevScreen = () => {
           world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
         </Text>
         <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
+        <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
       </View>
 
       <View style={styles.controlsRow}>

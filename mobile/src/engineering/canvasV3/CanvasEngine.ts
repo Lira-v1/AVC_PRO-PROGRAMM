@@ -5,6 +5,7 @@ import { CanvasDebugState, CanvasSnapshot, CanvasState, RoomModel, RoomScreenGeo
 import { RoomGeometry } from './RoomGeometry';
 import { RoomRenderer } from './RoomRenderer';
 import { RoomSelectionSystem } from './RoomSelectionSystem';
+import { RoomTransformSystem } from './RoomTransformSystem';
 
 export class CanvasEngine {
   worldWidth: number;
@@ -13,6 +14,7 @@ export class CanvasEngine {
   grid: GridSystem;
   canvasState: CanvasState;
   selection: RoomSelectionSystem;
+  transform: RoomTransformSystem;
 
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
@@ -20,6 +22,7 @@ export class CanvasEngine {
     this.camera = new CameraSystem({ zoom: 0.2, panX: 0, panY: 0, minZoom: 0.05, maxZoom: 4 });
     this.grid = new GridSystem(1);
     this.selection = new RoomSelectionSystem();
+    this.transform = new RoomTransformSystem();
     this.canvasState = {
       isReady: false,
       viewport: { width: 0, height: 0 },
@@ -36,6 +39,8 @@ export class CanvasEngine {
 
   setRooms(rooms: RoomModel[]) {
     this.selection.setRooms(rooms);
+    this.transform.setRooms(this.selection.getRooms());
+    this.transform.setActiveRoomId(this.selection.getActiveRoomId());
   }
 
   getRooms(): RoomModel[] {
@@ -51,16 +56,35 @@ export class CanvasEngine {
   }
 
   selectRoom(roomId: string): string | null {
-    return this.selection.selectRoom(roomId);
+    const activeRoomId = this.selection.selectRoom(roomId);
+    this.transform.setActiveRoomId(activeRoomId);
+    return activeRoomId;
   }
 
   clearActiveRoom(): string | null {
-    return this.selection.clearSelection();
+    const activeRoomId = this.selection.clearSelection();
+    this.transform.setActiveRoomId(activeRoomId);
+    return activeRoomId;
   }
 
   handleTap(point: ScreenPoint): string | null {
     const worldPoint = this.screenToWorld(point);
-    return this.selection.selectRoomAt(worldPoint);
+    const activeRoomId = this.selection.selectRoomAt(worldPoint);
+    this.transform.setActiveRoomId(activeRoomId);
+    return activeRoomId;
+  }
+
+  startDrag(): boolean {
+    return this.transform.startDrag();
+  }
+
+  dragBy(screenDelta: ScreenPoint): RoomModel | null {
+    const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
+    return this.transform.dragByWorldDelta(worldDelta);
+  }
+
+  endDrag() {
+    this.transform.endDrag();
   }
 
   panBy(deltaX: number, deltaY: number) {
@@ -104,6 +128,7 @@ export class CanvasEngine {
       screenCenter,
       worldAtScreenCenter: this.screenToWorld(screenCenter),
       activeRoomId: this.getActiveRoomId(),
+      isDraggingRoom: this.transform.isDragActive(),
     };
   }
 
