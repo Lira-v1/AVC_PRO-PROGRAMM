@@ -13,7 +13,7 @@ export class CanvasEngine {
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.camera = new CameraSystem({ zoom: 1, panX: worldWidth / 2, panY: worldHeight / 2 });
+    this.camera = new CameraSystem({ zoom: 1, panX: 0, panY: 0 });
     this.grid = new GridSystem(1);
     this.canvasState = {
       isReady: false,
@@ -43,8 +43,8 @@ export class CanvasEngine {
 
   getWorldCenter(): WorldPoint {
     return {
-      x: this.worldWidth / 2,
-      y: this.worldHeight / 2,
+      x: 0,
+      y: 0,
     };
   }
 
