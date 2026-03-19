@@ -28,6 +28,7 @@ export class CanvasEngine {
   selection: RoomSelectionSystem;
   transform: RoomTransformSystem;
   private rooms: RoomModel[] = [];
+  private lastPointerWorldPoint: WorldPoint | null = null;
 
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
@@ -81,8 +82,18 @@ export class CanvasEngine {
     return activeRoomId;
   }
 
+  updateLastPointer(screenPoint: ScreenPoint): WorldPoint {
+    const worldPoint = this.screenToWorld(screenPoint);
+    this.lastPointerWorldPoint = worldPoint;
+    return worldPoint;
+  }
+
+  getRoomIdAtScreenPoint(point: ScreenPoint): string | null {
+    return this.selection.getRoomIdAt(this.updateLastPointer(point));
+  }
+
   handleTap(point: ScreenPoint): string | null {
-    const worldPoint = this.screenToWorld(point);
+    const worldPoint = this.updateLastPointer(point);
     const activeRoomId = this.selection.selectRoomAt(worldPoint);
     this.transform.setActiveRoomId(activeRoomId);
     return activeRoomId;
@@ -147,6 +158,8 @@ export class CanvasEngine {
       activeRoomId: this.getActiveRoomId(),
       isDraggingRoom: this.transform.isDragActive(),
       roomIds: this.rooms.map((room) => room.roomId),
+      lastPointerWorldX: this.lastPointerWorldPoint?.x ?? null,
+      lastPointerWorldY: this.lastPointerWorldPoint?.y ?? null,
     };
   }
 
