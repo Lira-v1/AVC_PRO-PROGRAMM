@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
 import { CanvasDebugState, CanvasSnapshot, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
@@ -8,6 +8,31 @@ const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
 const ZOOM_OUT_LABEL = `−${Math.round((1 - ZOOM_OUT_FACTOR) * 100)}%`;
 const ZOOM_IN_LABEL = `+${Math.round((ZOOM_IN_FACTOR - 1) * 100)}%`;
+const DRAG_THRESHOLD_PX = 3;
+
+type DragMode = 'idle' | 'room' | 'pan';
+
+type DragSession = {
+  mode: DragMode;
+  pointerId: number | null;
+  started: boolean;
+  moved: boolean;
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+};
+
+const IDLE_DRAG_SESSION: DragSession = {
+  mode: 'idle',
+  pointerId: null,
+  started: false,
+  moved: false,
+  startX: 0,
+  startY: 0,
+  lastX: 0,
+  lastY: 0,
+};
 
 const DEV_ROOM: RoomModel = {
   roomId: 'room-1',
@@ -26,70 +51,181 @@ const createEngine = () => {
 
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
+  const canvasRef = useRef<View | null>(null);
+  const dragSessionRef = useRef<DragSession>(IDLE_DRAG_SESSION);
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
   const [debugState, setDebugState] = useState<CanvasDebugState>(engineRef.current.getDebugState());
-  const dragRef = useRef({ x: 0, y: 0 });
 
-  const refreshState = () => {
+  const refreshState = useCallback(() => {
     setSnapshot(engineRef.current.getSnapshot());
     setDebugState(engineRef.current.getDebugState());
-  };
+  }, []);
 
-  const onLayout = (event: LayoutChangeEvent) => {
-    const { width, height } = event.nativeEvent.layout;
-    engineRef.current.setViewport({ width, height });
-    refreshState();
-  };
+  const resetDragSession = useCallback(() => {
+    dragSessionRef.current = { ...IDLE_DRAG_SESSION };
+    engineRef.current.endDrag();
+  }, []);
 
-  const onCanvasPress = (event: GestureResponderEvent) => {
-    const screenPoint = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
-    const world = engineRef.current.screenToWorld(screenPoint);
-    const snapped = engineRef.current.snapToGrid(world);
-    const activeRoomId = engineRef.current.handleTap(screenPoint);
-    console.log('[CanvasV3Dev] world:', world, 'snapped:', snapped, 'activeRoomId:', activeRoomId);
-    refreshState();
-  };
+  const toScreenPoint = useCallback((nativeEvent: { locationX?: number; locationY?: number; offsetX?: number; offsetY?: number }) => {
+    const x = nativeEvent.locationX ?? nativeEvent.offsetX ?? 0;
+    const y = nativeEvent.locationY ?? nativeEvent.offsetY ?? 0;
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2,
-        onPanResponderGrant: (event) => {
-          dragRef.current = { x: 0, y: 0 };
-          const screenPoint = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
-          const activeRoomId = engineRef.current.handleTap(screenPoint);
+    return { x, y };
+  }, []);
 
-          if (activeRoomId) {
-            engineRef.current.startDrag();
-          }
+  const applyZoom = useCallback(
+    (factor: number) => {
+      engineRef.current.zoomBy(factor);
+      refreshState();
+    },
+    [refreshState],
+  );
 
-          refreshState();
-        },
-        onPanResponderMove: (_, gestureState) => {
-          const deltaX = gestureState.dx - dragRef.current.x;
-          const deltaY = gestureState.dy - dragRef.current.y;
-          dragRef.current = { x: gestureState.dx, y: gestureState.dy };
+  const beginInteraction = useCallback(
+    (screenPoint: ScreenPoint, pointerId?: number) => {
+      const activeRoomIdBeforePress = engineRef.current.getActiveRoomId();
+      const hitRoomId = engineRef.current.getRoomIdAtScreenPoint(screenPoint);
+      const activeRoomId = engineRef.current.handleTap(screenPoint);
+      const shouldDragRoom = Boolean(hitRoomId && activeRoomIdBeforePress === hitRoomId && activeRoomId === hitRoomId);
 
-          const movedRoom = engineRef.current.dragBy({ x: deltaX, y: deltaY });
+      dragSessionRef.current = {
+        mode: shouldDragRoom ? 'room' : 'pan',
+        pointerId: pointerId ?? null,
+        started: true,
+        moved: false,
+        startX: screenPoint.x,
+        startY: screenPoint.y,
+        lastX: screenPoint.x,
+        lastY: screenPoint.y,
+      };
 
-          if (!movedRoom) {
-            engineRef.current.panBy(deltaX, deltaY);
-          }
+      if (shouldDragRoom) {
+        engineRef.current.startDrag();
+      } else {
+        engineRef.current.endDrag();
+      }
 
-          refreshState();
-        },
-        onPanResponderRelease: () => {
-          engineRef.current.endDrag();
-          dragRef.current = { x: 0, y: 0 };
-          refreshState();
-        },
-        onPanResponderTerminate: () => {
-          engineRef.current.endDrag();
-          dragRef.current = { x: 0, y: 0 };
-          refreshState();
-        },
-      }),
-    [],
+      refreshState();
+    },
+    [refreshState],
+  );
+
+  const moveInteraction = useCallback(
+    (screenPoint: ScreenPoint, pointerId?: number) => {
+      const session = dragSessionRef.current;
+
+      if (!session.started) {
+        return;
+      }
+
+      if (session.pointerId !== null && pointerId !== undefined && session.pointerId !== pointerId) {
+        return;
+      }
+
+      engineRef.current.updateLastPointer(screenPoint);
+
+      const deltaX = screenPoint.x - session.lastX;
+      const deltaY = screenPoint.y - session.lastY;
+      const totalDx = screenPoint.x - session.startX;
+      const totalDy = screenPoint.y - session.startY;
+      const didCrossThreshold = Math.hypot(totalDx, totalDy) >= DRAG_THRESHOLD_PX;
+
+      dragSessionRef.current = {
+        ...session,
+        moved: session.moved || didCrossThreshold,
+        lastX: screenPoint.x,
+        lastY: screenPoint.y,
+      };
+
+      if (!didCrossThreshold) {
+        refreshState();
+        return;
+      }
+
+      if (session.mode === 'room') {
+        engineRef.current.dragBy({ x: deltaX, y: deltaY });
+      } else {
+        engineRef.current.panBy(deltaX, deltaY);
+      }
+
+      refreshState();
+    },
+    [refreshState],
+  );
+
+  const endInteraction = useCallback(
+    (screenPoint?: ScreenPoint, pointerId?: number) => {
+      const session = dragSessionRef.current;
+
+      if (!session.started) {
+        return;
+      }
+
+      if (session.pointerId !== null && pointerId !== undefined && session.pointerId !== pointerId) {
+        return;
+      }
+
+      if (screenPoint) {
+        engineRef.current.updateLastPointer(screenPoint);
+      }
+
+      resetDragSession();
+      refreshState();
+    },
+    [refreshState, resetDragSession],
+  );
+
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const { width, height } = event.nativeEvent.layout;
+      engineRef.current.setViewport({ width, height });
+      refreshState();
+    },
+    [refreshState],
+  );
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      return undefined;
+    }
+
+    const canvasNode = canvasRef.current as unknown as { addEventListener?: Function; removeEventListener?: Function } | null;
+
+    if (!canvasNode?.addEventListener) {
+      return undefined;
+    }
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      applyZoom(event.deltaY < 0 ? ZOOM_IN_FACTOR : ZOOM_OUT_FACTOR);
+    };
+
+    canvasNode.addEventListener('wheel', onWheel, { passive: false });
+
+    return () => {
+      canvasNode.removeEventListener?.('wheel', onWheel);
+    };
+  }, [applyZoom]);
+
+  const responderHandlers = useMemo(
+    () => ({
+      onStartShouldSetResponder: () => true,
+      onMoveShouldSetResponder: () => true,
+      onResponderGrant: (event: any) => {
+        beginInteraction(toScreenPoint(event.nativeEvent), event.nativeEvent.pointerId);
+      },
+      onResponderMove: (event: any) => {
+        moveInteraction(toScreenPoint(event.nativeEvent), event.nativeEvent.pointerId);
+      },
+      onResponderRelease: (event: any) => {
+        endInteraction(toScreenPoint(event.nativeEvent), event.nativeEvent.pointerId);
+      },
+      onResponderTerminate: (event: any) => {
+        endInteraction(toScreenPoint(event.nativeEvent), event.nativeEvent.pointerId);
+      },
+      onResponderTerminationRequest: () => false,
+    }),
+    [beginInteraction, endInteraction, moveInteraction, toScreenPoint],
   );
 
   const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
@@ -102,6 +238,7 @@ export const CanvasV3DevScreen = () => {
 
       <View style={styles.inspectorPanel}>
         <Text style={styles.inspectorTitle}>Dev Inspector</Text>
+        <Text style={styles.zoomIndicator}>Zoom: {debugState.zoomPercent}%</Text>
         <Text style={styles.metaText}>
           zoom: {debugState.zoom.toFixed(2)} ({debugState.zoomPercent}%)
         </Text>
@@ -126,25 +263,16 @@ export const CanvasV3DevScreen = () => {
         <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
         <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
         <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
+        <Text style={styles.metaText}>
+          lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
+        </Text>
       </View>
 
       <View style={styles.controlsRow}>
-        <Pressable
-          style={styles.zoomButton}
-          onPress={() => {
-            engineRef.current.zoomBy(ZOOM_OUT_FACTOR);
-            refreshState();
-          }}
-        >
+        <Pressable style={styles.zoomButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)}>
           <Text style={styles.zoomButtonText}>{ZOOM_OUT_LABEL}</Text>
         </Pressable>
-        <Pressable
-          style={styles.zoomButton}
-          onPress={() => {
-            engineRef.current.zoomBy(ZOOM_IN_FACTOR);
-            refreshState();
-          }}
-        >
+        <Pressable style={styles.zoomButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)}>
           <Text style={styles.zoomButtonText}>{ZOOM_IN_LABEL}</Text>
         </Pressable>
         <Pressable
@@ -158,134 +286,153 @@ export const CanvasV3DevScreen = () => {
         </Pressable>
       </View>
 
-      <Pressable style={styles.canvasArea} onLayout={onLayout} onPress={onCanvasPress}>
-        <View style={StyleSheet.absoluteFill} {...panResponder.panHandlers}>
-          {snapshot.grid.lines.map((line) => (
+      <View ref={canvasRef} style={styles.canvasArea} onLayout={onLayout} {...responderHandlers}>
+        {snapshot.grid.lines.map((line) => (
+          <View
+            key={line.id}
+            pointerEvents="none"
+            style={[
+              styles.gridLine,
+              line.axis === 'y'
+                ? {
+                    left: line.from.x,
+                    top: Math.min(line.from.y, line.to.y),
+                    height: Math.abs(line.to.y - line.from.y),
+                    width: 1,
+                  }
+                : {
+                    top: line.from.y,
+                    left: Math.min(line.from.x, line.to.x),
+                    width: Math.abs(line.to.x - line.from.x),
+                    height: 1,
+                  },
+            ]}
+          />
+        ))}
+
+        <View
+          pointerEvents="none"
+          style={[
+            styles.viewportXAxis,
+            {
+              top: debugState.screenCenter.y,
+            },
+          ]}
+        />
+        <View
+          pointerEvents="none"
+          style={[
+            styles.viewportYAxis,
+            {
+              left: debugState.screenCenter.x,
+            },
+          ]}
+        />
+
+        <View
+          pointerEvents="none"
+          style={[
+            styles.worldXAxis,
+            {
+              top: worldOrigin.y,
+            },
+          ]}
+        />
+        <View
+          pointerEvents="none"
+          style={[
+            styles.worldYAxis,
+            {
+              left: worldOrigin.x,
+            },
+          ]}
+        />
+
+        <View
+          pointerEvents="none"
+          style={[
+            styles.worldCenterMarker,
+            {
+              left: worldOriginMarker.x - 4,
+              top: worldOriginMarker.y - 4,
+            },
+          ]}
+        />
+
+        <View
+          pointerEvents="none"
+          style={[
+            styles.viewportCenterMarker,
+            {
+              left: debugState.screenCenter.x - 5,
+              top: debugState.screenCenter.y - 5,
+            },
+          ]}
+        />
+
+        {roomGeometries.map((roomGeometry) => (
+          <React.Fragment key={roomGeometry.roomId}>
             <View
-              key={line.id}
+              pointerEvents="none"
               style={[
-                styles.gridLine,
-                line.axis === 'y'
-                  ? {
-                      left: line.from.x,
-                      top: Math.min(line.from.y, line.to.y),
-                      height: Math.abs(line.to.y - line.from.y),
-                      width: 1,
-                    }
-                  : {
-                      top: line.from.y,
-                      left: Math.min(line.from.x, line.to.x),
-                      width: Math.abs(line.to.x - line.from.x),
-                      height: 1,
-                    },
+                styles.roomFill,
+                roomGeometry.isActive ? styles.roomFillActive : styles.roomFillInactive,
+                {
+                  left: roomGeometry.bounds.left,
+                  top: roomGeometry.bounds.top,
+                  width: roomGeometry.bounds.width,
+                  height: roomGeometry.bounds.height,
+                },
               ]}
             />
-          ))}
 
-          <View
-            style={[
-              styles.viewportXAxis,
-              {
-                top: debugState.screenCenter.y,
-              },
-            ]}
-          />
-          <View
-            style={[
-              styles.viewportYAxis,
-              {
-                left: debugState.screenCenter.x,
-              },
-            ]}
-          />
-
-          <View
-            style={[
-              styles.worldXAxis,
-              {
-                top: worldOrigin.y,
-              },
-            ]}
-          />
-          <View
-            style={[
-              styles.worldYAxis,
-              {
-                left: worldOrigin.x,
-              },
-            ]}
-          />
-
-          <View
-            style={[
-              styles.worldCenterMarker,
-              {
-                left: worldOriginMarker.x - 4,
-                top: worldOriginMarker.y - 4,
-              },
-            ]}
-          />
-
-          <View
-            style={[
-              styles.viewportCenterMarker,
-              {
-                left: debugState.screenCenter.x - 5,
-                top: debugState.screenCenter.y - 5,
-              },
-            ]}
-          />
-
-          {roomGeometries.map((roomGeometry) => (
-            <React.Fragment key={roomGeometry.roomId}>
-              {roomGeometry.edges.map((edge) => (
-                <View
-                  key={edge.id}
-                  pointerEvents="none"
-                  style={[
-                    styles.roomEdge,
-                    roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
-                    {
-                      width: edge.length,
-                      left: edge.center.x - edge.length / 2,
-                      top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
-                      height: roomGeometry.isActive ? 4 : 2,
-                      transform: [{ rotate: `${edge.angleDeg}deg` }],
-                    },
-                  ]}
-                />
-              ))}
-
-              {roomGeometry.corners.map((corner, index) => (
-                <View
-                  key={`${roomGeometry.roomId}-corner-${index}`}
-                  pointerEvents="none"
-                  style={[
-                    styles.roomCornerMarker,
-                    roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
-                    {
-                      left: corner.x - (roomGeometry.isActive ? 4 : 3),
-                      top: corner.y - (roomGeometry.isActive ? 4 : 3),
-                    },
-                  ]}
-                />
-              ))}
-
+            {roomGeometry.edges.map((edge) => (
               <View
+                key={edge.id}
+                pointerEvents="none"
                 style={[
-                  styles.roomCenterMarker,
-                  roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
+                  styles.roomEdge,
+                  roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
                   {
-                    left: roomGeometry.center.x - (roomGeometry.isActive ? 7 : 5),
-                    top: roomGeometry.center.y - (roomGeometry.isActive ? 7 : 5),
+                    width: edge.length,
+                    left: edge.center.x - edge.length / 2,
+                    top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
+                    height: roomGeometry.isActive ? 4 : 2,
+                    transform: [{ rotate: `${edge.angleDeg}deg` }],
                   },
                 ]}
-                pointerEvents="none"
               />
-            </React.Fragment>
-          ))}
-        </View>
-      </Pressable>
+            ))}
+
+            {roomGeometry.corners.map((corner, index) => (
+              <View
+                key={`${roomGeometry.roomId}-corner-${index}`}
+                pointerEvents="none"
+                style={[
+                  styles.roomCornerMarker,
+                  roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
+                  {
+                    left: corner.x - (roomGeometry.isActive ? 4 : 3),
+                    top: corner.y - (roomGeometry.isActive ? 4 : 3),
+                  },
+                ]}
+              />
+            ))}
+
+            <View
+              style={[
+                styles.roomCenterMarker,
+                roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
+                {
+                  left: roomGeometry.center.x - (roomGeometry.isActive ? 7 : 5),
+                  top: roomGeometry.center.y - (roomGeometry.isActive ? 7 : 5),
+                },
+              ]}
+              pointerEvents="none"
+            />
+          </React.Fragment>
+        ))}
+      </View>
     </View>
   );
 };
@@ -308,6 +455,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     marginBottom: 2,
+  },
+  zoomIndicator: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
   },
   metaText: {
     color: '#24324A',
@@ -403,6 +555,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#2D5BFF',
     borderWidth: 1,
     borderColor: '#FFFFFF',
+  },
+  roomFill: {
+    position: 'absolute',
+    borderRadius: 8,
+  },
+  roomFillInactive: {
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+  },
+  roomFillActive: {
+    backgroundColor: 'rgba(249, 115, 22, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(249, 115, 22, 0.45)',
   },
   roomEdge: {
     position: 'absolute',

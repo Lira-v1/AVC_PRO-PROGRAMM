@@ -120,4 +120,6 @@ export type CanvasDebugState = {
   activeRoomId: string | null;
   isDraggingRoom: boolean;
   roomIds: string[];
+  lastPointerWorldX: number | null;
+  lastPointerWorldY: number | null;
 };

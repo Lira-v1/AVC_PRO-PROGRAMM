@@ -37,13 +37,17 @@ export class RoomSelectionSystem {
     return this.activeRoomId;
   }
 
-  selectRoomAt(worldPoint: WorldPoint): string | null {
-    const room = [...this.rooms].reverse().find((item) => RoomGeometry.containsPoint(item, worldPoint));
+  getRoomIdAt(worldPoint: WorldPoint): string | null {
+    return [...this.rooms].reverse().find((item) => RoomGeometry.containsPoint(item, worldPoint))?.roomId ?? null;
+  }
 
-    if (!room) {
+  selectRoomAt(worldPoint: WorldPoint): string | null {
+    const roomId = this.getRoomIdAt(worldPoint);
+
+    if (!roomId) {
       return this.clearSelection();
     }
 
-    return this.selectRoom(room.roomId);
+    return this.selectRoom(roomId);
   }
 }
