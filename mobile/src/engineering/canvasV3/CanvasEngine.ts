@@ -4,6 +4,7 @@ import { GridSystem } from './GridSystem';
 import { CanvasDebugState, CanvasSnapshot, CanvasState, RoomModel, RoomScreenGeometry, RoomWorldGeometry, ScreenPoint, Viewport, WorldPoint } from './CanvasTypes';
 import { RoomGeometry } from './RoomGeometry';
 import { RoomRenderer } from './RoomRenderer';
+import { RoomSelectionSystem } from './RoomSelectionSystem';
 
 export class CanvasEngine {
   worldWidth: number;
@@ -11,12 +12,14 @@ export class CanvasEngine {
   camera: CameraSystem;
   grid: GridSystem;
   canvasState: CanvasState;
+  selection: RoomSelectionSystem;
 
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
     this.camera = new CameraSystem({ zoom: 0.2, panX: 0, panY: 0, minZoom: 0.05, maxZoom: 4 });
     this.grid = new GridSystem(1);
+    this.selection = new RoomSelectionSystem();
     this.canvasState = {
       isReady: false,
       viewport: { width: 0, height: 0 },
@@ -29,6 +32,35 @@ export class CanvasEngine {
       isReady: viewport.width > 0 && viewport.height > 0,
       viewport,
     };
+  }
+
+  setRooms(rooms: RoomModel[]) {
+    this.selection.setRooms(rooms);
+  }
+
+  getRooms(): RoomModel[] {
+    return this.selection.getRooms();
+  }
+
+  getActiveRoomId(): string | null {
+    return this.selection.getActiveRoomId();
+  }
+
+  getActiveRoom(): RoomModel | null {
+    return this.selection.getActiveRoom();
+  }
+
+  selectRoom(roomId: string): string | null {
+    return this.selection.selectRoom(roomId);
+  }
+
+  clearActiveRoom(): string | null {
+    return this.selection.clearSelection();
+  }
+
+  handleTap(point: ScreenPoint): string | null {
+    const worldPoint = this.screenToWorld(point);
+    return this.selection.selectRoomAt(worldPoint);
   }
 
   panBy(deltaX: number, deltaY: number) {
@@ -71,6 +103,7 @@ export class CanvasEngine {
       worldCenter: this.getWorldCenter(),
       screenCenter,
       worldAtScreenCenter: this.screenToWorld(screenCenter),
+      activeRoomId: this.getActiveRoomId(),
     };
   }
 
@@ -102,6 +135,8 @@ export class CanvasEngine {
       camera: this.camera.getState(),
       grid: this.grid.getGridState(this.camera, this.canvasState.viewport),
       canvasState: this.canvasState,
+      activeRoomId: this.getActiveRoomId(),
+      roomIds: this.getRooms().map((room) => room.roomId),
     };
   }
 }

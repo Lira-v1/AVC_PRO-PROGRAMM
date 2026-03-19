@@ -4,7 +4,11 @@ import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
 import { CanvasDebugState, CanvasSnapshot, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
-const createEngine = () => new CanvasEngine(12000, 12000);
+const createEngine = () => {
+  const engine = new CanvasEngine(12000, 12000);
+  engine.setRooms([DEV_ROOM]);
+  return engine;
+};
 
 const DEV_ROOM: RoomModel = {
   roomId: 'room-1',
@@ -33,9 +37,12 @@ export const CanvasV3DevScreen = () => {
   };
 
   const onCanvasPress = (event: GestureResponderEvent) => {
-    const world = engineRef.current.screenToWorld({ x: event.nativeEvent.locationX, y: event.nativeEvent.locationY });
+    const screenPoint = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
+    const world = engineRef.current.screenToWorld(screenPoint);
     const snapped = engineRef.current.snapToGrid(world);
-    console.log('[CanvasV3Dev] world:', world, 'snapped:', snapped);
+    const activeRoomId = engineRef.current.handleTap(screenPoint);
+    console.log('[CanvasV3Dev] world:', world, 'snapped:', snapped, 'activeRoomId:', activeRoomId);
+    refreshState();
   };
 
   const panResponder = useMemo(
@@ -83,6 +90,7 @@ export const CanvasV3DevScreen = () => {
         <Text style={styles.metaText}>
           world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
         </Text>
+        <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
       </View>
 
       <View style={styles.controlsRow}>
@@ -200,10 +208,12 @@ export const CanvasV3DevScreen = () => {
               pointerEvents="none"
               style={[
                 styles.roomEdge,
+                roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
                 {
                   width: edge.length,
                   left: edge.center.x - edge.length / 2,
-                  top: edge.center.y - 1,
+                  top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
+                  height: roomGeometry.isActive ? 4 : 2,
                   transform: [{ rotate: `${edge.angleDeg}deg` }],
                 },
               ]}
@@ -216,6 +226,7 @@ export const CanvasV3DevScreen = () => {
               pointerEvents="none"
               style={[
                 styles.roomCornerMarker,
+                roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
                 {
                   left: corner.x - 3,
                   top: corner.y - 3,
@@ -227,6 +238,7 @@ export const CanvasV3DevScreen = () => {
           <View
             style={[
               styles.roomCenterMarker,
+              roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
               {
                 left: roomGeometry.center.x - 5,
                 top: roomGeometry.center.y - 5,
@@ -356,8 +368,16 @@ const styles = StyleSheet.create({
   },
   roomEdge: {
     position: 'absolute',
-    height: 2,
+    borderRadius: 999,
+  },
+  roomEdgeInactive: {
     backgroundColor: '#2D5BFF',
+  },
+  roomEdgeActive: {
+    backgroundColor: '#F97316',
+    shadowColor: '#F97316',
+    shadowOpacity: 0.28,
+    shadowRadius: 4,
   },
   roomCornerMarker: {
     position: 'absolute',
@@ -365,6 +385,12 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     backgroundColor: '#1D4ED8',
+  },
+  roomCornerMarkerActive: {
+    backgroundColor: '#EA580C',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   roomCenterMarker: {
     position: 'absolute',
@@ -374,5 +400,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#93C5FD',
     borderWidth: 2,
     borderColor: '#1D4ED8',
+  },
+  roomCenterMarkerActive: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#FDBA74',
+    borderColor: '#EA580C',
+    borderWidth: 3,
   },
 });

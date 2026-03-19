@@ -32,6 +32,25 @@ const createBounds = (points: WorldPoint[]): WorldBounds => {
   };
 };
 
+
+const isPointOnSegment = (point: WorldPoint, from: WorldPoint, to: WorldPoint, epsilon = 0.001): boolean => {
+  const cross = (point.y - from.y) * (to.x - from.x) - (point.x - from.x) * (to.y - from.y);
+
+  if (Math.abs(cross) > epsilon) {
+    return false;
+  }
+
+  const dot = (point.x - from.x) * (to.x - from.x) + (point.y - from.y) * (to.y - from.y);
+
+  if (dot < -epsilon) {
+    return false;
+  }
+
+  const squaredLength = (to.x - from.x) ** 2 + (to.y - from.y) ** 2;
+
+  return dot <= squaredLength + epsilon;
+};
+
 const createEdge = (roomId: string, index: number, from: WorldPoint, to: WorldPoint): WorldEdge => ({
   id: `${roomId}-edge-${index}`,
   from,
@@ -39,6 +58,29 @@ const createEdge = (roomId: string, index: number, from: WorldPoint, to: WorldPo
 });
 
 export class RoomGeometry {
+  static containsPoint(room: RoomModel, point: WorldPoint): boolean {
+    const geometry = RoomGeometry.fromModel(room);
+    const polygon = geometry.corners;
+    let isInside = false;
+
+    for (let index = 0; index < polygon.length; index += 1) {
+      const current = polygon[index];
+      const next = polygon[(index + 1) % polygon.length];
+
+      if (isPointOnSegment(point, current, next)) {
+        return true;
+      }
+
+      const intersects = current.y > point.y !== next.y > point.y && point.x < ((next.x - current.x) * (point.y - current.y)) / (next.y - current.y) + current.x;
+
+      if (intersects) {
+        isInside = !isInside;
+      }
+    }
+
+    return isInside;
+  }
+
   static fromModel(room: RoomModel): RoomWorldGeometry {
     const center = { x: room.centerX, y: room.centerY };
     const halfWidth = room.widthMm / 2;
