@@ -2,9 +2,18 @@ import React, { useMemo, useRef, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CanvasDebugState, CanvasSnapshot, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
+import { CanvasDebugState, CanvasSnapshot, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
-const createEngine = () => new CanvasEngine(1000, 1000);
+const createEngine = () => new CanvasEngine(12000, 12000);
+
+const DEV_ROOM: RoomModel = {
+  roomId: 'room-1',
+  centerX: 0,
+  centerY: 0,
+  widthMm: 4000,
+  heightMm: 3000,
+  rotationDeg: 0,
+};
 
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
@@ -50,6 +59,7 @@ export const CanvasV3DevScreen = () => {
 
   const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
   const worldOriginMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
+  const roomGeometry = engineRef.current.getRoomScreenGeometry(DEV_ROOM);
 
   return (
     <View style={styles.root}>
@@ -182,6 +192,49 @@ export const CanvasV3DevScreen = () => {
               },
             ]}
           />
+
+
+          {roomGeometry.edges.map((edge) => (
+            <View
+              key={edge.id}
+              pointerEvents="none"
+              style={[
+                styles.roomEdge,
+                {
+                  width: edge.length,
+                  left: edge.center.x - edge.length / 2,
+                  top: edge.center.y - 1,
+                  transform: [{ rotate: `${edge.angleDeg}deg` }],
+                },
+              ]}
+            />
+          ))}
+
+          {roomGeometry.corners.map((corner, index) => (
+            <View
+              key={`${roomGeometry.roomId}-corner-${index}`}
+              pointerEvents="none"
+              style={[
+                styles.roomCornerMarker,
+                {
+                  left: corner.x - 3,
+                  top: corner.y - 3,
+                },
+              ]}
+            />
+          ))}
+
+          <View
+            style={[
+              styles.roomCenterMarker,
+              {
+                left: roomGeometry.center.x - 5,
+                top: roomGeometry.center.y - 5,
+              },
+            ]}
+            pointerEvents="none"
+          />
+
         </View>
       </Pressable>
     </View>
@@ -300,5 +353,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#2D5BFF',
     borderWidth: 1,
     borderColor: '#FFFFFF',
+  },
+  roomEdge: {
+    position: 'absolute',
+    height: 2,
+    backgroundColor: '#2D5BFF',
+  },
+  roomCornerMarker: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#1D4ED8',
+  },
+  roomCenterMarker: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#93C5FD',
+    borderWidth: 2,
+    borderColor: '#1D4ED8',
   },
 });
