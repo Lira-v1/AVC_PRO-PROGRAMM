@@ -13,6 +13,63 @@ export type Viewport = {
   height: number;
 };
 
+
+export type WorldBounds = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+};
+
+export type WorldEdge = {
+  id: string;
+  from: WorldPoint;
+  to: WorldPoint;
+};
+
+export type ScreenEdge = {
+  id: string;
+  from: ScreenPoint;
+  to: ScreenPoint;
+  length: number;
+  angleDeg: number;
+  center: ScreenPoint;
+};
+
+export type RoomModel = {
+  roomId: string;
+  centerX: number;
+  centerY: number;
+  widthMm: number;
+  heightMm: number;
+  rotationDeg: number;
+};
+
+export type RoomWorldGeometry = {
+  roomId: string;
+  center: WorldPoint;
+  corners: [WorldPoint, WorldPoint, WorldPoint, WorldPoint];
+  edges: [WorldEdge, WorldEdge, WorldEdge, WorldEdge];
+  bounds: WorldBounds;
+};
+
+export type RoomScreenGeometry = {
+  roomId: string;
+  center: ScreenPoint;
+  corners: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
+  edges: [ScreenEdge, ScreenEdge, ScreenEdge, ScreenEdge];
+  bounds: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
+};
+
 export type CameraState = {
   zoom: number;
   panX: number;

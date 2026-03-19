@@ -1,7 +1,9 @@
 import { CameraSystem } from './CameraSystem';
 import { CoordinateSystem } from './CoordinateSystem';
 import { GridSystem } from './GridSystem';
-import { CanvasDebugState, CanvasSnapshot, CanvasState, ScreenPoint, Viewport, WorldPoint } from './CanvasTypes';
+import { CanvasDebugState, CanvasSnapshot, CanvasState, RoomModel, RoomScreenGeometry, RoomWorldGeometry, ScreenPoint, Viewport, WorldPoint } from './CanvasTypes';
+import { RoomGeometry } from './RoomGeometry';
+import { RoomRenderer } from './RoomRenderer';
 
 export class CanvasEngine {
   worldWidth: number;
@@ -13,7 +15,7 @@ export class CanvasEngine {
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.camera = new CameraSystem({ zoom: 1, panX: 0, panY: 0 });
+    this.camera = new CameraSystem({ zoom: 0.2, panX: 0, panY: 0, minZoom: 0.05, maxZoom: 4 });
     this.grid = new GridSystem(1);
     this.canvasState = {
       isReady: false,
@@ -82,6 +84,15 @@ export class CanvasEngine {
 
   snapToGrid(point: WorldPoint): WorldPoint {
     return this.grid.snap(point, this.camera.getState().zoom);
+  }
+
+
+  getRoomGeometry(room: RoomModel): RoomWorldGeometry {
+    return RoomGeometry.fromModel(room);
+  }
+
+  getRoomScreenGeometry(room: RoomModel): RoomScreenGeometry {
+    return RoomRenderer.toScreenGeometry(this, this.getRoomGeometry(room));
   }
 
   getSnapshot(): CanvasSnapshot {
