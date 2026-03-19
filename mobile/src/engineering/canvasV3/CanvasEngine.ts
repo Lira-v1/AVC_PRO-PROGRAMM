@@ -1,11 +1,23 @@
 import { CameraSystem } from './CameraSystem';
 import { CoordinateSystem } from './CoordinateSystem';
 import { GridSystem } from './GridSystem';
-import { CanvasDebugState, CanvasSnapshot, CanvasState, RoomModel, RoomScreenGeometry, RoomWorldGeometry, ScreenPoint, Viewport, WorldPoint } from './CanvasTypes';
+import {
+  CanvasDebugState,
+  CanvasSnapshot,
+  CanvasState,
+  RoomModel,
+  RoomScreenGeometry,
+  RoomWorldGeometry,
+  ScreenPoint,
+  Viewport,
+  WorldPoint,
+} from './CanvasTypes';
 import { RoomGeometry } from './RoomGeometry';
 import { RoomRenderer } from './RoomRenderer';
 import { RoomSelectionSystem } from './RoomSelectionSystem';
 import { RoomTransformSystem } from './RoomTransformSystem';
+
+const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
 
 export class CanvasEngine {
   worldWidth: number;
@@ -15,11 +27,12 @@ export class CanvasEngine {
   canvasState: CanvasState;
   selection: RoomSelectionSystem;
   transform: RoomTransformSystem;
+  private rooms: RoomModel[] = [];
 
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.camera = new CameraSystem({ zoom: 0.2, panX: 0, panY: 0, minZoom: 0.05, maxZoom: 4 });
+    this.camera = new CameraSystem({ zoom: 0.2, panX: 0, panY: 0, minZoom: 0.03, maxZoom: 6 });
     this.grid = new GridSystem(1);
     this.selection = new RoomSelectionSystem();
     this.transform = new RoomTransformSystem();
@@ -38,13 +51,14 @@ export class CanvasEngine {
   }
 
   setRooms(rooms: RoomModel[]) {
-    this.selection.setRooms(rooms);
-    this.transform.setRooms(this.selection.getRooms());
+    this.rooms = rooms.map(cloneRoom);
+    this.selection.setRooms(this.rooms);
+    this.transform.setRooms(this.rooms);
     this.transform.setActiveRoomId(this.selection.getActiveRoomId());
   }
 
   getRooms(): RoomModel[] {
-    return this.selection.getRooms();
+    return this.rooms.map(cloneRoom);
   }
 
   getActiveRoomId(): string | null {
@@ -80,7 +94,9 @@ export class CanvasEngine {
 
   dragBy(screenDelta: ScreenPoint): RoomModel | null {
     const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
-    return this.transform.dragByWorldDelta(worldDelta);
+    const room = this.transform.dragByWorldDelta(worldDelta);
+
+    return room ? { ...room } : null;
   }
 
   endDrag() {
@@ -119,6 +135,7 @@ export class CanvasEngine {
 
     return {
       zoom: camera.zoom,
+      zoomPercent: Math.round(camera.zoom * 100),
       panX: camera.panX,
       panY: camera.panY,
       minZoom: camera.minZoom,
@@ -129,6 +146,7 @@ export class CanvasEngine {
       worldAtScreenCenter: this.screenToWorld(screenCenter),
       activeRoomId: this.getActiveRoomId(),
       isDraggingRoom: this.transform.isDragActive(),
+      roomIds: this.rooms.map((room) => room.roomId),
     };
   }
 
@@ -143,7 +161,6 @@ export class CanvasEngine {
   snapToGrid(point: WorldPoint): WorldPoint {
     return this.grid.snap(point, this.camera.getState().zoom);
   }
-
 
   getRoomGeometry(room: RoomModel): RoomWorldGeometry {
     return RoomGeometry.fromModel(room);
@@ -161,7 +178,7 @@ export class CanvasEngine {
       grid: this.grid.getGridState(this.camera, this.canvasState.viewport),
       canvasState: this.canvasState,
       activeRoomId: this.getActiveRoomId(),
-      roomIds: this.getRooms().map((room) => room.roomId),
+      roomIds: this.rooms.map((room) => room.roomId),
     };
   }
 }
