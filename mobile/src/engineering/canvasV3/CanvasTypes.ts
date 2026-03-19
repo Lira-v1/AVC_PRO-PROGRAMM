@@ -80,6 +80,30 @@ export type RoomResizeHandleScreenGeometry = {
   isActive: boolean;
 };
 
+export type DimensionLabelKind = 'length' | 'width';
+
+export type DimensionLabelWorldGeometry = {
+  id: string;
+  roomId: string;
+  kind: DimensionLabelKind;
+  title: string;
+  valueMm: number;
+  formattedValue: string;
+  anchor: WorldPoint;
+  normal: WorldPoint;
+  offsetMm: number;
+};
+
+export type DimensionLabelScreenGeometry = {
+  id: string;
+  roomId: string;
+  kind: DimensionLabelKind;
+  title: string;
+  formattedValue: string;
+  center: ScreenPoint;
+  offsetPx: ScreenPoint;
+};
+
 export type CameraState = {
   zoom: number;
   panX: number;

@@ -302,6 +302,7 @@ export const CanvasV3DevScreen = () => {
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
   const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
+  const dimensionLabels = engineRef.current.getActiveRoomDimensionLabels();
   const roomData = engineRef.current.getRooms();
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
@@ -454,6 +455,24 @@ export const CanvasV3DevScreen = () => {
                   pointerEvents="none"
                 />
               </React.Fragment>
+            ))}
+
+            {dimensionLabels.map((label) => (
+              <View
+                key={label.id}
+                pointerEvents="none"
+                style={[
+                  styles.dimensionLabel,
+                  label.kind === 'length' ? styles.dimensionLabelLength : styles.dimensionLabelWidth,
+                  {
+                    left: label.center.x + label.offsetPx.x - 54,
+                    top: label.center.y + label.offsetPx.y - 20,
+                  },
+                ]}
+              >
+                <Text style={styles.dimensionLabelTitle}>{label.title}</Text>
+                <Text style={styles.dimensionLabelValue}>{label.formattedValue}</Text>
+              </View>
             ))}
 
             {resizeHandles.map((handle) => (
@@ -802,6 +821,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderWidth: 2,
     borderColor: '#374151',
+  },
+  dimensionLabel: {
+    position: 'absolute',
+    minWidth: 108,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.34)',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    alignItems: 'center',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  dimensionLabelLength: {},
+  dimensionLabelWidth: {},
+  dimensionLabelTitle: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  dimensionLabelValue: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 2,
   },
   roomCenterMarkerActive: {
     width: 14,

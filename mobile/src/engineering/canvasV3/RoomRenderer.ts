@@ -1,5 +1,5 @@
 import { CanvasEngine } from './CanvasEngine';
-import { RoomResizeHandleId, RoomResizeHandleScreenGeometry, RoomScreenGeometry, RoomWorldGeometry, ScreenEdge, ScreenPoint } from './CanvasTypes';
+import { DimensionLabelScreenGeometry, DimensionLabelWorldGeometry, RoomResizeHandleId, RoomResizeHandleScreenGeometry, RoomScreenGeometry, RoomWorldGeometry, ScreenEdge, ScreenPoint } from './CanvasTypes';
 
 const createScreenEdge = (id: string, from: ScreenPoint, to: ScreenPoint): ScreenEdge => {
   const deltaX = to.x - from.x;
@@ -44,6 +44,31 @@ export class RoomRenderer {
         height: Math.abs(bottomRight.y - topLeft.y),
       },
     };
+  }
+
+
+  static getDimensionLabels(engine: CanvasEngine, labels: DimensionLabelWorldGeometry[]): DimensionLabelScreenGeometry[] {
+    return labels.map((label) => {
+      const center = engine.worldToScreen(label.anchor);
+      const offsetWorldPoint = {
+        x: label.anchor.x + label.normal.x * label.offsetMm,
+        y: label.anchor.y + label.normal.y * label.offsetMm,
+      };
+      const offsetScreenPoint = engine.worldToScreen(offsetWorldPoint);
+
+      return {
+        id: label.id,
+        roomId: label.roomId,
+        kind: label.kind,
+        title: label.title,
+        formattedValue: label.formattedValue,
+        center,
+        offsetPx: {
+          x: offsetScreenPoint.x - center.x,
+          y: offsetScreenPoint.y - center.y,
+        },
+      };
+    });
   }
 
   static getResizeHandles(
