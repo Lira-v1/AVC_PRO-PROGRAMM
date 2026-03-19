@@ -19,6 +19,7 @@ import { RoomRenderer } from './RoomRenderer';
 import { RoomSelectionSystem } from './RoomSelectionSystem';
 import { RoomTransformSystem } from './RoomTransformSystem';
 import { RoomResizeSystem } from './RoomResizeSystem';
+import { RoomRotateSystem } from './RoomRotateSystem';
 
 const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
 const BASE_ZOOM = 0.03;
@@ -59,6 +60,7 @@ export class CanvasEngine {
   selection: RoomSelectionSystem;
   transform: RoomTransformSystem;
   resize: RoomResizeSystem;
+  rotate: RoomRotateSystem;
   private rooms: RoomModel[] = [];
   private lastPointerWorldPoint: WorldPoint | null = null;
 
@@ -70,6 +72,7 @@ export class CanvasEngine {
     this.selection = new RoomSelectionSystem();
     this.transform = new RoomTransformSystem();
     this.resize = new RoomResizeSystem();
+    this.rotate = new RoomRotateSystem();
     this.canvasState = {
       isReady: false,
       viewport: { width: 0, height: 0 },
@@ -91,6 +94,8 @@ export class CanvasEngine {
     this.transform.setActiveRoomId(this.selection.getActiveRoomId());
     this.resize.setRooms(this.rooms);
     this.resize.setActiveRoomId(this.selection.getActiveRoomId());
+    this.rotate.setRooms(this.rooms);
+    this.rotate.setActiveRoomId(this.selection.getActiveRoomId());
   }
 
   getRooms(): RoomModel[] {
@@ -109,6 +114,7 @@ export class CanvasEngine {
     const activeRoomId = this.selection.selectRoom(roomId);
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
+    this.rotate.setActiveRoomId(activeRoomId);
     return activeRoomId;
   }
 
@@ -116,6 +122,7 @@ export class CanvasEngine {
     const activeRoomId = this.selection.clearSelection();
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
+    this.rotate.setActiveRoomId(activeRoomId);
     return activeRoomId;
   }
 
@@ -134,6 +141,7 @@ export class CanvasEngine {
     const activeRoomId = this.selection.selectRoomAt(worldPoint);
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
+    this.rotate.setActiveRoomId(activeRoomId);
     return activeRoomId;
   }
 
@@ -167,6 +175,19 @@ export class CanvasEngine {
 
   endResize() {
     this.resize.endResize();
+  }
+
+  rotateActiveRoom(stepDeg = 90): RoomModel | null {
+    this.transform.endDrag();
+    this.resize.endResize();
+
+    const room = this.rotate.rotateActiveRoom(stepDeg);
+
+    return room ? { ...room } : null;
+  }
+
+  getRoomRotation(roomId: string): number {
+    return this.rooms.find((room) => room.roomId === roomId)?.rotationDeg ?? 0;
   }
 
   panBy(deltaX: number, deltaY: number) {
@@ -216,6 +237,7 @@ export class CanvasEngine {
       isDraggingRoom: this.transform.isDragActive(),
       isResizingRoom: this.resize.isResizeActive(),
       activeResizeHandleId: this.resize.getActiveHandleId(),
+      activeRoomRotationDeg: this.getActiveRoom()?.rotationDeg ?? null,
       roomIds: this.rooms.map((room) => room.roomId),
       lastPointerWorldX: this.lastPointerWorldPoint?.x ?? null,
       lastPointerWorldY: this.lastPointerWorldPoint?.y ?? null,

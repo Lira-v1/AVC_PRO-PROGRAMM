@@ -64,6 +64,7 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
     `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
+    `activeRoomRotationDeg: ${debugState.activeRoomRotationDeg ?? 'null'}`,
   ].join('\n');
 };
 
@@ -304,6 +305,11 @@ export const CanvasV3DevScreen = () => {
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
   const canvasHeight = isFullscreenMode ? Math.max(windowHeight - 180, 520) : Math.max(Math.min(windowHeight * 0.62, 720), 420);
 
+  const handleRotateRoom = useCallback(() => {
+    engineRef.current.rotateActiveRoom();
+    refreshState();
+  }, [refreshState]);
+
   const handleCopyInspector = useCallback(async () => {
     try {
       await copyTextToClipboard(debugInspectorText);
@@ -347,6 +353,11 @@ export const CanvasV3DevScreen = () => {
           <Pressable style={[styles.controlButton, !isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
             <Text style={styles.controlButtonText}>{isGridVisible ? 'Скрыть сетку' : 'Показать сетку'}</Text>
           </Pressable>
+          {snapshot.activeRoomId ? (
+            <Pressable style={[styles.controlButton, styles.rotateButton]} onPress={handleRotateRoom}>
+              <Text style={styles.controlButtonText}>Повернуть</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={[styles.canvasShell, isFullscreenMode ? styles.canvasShellFullscreen : null]}>
@@ -384,10 +395,11 @@ export const CanvasV3DevScreen = () => {
                     styles.roomFill,
                     roomGeometry.isActive ? styles.roomFillActive : styles.roomFillInactive,
                     {
-                      left: roomGeometry.bounds.left,
-                      top: roomGeometry.bounds.top,
-                      width: roomGeometry.bounds.width,
-                      height: roomGeometry.bounds.height,
+                      width: roomGeometry.edges[0]?.length ?? roomGeometry.bounds.width,
+                      height: roomGeometry.edges[1]?.length ?? roomGeometry.bounds.height,
+                      left: roomGeometry.center.x - (roomGeometry.edges[0]?.length ?? roomGeometry.bounds.width) / 2,
+                      top: roomGeometry.center.y - (roomGeometry.edges[1]?.length ?? roomGeometry.bounds.height) / 2,
+                      transform: [{ rotate: `${roomGeometry.rotationDeg}deg` }],
                     },
                   ]}
                 />
@@ -482,6 +494,7 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>activeResizeHandleId: {debugState.activeResizeHandleId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>activeRoomRotationDeg: {debugState.activeRoomRotationDeg ?? 'null'}</Text>
                   <Text style={styles.metaText}>
                     lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
                   </Text>
@@ -599,6 +612,10 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     minWidth: 112,
+  },
+  rotateButton: {
+    backgroundColor: '#EEF4FF',
+    borderColor: '#BFDBFE',
   },
   canvasShell: {
     borderRadius: 18,

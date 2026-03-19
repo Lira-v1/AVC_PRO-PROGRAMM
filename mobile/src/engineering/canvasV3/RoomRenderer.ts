@@ -31,6 +31,7 @@ export class RoomRenderer {
     return {
       roomId: roomGeometry.roomId,
       isActive,
+      rotationDeg: engine.getRoomRotation(roomGeometry.roomId),
       center: engine.worldToScreen(roomGeometry.center),
       corners,
       edges,

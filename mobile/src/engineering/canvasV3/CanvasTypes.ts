@@ -59,6 +59,7 @@ export type RoomWorldGeometry = {
 export type RoomScreenGeometry = {
   roomId: string;
   isActive: boolean;
+  rotationDeg: number;
   center: ScreenPoint;
   corners: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
   edges: [ScreenEdge, ScreenEdge, ScreenEdge, ScreenEdge];
@@ -131,6 +132,7 @@ export type CanvasDebugState = {
   isDraggingRoom: boolean;
   isResizingRoom: boolean;
   activeResizeHandleId: RoomResizeHandleId | null;
+  activeRoomRotationDeg: number | null;
   roomIds: string[];
   lastPointerWorldX: number | null;
   lastPointerWorldY: number | null;
