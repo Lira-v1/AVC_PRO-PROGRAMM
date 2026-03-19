@@ -49,12 +49,52 @@ const createEngine = () => {
   return engine;
 };
 
+const formatDebugText = (debugState: CanvasDebugState) => {
+  const viewport = `${debugState.viewport.width.toFixed(0)} × ${debugState.viewport.height.toFixed(0)}`;
+  const roomIds = debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none';
+
+  return [
+    `zoom: ${debugState.zoom.toFixed(2)}`,
+    `zoomPercent: ${debugState.zoomPercent}%`,
+    `panX: ${debugState.panX.toFixed(1)}`,
+    `panY: ${debugState.panY.toFixed(1)}`,
+    `viewport: ${viewport}`,
+    `roomIds: ${roomIds}`,
+    `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
+    `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
+  ].join('\n');
+};
+
+const copyTextToClipboard = async (text: string) => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document !== 'undefined') {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'absolute';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return;
+  }
+
+  throw new Error('Clipboard API is unavailable');
+};
+
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
   const canvasRef = useRef<View | null>(null);
   const dragSessionRef = useRef<DragSession>(IDLE_DRAG_SESSION);
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
   const [debugState, setDebugState] = useState<CanvasDebugState>(engineRef.current.getDebugState());
+  const [isInspectorVisible, setInspectorVisible] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const refreshState = useCallback(() => {
     setSnapshot(engineRef.current.getSnapshot());
@@ -207,6 +247,18 @@ export const CanvasV3DevScreen = () => {
     };
   }, [applyZoom]);
 
+  useEffect(() => {
+    if (copyStatus === 'idle') {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setCopyStatus('idle');
+    }, 1800);
+
+    return () => clearTimeout(timeoutId);
+  }, [copyStatus]);
+
   const responderHandlers = useMemo(
     () => ({
       onStartShouldSetResponder: () => true,
@@ -228,45 +280,21 @@ export const CanvasV3DevScreen = () => {
     [beginInteraction, endInteraction, moveInteraction, toScreenPoint],
   );
 
-  const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
-  const worldOriginMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
+  const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
+
+  const handleCopyInspector = useCallback(async () => {
+    try {
+      await copyTextToClipboard(debugInspectorText);
+      setCopyStatus('success');
+    } catch (error) {
+      setCopyStatus('error');
+    }
+  }, [debugInspectorText]);
 
   return (
     <View style={styles.root}>
       <AppHeader title="Canvas V3 Dev" />
-
-      <View style={styles.inspectorPanel}>
-        <Text style={styles.inspectorTitle}>Dev Inspector</Text>
-        <Text style={styles.zoomIndicator}>Zoom: {debugState.zoomPercent}%</Text>
-        <Text style={styles.metaText}>
-          zoom: {debugState.zoom.toFixed(2)} ({debugState.zoomPercent}%)
-        </Text>
-        <Text style={styles.metaText}>
-          zoom range: {debugState.minZoom.toFixed(2)}–{debugState.maxZoom.toFixed(2)} ({Math.round(debugState.minZoom * 100)}%–{Math.round(debugState.maxZoom * 100)}%)
-        </Text>
-        <Text style={styles.metaText}>
-          pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})
-        </Text>
-        <Text style={styles.metaText}>
-          viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}
-        </Text>
-        <Text style={styles.metaText}>
-          world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})
-        </Text>
-        <Text style={styles.metaText}>
-          screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})
-        </Text>
-        <Text style={styles.metaText}>
-          world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
-        </Text>
-        <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
-        <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
-        <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
-        <Text style={styles.metaText}>
-          lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
-        </Text>
-      </View>
 
       <View style={styles.controlsRow}>
         <Pressable style={styles.zoomButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)}>
@@ -283,6 +311,15 @@ export const CanvasV3DevScreen = () => {
           }}
         >
           <Text style={styles.resetButtonText}>Reset View</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.secondaryButton, isInspectorVisible ? styles.secondaryButtonActive : null]}
+          onPress={() => {
+            setInspectorVisible((current) => !current);
+            setCopyStatus('idle');
+          }}
+        >
+          <Text style={styles.secondaryButtonText}>{isInspectorVisible ? 'Hide Inspector' : 'Inspector'}</Text>
         </Pressable>
       </View>
 
@@ -309,66 +346,6 @@ export const CanvasV3DevScreen = () => {
             ]}
           />
         ))}
-
-        <View
-          pointerEvents="none"
-          style={[
-            styles.viewportXAxis,
-            {
-              top: debugState.screenCenter.y,
-            },
-          ]}
-        />
-        <View
-          pointerEvents="none"
-          style={[
-            styles.viewportYAxis,
-            {
-              left: debugState.screenCenter.x,
-            },
-          ]}
-        />
-
-        <View
-          pointerEvents="none"
-          style={[
-            styles.worldXAxis,
-            {
-              top: worldOrigin.y,
-            },
-          ]}
-        />
-        <View
-          pointerEvents="none"
-          style={[
-            styles.worldYAxis,
-            {
-              left: worldOrigin.x,
-            },
-          ]}
-        />
-
-        <View
-          pointerEvents="none"
-          style={[
-            styles.worldCenterMarker,
-            {
-              left: worldOriginMarker.x - 4,
-              top: worldOriginMarker.y - 4,
-            },
-          ]}
-        />
-
-        <View
-          pointerEvents="none"
-          style={[
-            styles.viewportCenterMarker,
-            {
-              left: debugState.screenCenter.x - 5,
-              top: debugState.screenCenter.y - 5,
-            },
-          ]}
-        />
 
         {roomGeometries.map((roomGeometry) => (
           <React.Fragment key={roomGeometry.roomId}>
@@ -432,6 +409,58 @@ export const CanvasV3DevScreen = () => {
             />
           </React.Fragment>
         ))}
+
+        {isInspectorVisible ? (
+          <View style={styles.inspectorOverlay} pointerEvents="box-none">
+            <View style={styles.inspectorPopup}>
+              <View style={styles.inspectorHeader}>
+                <View style={styles.inspectorTitleBlock}>
+                  <Text style={styles.inspectorTitle}>Dev Inspector</Text>
+                  <Text style={styles.zoomIndicator}>Zoom: {debugState.zoomPercent}%</Text>
+                </View>
+                <Pressable style={styles.inspectorCloseButton} onPress={() => setInspectorVisible(false)}>
+                  <Text style={styles.inspectorCloseButtonText}>✕</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.metaText}>
+                zoom: {debugState.zoom.toFixed(2)} ({debugState.zoomPercent}%)
+              </Text>
+              <Text style={styles.metaText}>
+                zoom range: {debugState.minZoom.toFixed(2)}–{debugState.maxZoom.toFixed(2)} ({Math.round(debugState.minZoom * 100)}%–{Math.round(debugState.maxZoom * 100)}%)
+              </Text>
+              <Text style={styles.metaText}>
+                pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})
+              </Text>
+              <Text style={styles.metaText}>
+                viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}
+              </Text>
+              <Text style={styles.metaText}>
+                world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})
+              </Text>
+              <Text style={styles.metaText}>
+                screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})
+              </Text>
+              <Text style={styles.metaText}>
+                world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
+              </Text>
+              <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
+              <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
+              <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
+              <Text style={styles.metaText}>
+                lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
+              </Text>
+
+              <View style={styles.inspectorActions}>
+                <Pressable style={styles.copyButton} onPress={handleCopyInspector}>
+                  <Text style={styles.copyButtonText}>Copy</Text>
+                </Pressable>
+                {copyStatus === 'success' ? <Text style={styles.copyStatusSuccess}>Copied</Text> : null}
+                {copyStatus === 'error' ? <Text style={styles.copyStatusError}>Copy unavailable</Text> : null}
+              </View>
+            </View>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -442,34 +471,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  inspectorPanel: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E9EEF7',
-    gap: 4,
-    backgroundColor: '#F5F8FF',
-  },
-  inspectorTitle: {
-    color: '#1D2D4A',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  zoomIndicator: {
-    color: '#0F172A',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  metaText: {
-    color: '#24324A',
-    fontSize: 13,
-  },
   controlsRow: {
     flexDirection: 'row',
     gap: 8,
     padding: 12,
     alignItems: 'center',
+    flexWrap: 'wrap',
   },
   zoomButton: {
     minWidth: 68,
@@ -499,62 +506,126 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  secondaryButton: {
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#C9D6EA',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  secondaryButtonActive: {
+    backgroundColor: '#EEF4FF',
+    borderColor: '#2D5BFF',
+  },
+  secondaryButtonText: {
+    color: '#203054',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   canvasArea: {
     flex: 1,
-    margin: 12,
+    marginHorizontal: 12,
+    marginBottom: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#D8E2F4',
     overflow: 'hidden',
     backgroundColor: '#F9FBFF',
+    position: 'relative',
   },
   gridLine: {
     position: 'absolute',
     backgroundColor: '#D3DFF5',
   },
-  viewportXAxis: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255, 122, 0, 0.45)',
+  inspectorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    padding: 12,
   },
-  viewportYAxis: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: 'rgba(255, 122, 0, 0.45)',
-  },
-  worldXAxis: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: 'rgba(220, 38, 38, 0.6)',
-  },
-  worldYAxis: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 2,
-    backgroundColor: 'rgba(220, 38, 38, 0.6)',
-  },
-  worldCenterMarker: {
-    position: 'absolute',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#DC2626',
-  },
-  viewportCenterMarker: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#2D5BFF',
+  inspectorPopup: {
+    width: 320,
+    maxWidth: '100%',
+    padding: 12,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FFFFFF',
+    borderColor: '#D6E2F5',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    gap: 4,
+  },
+  inspectorHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+    gap: 8,
+  },
+  inspectorTitleBlock: {
+    flex: 1,
+    gap: 2,
+  },
+  inspectorTitle: {
+    color: '#1D2D4A',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  inspectorCloseButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#EEF4FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inspectorCloseButtonText: {
+    color: '#203054',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  zoomIndicator: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  metaText: {
+    color: '#24324A',
+    fontSize: 13,
+  },
+  inspectorActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+  },
+  copyButton: {
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#203054',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  copyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  copyStatusSuccess: {
+    color: '#15803D',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  copyStatusError: {
+    color: '#B91C1C',
+    fontSize: 12,
+    fontWeight: '600',
   },
   roomFill: {
     position: 'absolute',
