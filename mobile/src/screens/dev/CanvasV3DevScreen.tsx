@@ -49,7 +49,7 @@ export const CanvasV3DevScreen = () => {
   );
 
   const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
-  const worldCenterMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
+  const worldOriginMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
 
   return (
     <View style={styles.root}>
@@ -65,7 +65,7 @@ export const CanvasV3DevScreen = () => {
           viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}
         </Text>
         <Text style={styles.metaText}>
-          world center: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})
+          world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})
         </Text>
         <Text style={styles.metaText}>
           screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})
@@ -167,8 +167,8 @@ export const CanvasV3DevScreen = () => {
             style={[
               styles.worldCenterMarker,
               {
-                left: worldCenterMarker.x - 4,
-                top: worldCenterMarker.y - 4,
+                left: worldOriginMarker.x - 4,
+                top: worldOriginMarker.y - 4,
               },
             ]}
           />
