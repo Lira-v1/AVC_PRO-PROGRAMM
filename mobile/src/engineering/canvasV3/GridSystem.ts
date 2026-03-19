@@ -2,21 +2,9 @@ import { CameraSystem } from './CameraSystem';
 import { CoordinateSystem } from './CoordinateSystem';
 import { GridLine, GridState, Viewport, WorldPoint } from './CanvasTypes';
 
-type GridLevelConfig = {
-  level: string;
-  stepMm: number;
-};
-
-const GRID_LEVELS: GridLevelConfig[] = [
-  { level: 'macro-1000', stepMm: 1000 },
-  { level: 'coarse-500', stepMm: 500 },
-  { level: 'base-250', stepMm: 250 },
-  { level: 'detail-125', stepMm: 125 },
-  { level: 'micro-62.5', stepMm: 62.5 },
-];
-
 const REFERENCE_ROOM_SIZE_MM = 1000;
 const GRID_PRECISION = 4;
+const FIXED_GRID_LEVEL = 'world-100';
 
 const getCellsPerMeter = (stepMm: number) => REFERENCE_ROOM_SIZE_MM / stepMm;
 const normalizeWorldValue = (value: number) => Number(value.toFixed(GRID_PRECISION));
@@ -30,38 +18,16 @@ export class GridSystem {
     this.baseStep = baseStep;
   }
 
-  private getLevelConfig(displayZoom: number): GridLevelConfig {
-    if (displayZoom <= -40) {
-      return GRID_LEVELS[0];
-    }
-
-    if (displayZoom <= -20) {
-      return GRID_LEVELS[1];
-    }
-
-    if (displayZoom >= 40) {
-      return GRID_LEVELS[4];
-    }
-
-    if (displayZoom >= 20) {
-      return GRID_LEVELS[3];
-    }
-
-    return GRID_LEVELS.find((level) => level.stepMm === this.baseStep) ?? GRID_LEVELS[2];
-  }
-
-  getGridMetrics(displayZoom: number) {
-    const level = this.getLevelConfig(displayZoom);
-
+  getGridMetrics() {
     return {
-      gridStepMm: level.stepMm,
-      gridLevel: level.level,
-      cellsPerMeter: getCellsPerMeter(level.stepMm),
+      gridStepMm: this.baseStep,
+      gridLevel: FIXED_GRID_LEVEL,
+      cellsPerMeter: getCellsPerMeter(this.baseStep),
     };
   }
 
-  getGridState(camera: CameraSystem, viewport: Viewport, displayZoom: number): GridState {
-    const { gridStepMm, gridLevel, cellsPerMeter } = this.getGridMetrics(displayZoom);
+  getGridState(camera: CameraSystem, viewport: Viewport): GridState {
+    const { gridStepMm, gridLevel, cellsPerMeter } = this.getGridMetrics();
     const topLeftWorld = CoordinateSystem.screenToWorld(camera, { x: 0, y: 0 }, viewport);
     const bottomRightWorld = CoordinateSystem.screenToWorld(camera, { x: viewport.width, y: viewport.height }, viewport);
     const startXIndex = getGridOriginIndex(topLeftWorld.x, gridStepMm, 'start');
@@ -99,8 +65,8 @@ export class GridSystem {
     };
   }
 
-  snap(point: WorldPoint, _zoom: number, displayZoom = 0): WorldPoint {
-    const { gridStepMm } = this.getGridMetrics(displayZoom);
+  snap(point: WorldPoint): WorldPoint {
+    const { gridStepMm } = this.getGridMetrics();
 
     return {
       x: Math.round(point.x / gridStepMm) * gridStepMm,
