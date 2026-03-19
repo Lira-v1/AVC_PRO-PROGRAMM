@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
 import { CanvasDebugState, CanvasSnapshot, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
-const ZOOM_OUT_LABEL = `−${Math.round((1 - ZOOM_OUT_FACTOR) * 100)}%`;
-const ZOOM_IN_LABEL = `+${Math.round((ZOOM_IN_FACTOR - 1) * 100)}%`;
 const DRAG_THRESHOLD_PX = 3;
 
 type DragMode = 'idle' | 'room' | 'pan';
@@ -89,14 +87,20 @@ const copyTextToClipboard = async (text: string) => {
   throw new Error('Clipboard API is unavailable');
 };
 
+const formatZoomState = (displayZoom: number) => `${displayZoom > 0 ? '+' : ''}${Math.round(displayZoom * 20)}%`;
+const formatRoomTitle = (_roomId: string, index: number) => `Комната ${index + 1}`;
+
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
   const canvasRef = useRef<View | null>(null);
   const dragSessionRef = useRef<DragSession>(IDLE_DRAG_SESSION);
+  const { height: windowHeight } = useWindowDimensions();
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
   const [debugState, setDebugState] = useState<CanvasDebugState>(engineRef.current.getDebugState());
   const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [isGridVisible, setGridVisible] = useState(true);
+  const [isFullscreenMode, setFullscreenMode] = useState(false);
 
   const refreshState = useCallback(() => {
     setSnapshot(engineRef.current.getSnapshot());
@@ -283,8 +287,11 @@ export const CanvasV3DevScreen = () => {
   );
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
+  const roomData = engineRef.current.getRooms();
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
+  const zoomStateLabel = formatZoomState(debugState.displayZoom);
+  const canvasHeight = isFullscreenMode ? Math.max(windowHeight - 180, 520) : Math.max(Math.min(windowHeight * 0.62, 720), 420);
 
   const handleCopyInspector = useCallback(async () => {
     try {
@@ -299,175 +306,210 @@ export const CanvasV3DevScreen = () => {
     <View style={styles.root}>
       <AppHeader title="Canvas V3 Dev" />
 
-      <View style={styles.controlsRow}>
-        <Pressable style={styles.zoomButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)}>
-          <Text style={styles.zoomButtonText}>{ZOOM_OUT_LABEL}</Text>
-        </Pressable>
-        <Pressable style={styles.zoomButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)}>
-          <Text style={styles.zoomButtonText}>{ZOOM_IN_LABEL}</Text>
-        </Pressable>
-        <Pressable
-          style={styles.resetButton}
-          onPress={() => {
-            engineRef.current.resetView();
-            refreshState();
-          }}
-        >
-          <Text style={styles.resetButtonText}>Reset View</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.secondaryButton, isInspectorVisible ? styles.secondaryButtonActive : null]}
-          onPress={() => {
+      <ScrollView style={styles.pageScroll} contentContainerStyle={[styles.pageContent, isFullscreenMode ? styles.pageContentFullscreen : null]}>
+        <View style={styles.controlsRow}>
+          <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)}>
+            <Text style={styles.controlButtonText}>Зум -</Text>
+          </Pressable>
+          <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)}>
+            <Text style={styles.controlButtonText}>Зум +</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.controlButton, styles.resetButton]}
+            onPress={() => {
+              engineRef.current.resetView();
+              refreshState();
+            }}
+          >
+            <Text style={styles.controlButtonText}>Reset View</Text>
+            <Text style={styles.controlButtonSubtext}>{zoomStateLabel}</Text>
+          </Pressable>
+          <Pressable style={[styles.controlButton, isInspectorVisible ? styles.controlButtonActive : null]} onPress={() => {
             setInspectorVisible((current) => !current);
             setCopyStatus('idle');
-          }}
-        >
-          <Text style={styles.secondaryButtonText}>{isInspectorVisible ? 'Hide Inspector' : 'Inspector'}</Text>
-        </Pressable>
-      </View>
+          }}>
+            <Text style={styles.controlButtonText}>{isInspectorVisible ? 'Скрыть Inspector' : 'Inspector'}</Text>
+          </Pressable>
+          <Pressable style={[styles.controlButton, isFullscreenMode ? styles.controlButtonActive : null]} onPress={() => setFullscreenMode((current) => !current)}>
+            <Text style={styles.controlButtonText}>{isFullscreenMode ? 'Свернуть экран' : 'Полный экран'}</Text>
+          </Pressable>
+          <Pressable style={[styles.controlButton, !isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
+            <Text style={styles.controlButtonText}>{isGridVisible ? 'Скрыть сетку' : 'Показать сетку'}</Text>
+          </Pressable>
+        </View>
 
-      <View ref={canvasRef} style={styles.canvasArea} onLayout={onLayout} {...responderHandlers}>
-        {snapshot.grid.lines.map((line) => (
-          <View
-            key={line.id}
-            pointerEvents="none"
-            style={[
-              styles.gridLine,
-              line.axis === 'y'
-                ? {
-                    left: line.from.x,
-                    top: Math.min(line.from.y, line.to.y),
-                    height: Math.abs(line.to.y - line.from.y),
-                    width: 1,
-                  }
-                : {
-                    top: line.from.y,
-                    left: Math.min(line.from.x, line.to.x),
-                    width: Math.abs(line.to.x - line.from.x),
-                    height: 1,
-                  },
-            ]}
-          />
-        ))}
+        <View style={[styles.canvasShell, isFullscreenMode ? styles.canvasShellFullscreen : null]}>
+          <View ref={canvasRef} style={[styles.canvasArea, { height: canvasHeight }]} onLayout={onLayout} {...responderHandlers}>
+            {isGridVisible
+              ? snapshot.grid.lines.map((line) => (
+                  <View
+                    key={line.id}
+                    pointerEvents="none"
+                    style={[
+                      styles.gridLine,
+                      line.axis === 'y'
+                        ? {
+                            left: line.from.x,
+                            top: Math.min(line.from.y, line.to.y),
+                            height: Math.abs(line.to.y - line.from.y),
+                            width: 1,
+                          }
+                        : {
+                            top: line.from.y,
+                            left: Math.min(line.from.x, line.to.x),
+                            width: Math.abs(line.to.x - line.from.x),
+                            height: 1,
+                          },
+                    ]}
+                  />
+                ))
+              : null}
 
-        {roomGeometries.map((roomGeometry) => (
-          <React.Fragment key={roomGeometry.roomId}>
-            <View
-              pointerEvents="none"
-              style={[
-                styles.roomFill,
-                roomGeometry.isActive ? styles.roomFillActive : styles.roomFillInactive,
-                {
-                  left: roomGeometry.bounds.left,
-                  top: roomGeometry.bounds.top,
-                  width: roomGeometry.bounds.width,
-                  height: roomGeometry.bounds.height,
-                },
-              ]}
-            />
+            {roomGeometries.map((roomGeometry) => (
+              <React.Fragment key={roomGeometry.roomId}>
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.roomFill,
+                    roomGeometry.isActive ? styles.roomFillActive : styles.roomFillInactive,
+                    {
+                      left: roomGeometry.bounds.left,
+                      top: roomGeometry.bounds.top,
+                      width: roomGeometry.bounds.width,
+                      height: roomGeometry.bounds.height,
+                    },
+                  ]}
+                />
 
-            {roomGeometry.edges.map((edge) => (
-              <View
-                key={edge.id}
-                pointerEvents="none"
-                style={[
-                  styles.roomEdge,
-                  roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
-                  {
-                    width: edge.length,
-                    left: edge.center.x - edge.length / 2,
-                    top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
-                    height: roomGeometry.isActive ? 4 : 2,
-                    transform: [{ rotate: `${edge.angleDeg}deg` }],
-                  },
-                ]}
-              />
+                {roomGeometry.edges.map((edge) => (
+                  <View
+                    key={edge.id}
+                    pointerEvents="none"
+                    style={[
+                      styles.roomEdge,
+                      roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
+                      {
+                        width: edge.length,
+                        left: edge.center.x - edge.length / 2,
+                        top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
+                        height: roomGeometry.isActive ? 4 : 2,
+                        transform: [{ rotate: `${edge.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                ))}
+
+                {roomGeometry.corners.map((corner, index) => (
+                  <View
+                    key={`${roomGeometry.roomId}-corner-${index}`}
+                    pointerEvents="none"
+                    style={[
+                      styles.roomCornerMarker,
+                      roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
+                      {
+                        left: corner.x - (roomGeometry.isActive ? 4 : 3),
+                        top: corner.y - (roomGeometry.isActive ? 4 : 3),
+                      },
+                    ]}
+                  />
+                ))}
+
+                <View
+                  style={[
+                    styles.roomCenterMarker,
+                    roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
+                    {
+                      left: roomGeometry.center.x - (roomGeometry.isActive ? 7 : 5),
+                      top: roomGeometry.center.y - (roomGeometry.isActive ? 7 : 5),
+                    },
+                  ]}
+                  pointerEvents="none"
+                />
+              </React.Fragment>
             ))}
 
-            {roomGeometry.corners.map((corner, index) => (
-              <View
-                key={`${roomGeometry.roomId}-corner-${index}`}
-                pointerEvents="none"
-                style={[
-                  styles.roomCornerMarker,
-                  roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
-                  {
-                    left: corner.x - (roomGeometry.isActive ? 4 : 3),
-                    top: corner.y - (roomGeometry.isActive ? 4 : 3),
-                  },
-                ]}
-              />
-            ))}
+            {isInspectorVisible ? (
+              <View style={styles.inspectorOverlay} pointerEvents="box-none">
+                <View style={styles.inspectorPopup}>
+                  <View style={styles.inspectorHeader}>
+                    <View style={styles.inspectorTitleBlock}>
+                      <Text style={styles.inspectorTitle}>Dev Inspector</Text>
+                      <Text style={styles.zoomIndicator}>Display Zoom: {displayZoomLabel}</Text>
+                    </View>
+                    <Pressable style={styles.inspectorCloseButton} onPress={() => setInspectorVisible(false)}>
+                      <Text style={styles.inspectorCloseButtonText}>✕</Text>
+                    </Pressable>
+                  </View>
 
-            <View
-              style={[
-                styles.roomCenterMarker,
-                roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
-                {
-                  left: roomGeometry.center.x - (roomGeometry.isActive ? 7 : 5),
-                  top: roomGeometry.center.y - (roomGeometry.isActive ? 7 : 5),
-                },
-              ]}
-              pointerEvents="none"
-            />
-          </React.Fragment>
-        ))}
+                  <Text style={styles.metaText}>cameraZoom: {debugState.cameraZoom.toFixed(3)}</Text>
+                  <Text style={styles.metaText}>displayZoom: {displayZoomLabel}</Text>
+                  <Text style={styles.metaText}>camera zoom range: {debugState.minZoom.toFixed(3)}–{debugState.maxZoom.toFixed(2)}</Text>
+                  <Text style={styles.metaText}>pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})</Text>
+                  <Text style={styles.metaText}>viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}</Text>
+                  <Text style={styles.metaText}>world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})</Text>
+                  <Text style={styles.metaText}>screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})</Text>
+                  <Text style={styles.metaText}>world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})</Text>
+                  <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
+                  <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>
+                    lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
+                  </Text>
 
-        {isInspectorVisible ? (
-          <View style={styles.inspectorOverlay} pointerEvents="box-none">
-            <View style={styles.inspectorPopup}>
-              <View style={styles.inspectorHeader}>
-                <View style={styles.inspectorTitleBlock}>
-                  <Text style={styles.inspectorTitle}>Dev Inspector</Text>
-                  <Text style={styles.zoomIndicator}>Display Zoom: {displayZoomLabel}</Text>
+                  <View style={styles.inspectorActions}>
+                    <Pressable style={styles.copyButton} onPress={handleCopyInspector}>
+                      <Text style={styles.copyButtonText}>Copy</Text>
+                    </Pressable>
+                    {copyStatus === 'success' ? <Text style={styles.copyStatusSuccess}>Copied</Text> : null}
+                    {copyStatus === 'error' ? <Text style={styles.copyStatusError}>Copy unavailable</Text> : null}
+                  </View>
                 </View>
-                <Pressable style={styles.inspectorCloseButton} onPress={() => setInspectorVisible(false)}>
-                  <Text style={styles.inspectorCloseButtonText}>✕</Text>
-                </Pressable>
               </View>
+            ) : null}
+          </View>
+        </View>
 
-              <Text style={styles.metaText}>
-                cameraZoom: {debugState.cameraZoom.toFixed(3)}
-              </Text>
-              <Text style={styles.metaText}>
-                displayZoom: {displayZoomLabel}
-              </Text>
-              <Text style={styles.metaText}>
-                camera zoom range: {debugState.minZoom.toFixed(3)}–{debugState.maxZoom.toFixed(2)}
-              </Text>
-              <Text style={styles.metaText}>
-                pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})
-              </Text>
-              <Text style={styles.metaText}>
-                viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}
-              </Text>
-              <Text style={styles.metaText}>
-                world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})
-              </Text>
-              <Text style={styles.metaText}>
-                screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})
-              </Text>
-              <Text style={styles.metaText}>
-                world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
-              </Text>
-              <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
-              <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
-              <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
-              <Text style={styles.metaText}>
-                lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
-              </Text>
-
-              <View style={styles.inspectorActions}>
-                <Pressable style={styles.copyButton} onPress={handleCopyInspector}>
-                  <Text style={styles.copyButtonText}>Copy</Text>
+        {!isFullscreenMode ? (
+          <>
+            <View style={styles.ribbonCard}>
+              <View style={styles.ribbonTextBlock}>
+                <Text style={styles.ribbonTitle}>Диалоговая лента Canvas V3</Text>
+                <Text style={styles.ribbonSubtitle}>Временный UI-блок в стиле Canvas V2 для будущего сценария ввода команд и сообщений.</Text>
+              </View>
+              <View style={styles.ribbonInputRow}>
+                <TextInput
+                  editable={false}
+                  placeholder="Введите сообщение или команду для Canvas..."
+                  placeholderTextColor="#94A3B8"
+                  style={styles.ribbonInput}
+                  value=""
+                />
+                <Pressable style={styles.sendButton}>
+                  <Text style={styles.sendButtonText}>Отправить</Text>
                 </Pressable>
-                {copyStatus === 'success' ? <Text style={styles.copyStatusSuccess}>Copied</Text> : null}
-                {copyStatus === 'error' ? <Text style={styles.copyStatusError}>Copy unavailable</Text> : null}
               </View>
             </View>
-          </View>
+
+            <View style={styles.dataCard}>
+              <Text style={styles.sectionTitle}>Данные комнат из engine state</Text>
+              <Text style={styles.sectionSubtitle}>Временный текстовый блок под canvas для быстрого контроля параметров сцены.</Text>
+              <View style={styles.roomCardsWrap}>
+                {roomData.map((room, index) => (
+                  <View key={room.roomId} style={styles.roomDataCard}>
+                    <Text style={styles.roomDataTitle}>{formatRoomTitle(room.roomId, index)}</Text>
+                    <Text style={styles.roomDataMeta}>roomId: {room.roomId}</Text>
+                    <Text style={styles.roomDataMeta}>centerX: {room.centerX}</Text>
+                    <Text style={styles.roomDataMeta}>centerY: {room.centerY}</Text>
+                    <Text style={styles.roomDataMeta}>widthMm: {room.widthMm}</Text>
+                    <Text style={styles.roomDataMeta}>heightMm: {room.heightMm}</Text>
+                    <Text style={styles.roomDataMeta}>rotationDeg: {room.rotationDeg}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </>
         ) : null}
-      </View>
+      </ScrollView>
     </View>
   );
 };
@@ -475,76 +517,80 @@ export const CanvasV3DevScreen = () => {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F3F6FB',
+  },
+  pageScroll: {
+    flex: 1,
+  },
+  pageContent: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 32,
+    gap: 14,
+  },
+  pageContentFullscreen: {
+    paddingBottom: 16,
   },
   controlsRow: {
     flexDirection: 'row',
     gap: 8,
-    padding: 12,
     alignItems: 'center',
     flexWrap: 'wrap',
   },
-  zoomButton: {
-    minWidth: 68,
-    height: 42,
-    borderRadius: 10,
-    backgroundColor: '#2D5BFF',
+  controlButton: {
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 10,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
   },
-  zoomButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  controlButtonActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFD3F7',
+  },
+  controlButtonText: {
+    color: '#1E293B',
+    fontSize: 14,
     fontWeight: '700',
-    lineHeight: 20,
+  },
+  controlButtonSubtext: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
   },
   resetButton: {
-    height: 42,
-    borderRadius: 10,
-    backgroundColor: '#203054',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 14,
+    minWidth: 112,
   },
-  resetButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  secondaryButton: {
-    height: 42,
-    borderRadius: 10,
+  canvasShell: {
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#C9D6EA',
+    borderColor: '#DCE3F2',
     backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 14,
+    padding: 10,
   },
-  secondaryButtonActive: {
-    backgroundColor: '#EEF4FF',
-    borderColor: '#2D5BFF',
-  },
-  secondaryButtonText: {
-    color: '#203054',
-    fontSize: 13,
-    fontWeight: '700',
+  canvasShellFullscreen: {
+    padding: 8,
   },
   canvasArea: {
-    flex: 1,
-    marginHorizontal: 12,
-    marginBottom: 12,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#D8E2F4',
     overflow: 'hidden',
-    backgroundColor: '#F9FBFF',
+    backgroundColor: '#F8FAFC',
     position: 'relative',
   },
   gridLine: {
     position: 'absolute',
-    backgroundColor: '#D3DFF5',
+    backgroundColor: '#D6DFEF',
   },
   inspectorOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -687,5 +733,98 @@ const styles = StyleSheet.create({
     backgroundColor: '#DBEAFE',
     borderColor: '#2563EB',
     borderWidth: 3,
+  },
+  ribbonCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    padding: 16,
+    gap: 14,
+  },
+  ribbonTextBlock: {
+    gap: 4,
+  },
+  ribbonTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  ribbonSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#64748B',
+  },
+  ribbonInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  ribbonInput: {
+    flex: 1,
+    minWidth: 220,
+    minHeight: 46,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    color: '#0F172A',
+  },
+  sendButton: {
+    minHeight: 46,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendButtonText: {
+    color: '#1E293B',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dataCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    padding: 16,
+    gap: 8,
+  },
+  sectionTitle: {
+    color: '#1E293B',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  sectionSubtitle: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  roomCardsWrap: {
+    gap: 10,
+  },
+  roomDataCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    padding: 14,
+    gap: 4,
+  },
+  roomDataTitle: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  roomDataMeta: {
+    color: '#334155',
+    fontSize: 13,
   },
 });
