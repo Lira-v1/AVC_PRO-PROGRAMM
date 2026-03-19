@@ -13,7 +13,6 @@ export type Viewport = {
   height: number;
 };
 
-
 export type WorldBounds = {
   minX: number;
   minY: number;
@@ -109,6 +108,7 @@ export type CanvasSnapshot = {
 
 export type CanvasDebugState = {
   zoom: number;
+  zoomPercent: number;
   panX: number;
   panY: number;
   minZoom: number;
@@ -119,4 +119,5 @@ export type CanvasDebugState = {
   worldAtScreenCenter: WorldPoint;
   activeRoomId: string | null;
   isDraggingRoom: boolean;
+  roomIds: string[];
 };

@@ -4,11 +4,10 @@ import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
 import { CanvasDebugState, CanvasSnapshot, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
-const createEngine = () => {
-  const engine = new CanvasEngine(12000, 12000);
-  engine.setRooms([DEV_ROOM]);
-  return engine;
-};
+const ZOOM_OUT_FACTOR = 0.8;
+const ZOOM_IN_FACTOR = 1.25;
+const ZOOM_OUT_LABEL = `−${Math.round((1 - ZOOM_OUT_FACTOR) * 100)}%`;
+const ZOOM_IN_LABEL = `+${Math.round((ZOOM_IN_FACTOR - 1) * 100)}%`;
 
 const DEV_ROOM: RoomModel = {
   roomId: 'room-1',
@@ -17,6 +16,12 @@ const DEV_ROOM: RoomModel = {
   widthMm: 4000,
   heightMm: 3000,
   rotationDeg: 0,
+};
+
+const createEngine = () => {
+  const engine = new CanvasEngine(12000, 12000);
+  engine.setRooms([DEV_ROOM]);
+  return engine;
 };
 
 export const CanvasV3DevScreen = () => {
@@ -89,8 +94,7 @@ export const CanvasV3DevScreen = () => {
 
   const worldOrigin: ScreenPoint = engineRef.current.worldToScreen({ x: 0, y: 0 });
   const worldOriginMarker: ScreenPoint = engineRef.current.worldToScreen(debugState.worldCenter);
-  const room = engineRef.current.getRooms()[0] ?? DEV_ROOM;
-  const roomGeometry = engineRef.current.getRoomScreenGeometry(room);
+  const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
 
   return (
     <View style={styles.root}>
@@ -98,7 +102,12 @@ export const CanvasV3DevScreen = () => {
 
       <View style={styles.inspectorPanel}>
         <Text style={styles.inspectorTitle}>Dev Inspector</Text>
-        <Text style={styles.metaText}>zoom: {debugState.zoom.toFixed(2)}</Text>
+        <Text style={styles.metaText}>
+          zoom: {debugState.zoom.toFixed(2)} ({debugState.zoomPercent}%)
+        </Text>
+        <Text style={styles.metaText}>
+          zoom range: {debugState.minZoom.toFixed(2)}–{debugState.maxZoom.toFixed(2)} ({Math.round(debugState.minZoom * 100)}%–{Math.round(debugState.maxZoom * 100)}%)
+        </Text>
         <Text style={styles.metaText}>
           pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})
         </Text>
@@ -114,6 +123,7 @@ export const CanvasV3DevScreen = () => {
         <Text style={styles.metaText}>
           world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})
         </Text>
+        <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
         <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
         <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
       </View>
@@ -122,20 +132,20 @@ export const CanvasV3DevScreen = () => {
         <Pressable
           style={styles.zoomButton}
           onPress={() => {
-            engineRef.current.zoomBy(0.8);
+            engineRef.current.zoomBy(ZOOM_OUT_FACTOR);
             refreshState();
           }}
         >
-          <Text style={styles.zoomButtonText}>−</Text>
+          <Text style={styles.zoomButtonText}>{ZOOM_OUT_LABEL}</Text>
         </Pressable>
         <Pressable
           style={styles.zoomButton}
           onPress={() => {
-            engineRef.current.zoomBy(1.25);
+            engineRef.current.zoomBy(ZOOM_IN_FACTOR);
             refreshState();
           }}
         >
-          <Text style={styles.zoomButtonText}>+</Text>
+          <Text style={styles.zoomButtonText}>{ZOOM_IN_LABEL}</Text>
         </Pressable>
         <Pressable
           style={styles.resetButton}
@@ -226,52 +236,54 @@ export const CanvasV3DevScreen = () => {
             ]}
           />
 
+          {roomGeometries.map((roomGeometry) => (
+            <React.Fragment key={roomGeometry.roomId}>
+              {roomGeometry.edges.map((edge) => (
+                <View
+                  key={edge.id}
+                  pointerEvents="none"
+                  style={[
+                    styles.roomEdge,
+                    roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
+                    {
+                      width: edge.length,
+                      left: edge.center.x - edge.length / 2,
+                      top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
+                      height: roomGeometry.isActive ? 4 : 2,
+                      transform: [{ rotate: `${edge.angleDeg}deg` }],
+                    },
+                  ]}
+                />
+              ))}
 
-          {roomGeometry.edges.map((edge) => (
-            <View
-              key={edge.id}
-              pointerEvents="none"
-              style={[
-                styles.roomEdge,
-                roomGeometry.isActive ? styles.roomEdgeActive : styles.roomEdgeInactive,
-                {
-                  width: edge.length,
-                  left: edge.center.x - edge.length / 2,
-                  top: edge.center.y - (roomGeometry.isActive ? 2 : 1),
-                  height: roomGeometry.isActive ? 4 : 2,
-                  transform: [{ rotate: `${edge.angleDeg}deg` }],
-                },
-              ]}
-            />
+              {roomGeometry.corners.map((corner, index) => (
+                <View
+                  key={`${roomGeometry.roomId}-corner-${index}`}
+                  pointerEvents="none"
+                  style={[
+                    styles.roomCornerMarker,
+                    roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
+                    {
+                      left: corner.x - (roomGeometry.isActive ? 4 : 3),
+                      top: corner.y - (roomGeometry.isActive ? 4 : 3),
+                    },
+                  ]}
+                />
+              ))}
+
+              <View
+                style={[
+                  styles.roomCenterMarker,
+                  roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
+                  {
+                    left: roomGeometry.center.x - (roomGeometry.isActive ? 7 : 5),
+                    top: roomGeometry.center.y - (roomGeometry.isActive ? 7 : 5),
+                  },
+                ]}
+                pointerEvents="none"
+              />
+            </React.Fragment>
           ))}
-
-          {roomGeometry.corners.map((corner, index) => (
-            <View
-              key={`${roomGeometry.roomId}-corner-${index}`}
-              pointerEvents="none"
-              style={[
-                styles.roomCornerMarker,
-                roomGeometry.isActive ? styles.roomCornerMarkerActive : null,
-                {
-                  left: corner.x - 3,
-                  top: corner.y - 3,
-                },
-              ]}
-            />
-          ))}
-
-          <View
-            style={[
-              styles.roomCenterMarker,
-              roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
-              {
-                left: roomGeometry.center.x - 5,
-                top: roomGeometry.center.y - 5,
-              },
-            ]}
-            pointerEvents="none"
-          />
-
         </View>
       </Pressable>
     </View>
@@ -308,18 +320,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   zoomButton: {
-    width: 42,
+    minWidth: 68,
     height: 42,
     borderRadius: 10,
     backgroundColor: '#2D5BFF',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 10,
   },
   zoomButtonText: {
     color: '#FFFFFF',
-    fontSize: 24,
+    fontSize: 16,
     fontWeight: '700',
-    lineHeight: 28,
+    lineHeight: 20,
   },
   resetButton: {
     height: 42,
