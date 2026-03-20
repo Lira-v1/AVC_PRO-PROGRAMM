@@ -6,6 +6,21 @@ type ResizeSession = {
 
 const MIN_WIDTH_MM = 400;
 const MIN_HEIGHT_MM = 400;
+const FULL_ROTATION_DEG = 360;
+const QUADRANT_STEP_DEG = 90;
+
+const normalizeRotation = (rotationDeg: number) => {
+  const normalized = rotationDeg % FULL_ROTATION_DEG;
+
+  return normalized >= 0 ? normalized : normalized + FULL_ROTATION_DEG;
+};
+
+const getOrthogonalQuadrant = (rotationDeg: number): 0 | 1 | 2 | 3 => {
+  const normalized = normalizeRotation(rotationDeg);
+  const quadrant = Math.round(normalized / QUADRANT_STEP_DEG) % 4;
+
+  return quadrant as 0 | 1 | 2 | 3;
+};
 
 export class RoomResizeSystem {
   private rooms: RoomModel[] = [];
@@ -53,22 +68,27 @@ export class RoomResizeSystem {
       return null;
     }
 
-    // Resize must stay stable in screen/world axes so rotation only affects room geometry,
-    // not the user's drag direction expectations in the overlay.
+    // Resize must remain invariant in screen/world axes.
+    // For orthogonal room rotations the visible horizontal/vertical bounds map to
+    // different underlying room dimensions, so we remap drag deltas back to the
+    // stable base model instead of accumulating errors from the rotated state.
     const handleSigns = this.getHandleSigns(this.session.handleId);
-    const nextWidth = Math.max(MIN_WIDTH_MM, room.widthMm + delta.x * handleSigns.x);
-    const nextHeight = Math.max(MIN_HEIGHT_MM, room.heightMm + delta.y * handleSigns.y);
-    const widthDelta = nextWidth - room.widthMm;
-    const heightDelta = nextHeight - room.heightMm;
-    const worldCenterShift = {
-      x: (widthDelta / 2) * handleSigns.x,
-      y: (heightDelta / 2) * handleSigns.y,
-    };
+    const quadrant = getOrthogonalQuadrant(room.rotationDeg);
+    const usesSwappedAxes = quadrant === 1 || quadrant === 3;
+    const horizontalField = usesSwappedAxes ? 'heightMm' : 'widthMm';
+    const verticalField = usesSwappedAxes ? 'widthMm' : 'heightMm';
 
-    room.centerX += worldCenterShift.x;
-    room.centerY += worldCenterShift.y;
-    room.widthMm = nextWidth;
-    room.heightMm = nextHeight;
+    const currentHorizontalSize = room[horizontalField];
+    const currentVerticalSize = room[verticalField];
+    const nextHorizontalSize = Math.max(MIN_WIDTH_MM, currentHorizontalSize + delta.x * handleSigns.x);
+    const nextVerticalSize = Math.max(MIN_HEIGHT_MM, currentVerticalSize + delta.y * handleSigns.y);
+    const horizontalDelta = nextHorizontalSize - currentHorizontalSize;
+    const verticalDelta = nextVerticalSize - currentVerticalSize;
+
+    room.centerX += (horizontalDelta / 2) * handleSigns.x;
+    room.centerY += (verticalDelta / 2) * handleSigns.y;
+    room[horizontalField] = nextHorizontalSize;
+    room[verticalField] = nextVerticalSize;
 
     return { ...room };
   }
