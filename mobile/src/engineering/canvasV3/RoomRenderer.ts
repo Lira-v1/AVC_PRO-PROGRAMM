@@ -77,10 +77,15 @@ export class RoomRenderer {
       return [];
     }
 
+    const screenGeometry = RoomRenderer.toScreenGeometry(engine, roomGeometry);
+
     return [{
       roomId: roomGeometry.roomId,
       handleId: 'bottom-right' as RoomResizeHandleId,
-      point: engine.worldToScreen(roomGeometry.corners[2]),
+      point: {
+        x: screenGeometry.bounds.right,
+        y: screenGeometry.bounds.bottom,
+      },
       isActive: activeHandleId === 'bottom-right',
     }];
   }
