@@ -7,30 +7,6 @@ type ResizeSession = {
 const MIN_WIDTH_MM = 400;
 const MIN_HEIGHT_MM = 400;
 
-const toRadians = (deg: number) => (deg * Math.PI) / 180;
-
-const rotateWorldDeltaToLocal = (delta: WorldPoint, rotationDeg: number): WorldPoint => {
-  const angle = toRadians(rotationDeg);
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-
-  return {
-    x: delta.x * cos + delta.y * sin,
-    y: -delta.x * sin + delta.y * cos,
-  };
-};
-
-const rotateLocalDeltaToWorld = (delta: WorldPoint, rotationDeg: number): WorldPoint => {
-  const angle = toRadians(rotationDeg);
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-
-  return {
-    x: delta.x * cos - delta.y * sin,
-    y: delta.x * sin + delta.y * cos,
-  };
-};
-
 export class RoomResizeSystem {
   private rooms: RoomModel[] = [];
   private activeRoomId: string | null = null;
@@ -77,19 +53,17 @@ export class RoomResizeSystem {
       return null;
     }
 
-    const localDelta = rotateWorldDeltaToLocal(delta, room.rotationDeg);
+    // Resize must stay stable in screen/world axes so rotation only affects room geometry,
+    // not the user's drag direction expectations in the overlay.
     const handleSigns = this.getHandleSigns(this.session.handleId);
-    const nextWidth = Math.max(MIN_WIDTH_MM, room.widthMm + localDelta.x * handleSigns.x);
-    const nextHeight = Math.max(MIN_HEIGHT_MM, room.heightMm + localDelta.y * handleSigns.y);
+    const nextWidth = Math.max(MIN_WIDTH_MM, room.widthMm + delta.x * handleSigns.x);
+    const nextHeight = Math.max(MIN_HEIGHT_MM, room.heightMm + delta.y * handleSigns.y);
     const widthDelta = nextWidth - room.widthMm;
     const heightDelta = nextHeight - room.heightMm;
-    const worldCenterShift = rotateLocalDeltaToWorld(
-      {
-        x: (widthDelta / 2) * handleSigns.x,
-        y: (heightDelta / 2) * handleSigns.y,
-      },
-      room.rotationDeg,
-    );
+    const worldCenterShift = {
+      x: (widthDelta / 2) * handleSigns.x,
+      y: (heightDelta / 2) * handleSigns.y,
+    };
 
     room.centerX += worldCenterShift.x;
     room.centerY += worldCenterShift.y;
