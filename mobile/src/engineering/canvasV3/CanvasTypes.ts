@@ -81,27 +81,37 @@ export type RoomResizeHandleScreenGeometry = {
 };
 
 export type DimensionLabelKind = 'length' | 'width';
+export type DimensionAxis = 'horizontal' | 'vertical';
 
-export type DimensionLabelWorldGeometry = {
+export type DimensionLineWorldGeometry = {
   id: string;
   roomId: string;
   kind: DimensionLabelKind;
-  title: string;
+  axis: DimensionAxis;
   valueMm: number;
   formattedValue: string;
-  anchor: WorldPoint;
-  normal: WorldPoint;
-  offsetMm: number;
+  lineFrom: WorldPoint;
+  lineTo: WorldPoint;
+  textAnchor: WorldPoint;
+  ticks: [
+    { from: WorldPoint; to: WorldPoint },
+    { from: WorldPoint; to: WorldPoint },
+  ];
 };
 
-export type DimensionLabelScreenGeometry = {
+export type DimensionLineScreenGeometry = {
   id: string;
   roomId: string;
   kind: DimensionLabelKind;
-  title: string;
+  axis: DimensionAxis;
   formattedValue: string;
-  center: ScreenPoint;
-  offsetPx: ScreenPoint;
+  lineFrom: ScreenPoint;
+  lineTo: ScreenPoint;
+  textAnchor: ScreenPoint;
+  ticks: [
+    { from: ScreenPoint; to: ScreenPoint },
+    { from: ScreenPoint; to: ScreenPoint },
+  ];
 };
 
 export type CameraState = {

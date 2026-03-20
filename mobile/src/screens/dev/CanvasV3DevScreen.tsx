@@ -309,11 +309,6 @@ export const CanvasV3DevScreen = () => {
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
   const canvasHeight = isFullscreenMode ? Math.max(windowHeight - 180, 520) : Math.max(Math.min(windowHeight * 0.62, 720), 420);
 
-  const handleRotateRoom = useCallback(() => {
-    engineRef.current.rotateActiveRoom();
-    refreshState();
-  }, [refreshState]);
-
   const handleCopyInspector = useCallback(async () => {
     try {
       await copyTextToClipboard(debugInspectorText);
@@ -357,11 +352,6 @@ export const CanvasV3DevScreen = () => {
           <Pressable style={[styles.controlButton, !isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
             <Text style={styles.controlButtonText}>{isGridVisible ? 'Скрыть сетку' : 'Показать сетку'}</Text>
           </Pressable>
-          {snapshot.activeRoomId ? (
-            <Pressable style={[styles.controlButton, styles.rotateButton]} onPress={handleRotateRoom}>
-              <Text style={styles.controlButtonText}>Повернуть</Text>
-            </Pressable>
-          ) : null}
         </View>
 
         <View style={[styles.canvasShell, isFullscreenMode ? styles.canvasShellFullscreen : null]}>
@@ -457,23 +447,82 @@ export const CanvasV3DevScreen = () => {
               </React.Fragment>
             ))}
 
-            {dimensionLabels.map((label) => (
-              <View
-                key={label.id}
-                pointerEvents="none"
-                style={[
-                  styles.dimensionLabel,
-                  label.kind === 'length' ? styles.dimensionLabelLength : styles.dimensionLabelWidth,
-                  {
-                    left: label.center.x + label.offsetPx.x - 54,
-                    top: label.center.y + label.offsetPx.y - 20,
-                  },
-                ]}
-              >
-                <Text style={styles.dimensionLabelTitle}>{label.title}</Text>
-                <Text style={styles.dimensionLabelValue}>{label.formattedValue}</Text>
-              </View>
-            ))}
+            {dimensionLabels.map((label) => {
+              const lineLeft = Math.min(label.lineFrom.x, label.lineTo.x);
+              const lineTop = Math.min(label.lineFrom.y, label.lineTo.y);
+              const lineWidth = Math.max(Math.abs(label.lineTo.x - label.lineFrom.x), 1);
+              const lineHeight = Math.max(Math.abs(label.lineTo.y - label.lineFrom.y), 1);
+              const isHorizontal = label.axis === 'horizontal';
+
+              return (
+                <React.Fragment key={label.id}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.dimensionLine,
+                      isHorizontal
+                        ? {
+                            left: lineLeft,
+                            top: label.lineFrom.y,
+                            width: lineWidth,
+                            height: 1,
+                          }
+                        : {
+                            left: label.lineFrom.x,
+                            top: lineTop,
+                            width: 1,
+                            height: lineHeight,
+                          },
+                    ]}
+                  />
+
+                  {label.ticks.map((tick, tickIndex) => {
+                    const tickLeft = Math.min(tick.from.x, tick.to.x);
+                    const tickTop = Math.min(tick.from.y, tick.to.y);
+                    const tickWidth = Math.max(Math.abs(tick.to.x - tick.from.x), 1);
+                    const tickHeight = Math.max(Math.abs(tick.to.y - tick.from.y), 1);
+
+                    return (
+                      <View
+                        key={`${label.id}-tick-${tickIndex}`}
+                        pointerEvents="none"
+                        style={[
+                          styles.dimensionTick,
+                          {
+                            left: tickLeft,
+                            top: tickTop,
+                            width: tickWidth,
+                            height: tickHeight,
+                          },
+                        ]}
+                      />
+                    );
+                  })}
+
+                  <Text
+                    pointerEvents="none"
+                    style={[
+                      styles.dimensionValue,
+                      isHorizontal
+                        ? {
+                            left: label.textAnchor.x - 30,
+                            top: label.textAnchor.y - 22,
+                            minWidth: 60,
+                            textAlign: 'center',
+                          }
+                        : {
+                            left: label.textAnchor.x - 22,
+                            top: label.textAnchor.y - 9,
+                            width: 44,
+                            textAlign: 'center',
+                          },
+                    ]}
+                  >
+                    {label.formattedValue}
+                  </Text>
+                </React.Fragment>
+              );
+            })}
 
             {resizeHandles.map((handle) => (
               <View
@@ -640,10 +689,6 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     minWidth: 112,
-  },
-  rotateButton: {
-    backgroundColor: '#EEF4FF',
-    borderColor: '#BFDBFE',
   },
   canvasShell: {
     borderRadius: 18,
@@ -822,35 +867,20 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#374151',
   },
-  dimensionLabel: {
+  dimensionLine: {
     position: 'absolute',
-    minWidth: 108,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.34)',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    alignItems: 'center',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#1F2937',
   },
-  dimensionLabelLength: {},
-  dimensionLabelWidth: {},
-  dimensionLabelTitle: {
-    color: '#64748B',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
+  dimensionTick: {
+    position: 'absolute',
+    backgroundColor: '#1F2937',
   },
-  dimensionLabelValue: {
-    color: '#0F172A',
-    fontSize: 14,
-    fontWeight: '800',
-    marginTop: 2,
+  dimensionValue: {
+    position: 'absolute',
+    color: '#111827',
+    fontSize: 12,
+    fontWeight: '600',
+    includeFontPadding: false,
   },
   roomCenterMarkerActive: {
     width: 14,
