@@ -5,8 +5,8 @@ import {
   CanvasDebugState,
   CanvasSnapshot,
   CanvasState,
-  DimensionLabelScreenGeometry,
-  DimensionLabelWorldGeometry,
+  DimensionLineScreenGeometry,
+  DimensionLineWorldGeometry,
   RoomModel,
   RoomResizeHandleId,
   RoomResizeHandleScreenGeometry,
@@ -260,7 +260,7 @@ export class CanvasEngine {
     return RoomRenderer.toScreenGeometry(this, this.getRoomGeometry(room));
   }
 
-  getActiveRoomDimensionLabels(): DimensionLabelScreenGeometry[] {
+  getActiveRoomDimensionLabels(): DimensionLineScreenGeometry[] {
     const activeRoom = this.getActiveRoom();
 
     if (!activeRoom) {
@@ -268,7 +268,7 @@ export class CanvasEngine {
     }
 
     const roomGeometry = this.getRoomGeometry(activeRoom);
-    const labels: DimensionLabelWorldGeometry[] = DimensionLabelSystem.getLabelsForRoom(activeRoom, roomGeometry);
+    const labels: DimensionLineWorldGeometry[] = DimensionLabelSystem.getLabelsForRoom(activeRoom, roomGeometry);
 
     return RoomRenderer.getDimensionLabels(this, labels);
   }

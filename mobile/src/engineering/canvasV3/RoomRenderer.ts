@@ -1,5 +1,5 @@
 import { CanvasEngine } from './CanvasEngine';
-import { DimensionLabelScreenGeometry, DimensionLabelWorldGeometry, RoomResizeHandleId, RoomResizeHandleScreenGeometry, RoomScreenGeometry, RoomWorldGeometry, ScreenEdge, ScreenPoint } from './CanvasTypes';
+import { DimensionLineScreenGeometry, DimensionLineWorldGeometry, RoomResizeHandleId, RoomResizeHandleScreenGeometry, RoomScreenGeometry, RoomWorldGeometry, ScreenEdge, ScreenPoint } from './CanvasTypes';
 
 const createScreenEdge = (id: string, from: ScreenPoint, to: ScreenPoint): ScreenEdge => {
   const deltaX = to.x - from.x;
@@ -47,28 +47,27 @@ export class RoomRenderer {
   }
 
 
-  static getDimensionLabels(engine: CanvasEngine, labels: DimensionLabelWorldGeometry[]): DimensionLabelScreenGeometry[] {
-    return labels.map((label) => {
-      const center = engine.worldToScreen(label.anchor);
-      const offsetWorldPoint = {
-        x: label.anchor.x + label.normal.x * label.offsetMm,
-        y: label.anchor.y + label.normal.y * label.offsetMm,
-      };
-      const offsetScreenPoint = engine.worldToScreen(offsetWorldPoint);
-
-      return {
-        id: label.id,
-        roomId: label.roomId,
-        kind: label.kind,
-        title: label.title,
-        formattedValue: label.formattedValue,
-        center,
-        offsetPx: {
-          x: offsetScreenPoint.x - center.x,
-          y: offsetScreenPoint.y - center.y,
+  static getDimensionLabels(engine: CanvasEngine, labels: DimensionLineWorldGeometry[]): DimensionLineScreenGeometry[] {
+    return labels.map((label) => ({
+      id: label.id,
+      roomId: label.roomId,
+      kind: label.kind,
+      axis: label.axis,
+      formattedValue: label.formattedValue,
+      lineFrom: engine.worldToScreen(label.lineFrom),
+      lineTo: engine.worldToScreen(label.lineTo),
+      textAnchor: engine.worldToScreen(label.textAnchor),
+      ticks: [
+        {
+          from: engine.worldToScreen(label.ticks[0].from),
+          to: engine.worldToScreen(label.ticks[0].to),
         },
-      };
-    });
+        {
+          from: engine.worldToScreen(label.ticks[1].from),
+          to: engine.worldToScreen(label.ticks[1].to),
+        },
+      ],
+    }));
   }
 
   static getResizeHandles(
