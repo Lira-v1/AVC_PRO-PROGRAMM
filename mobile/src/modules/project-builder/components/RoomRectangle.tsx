@@ -122,11 +122,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   roomSelected: {
-    borderColor: '#2D5ED2',
-    backgroundColor: '#EDF3FF',
-    shadowColor: '#2D5ED2',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
+    borderColor: '#3A7BFF',
+    backgroundColor: 'rgba(58, 123, 255, 0.08)',
+    shadowOpacity: 0,
+    shadowRadius: 0,
   },
   roomHeader: {
     position: 'absolute',
