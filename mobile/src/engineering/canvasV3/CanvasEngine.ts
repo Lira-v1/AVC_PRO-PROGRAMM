@@ -276,7 +276,7 @@ export class CanvasEngine {
   getActiveRoomResizeHandles(): RoomResizeHandleScreenGeometry[] {
     const activeRoom = this.getActiveRoom();
 
-    if (!activeRoom || Math.abs(activeRoom.rotationDeg) > 0.001) {
+    if (!activeRoom) {
       return [];
     }
 
