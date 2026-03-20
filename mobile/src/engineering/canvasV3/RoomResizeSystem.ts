@@ -6,7 +6,30 @@ type ResizeSession = {
 
 const MIN_WIDTH_MM = 400;
 const MIN_HEIGHT_MM = 400;
-const ZERO_ROTATION_EPSILON = 0.001;
+
+const toRadians = (deg: number) => (deg * Math.PI) / 180;
+
+const rotateWorldDeltaToLocal = (delta: WorldPoint, rotationDeg: number): WorldPoint => {
+  const angle = toRadians(rotationDeg);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: delta.x * cos + delta.y * sin,
+    y: -delta.x * sin + delta.y * cos,
+  };
+};
+
+const rotateLocalDeltaToWorld = (delta: WorldPoint, rotationDeg: number): WorldPoint => {
+  const angle = toRadians(rotationDeg);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: delta.x * cos - delta.y * sin,
+    y: delta.x * sin + delta.y * cos,
+  };
+};
 
 export class RoomResizeSystem {
   private rooms: RoomModel[] = [];
@@ -33,7 +56,7 @@ export class RoomResizeSystem {
   startResize(handleId: RoomResizeHandleId): boolean {
     const room = this.getActiveRoom();
 
-    if (!room || Math.abs(room.rotationDeg) > ZERO_ROTATION_EPSILON) {
+    if (!room) {
       this.session = null;
       return false;
     }
@@ -54,52 +77,24 @@ export class RoomResizeSystem {
       return null;
     }
 
-    const halfWidth = room.widthMm / 2;
-    const halfHeight = room.heightMm / 2;
-    let left = room.centerX - halfWidth;
-    let right = room.centerX + halfWidth;
-    let top = room.centerY - halfHeight;
-    let bottom = room.centerY + halfHeight;
+    const localDelta = rotateWorldDeltaToLocal(delta, room.rotationDeg);
+    const handleSigns = this.getHandleSigns(this.session.handleId);
+    const nextWidth = Math.max(MIN_WIDTH_MM, room.widthMm + localDelta.x * handleSigns.x);
+    const nextHeight = Math.max(MIN_HEIGHT_MM, room.heightMm + localDelta.y * handleSigns.y);
+    const widthDelta = nextWidth - room.widthMm;
+    const heightDelta = nextHeight - room.heightMm;
+    const worldCenterShift = rotateLocalDeltaToWorld(
+      {
+        x: (widthDelta / 2) * handleSigns.x,
+        y: (heightDelta / 2) * handleSigns.y,
+      },
+      room.rotationDeg,
+    );
 
-    switch (this.session.handleId) {
-      case 'top-left':
-        left += delta.x;
-        top += delta.y;
-        break;
-      case 'top-right':
-        right += delta.x;
-        top += delta.y;
-        break;
-      case 'bottom-right':
-        right += delta.x;
-        bottom += delta.y;
-        break;
-      case 'bottom-left':
-        left += delta.x;
-        bottom += delta.y;
-        break;
-    }
-
-    if (right - left < MIN_WIDTH_MM) {
-      if (this.session.handleId === 'top-left' || this.session.handleId === 'bottom-left') {
-        left = right - MIN_WIDTH_MM;
-      } else {
-        right = left + MIN_WIDTH_MM;
-      }
-    }
-
-    if (bottom - top < MIN_HEIGHT_MM) {
-      if (this.session.handleId === 'top-left' || this.session.handleId === 'top-right') {
-        top = bottom - MIN_HEIGHT_MM;
-      } else {
-        bottom = top + MIN_HEIGHT_MM;
-      }
-    }
-
-    room.centerX = (left + right) / 2;
-    room.centerY = (top + bottom) / 2;
-    room.widthMm = right - left;
-    room.heightMm = bottom - top;
+    room.centerX += worldCenterShift.x;
+    room.centerY += worldCenterShift.y;
+    room.widthMm = nextWidth;
+    room.heightMm = nextHeight;
 
     return { ...room };
   }
@@ -118,5 +113,19 @@ export class RoomResizeSystem {
 
   private getActiveRoom(): RoomModel | null {
     return this.rooms.find((room) => room.roomId === this.activeRoomId) ?? null;
+  }
+
+  private getHandleSigns(handleId: RoomResizeHandleId): { x: -1 | 1; y: -1 | 1 } {
+    switch (handleId) {
+      case 'top-left':
+        return { x: -1, y: -1 };
+      case 'top-right':
+        return { x: 1, y: -1 };
+      case 'bottom-left':
+        return { x: -1, y: 1 };
+      case 'bottom-right':
+      default:
+        return { x: 1, y: 1 };
+    }
   }
 }
