@@ -40,11 +40,12 @@ type InteractionState =
       mode: 'resize';
       startMouseX: number;
       startMouseY: number;
+      startCenterX: number;
+      startCenterY: number;
       startWidth: number;
       startHeight: number;
     };
 
-const HANDLE_SIZE = 22;
 const RESIZE_HANDLE_SIZE = 20;
 const MENU_MAX_WIDTH = 260;
 const MENU_PREFERRED_MAX_HEIGHT = 320;
@@ -53,10 +54,41 @@ const SETTINGS_BUTTON_WIDTH = 22;
 const SETTINGS_BUTTON_HEIGHT = 22;
 const SETTINGS_BUTTON_RIGHT_OFFSET = -10;
 const SETTINGS_BUTTON_TOP_OFFSET = -10;
+const MIN_ROOM_SIZE = 1;
 
 const clamp = (value: number, min: number, max: number) => {
   if (min > max) return min;
   return Math.min(Math.max(value, min), max);
+};
+
+const rotateWorldDeltaToLocal = (dx: number, dy: number, rotation: number) => {
+  const normalizedRotation = ((rotation % 360) + 360) % 360;
+
+  switch (normalizedRotation) {
+    case 90:
+      return { x: dy, y: -dx };
+    case 180:
+      return { x: -dx, y: -dy };
+    case 270:
+      return { x: -dy, y: dx };
+    default:
+      return { x: dx, y: dy };
+  }
+};
+
+const rotateLocalDeltaToWorld = (dx: number, dy: number, rotation: number) => {
+  const normalizedRotation = ((rotation % 360) + 360) % 360;
+
+  switch (normalizedRotation) {
+    case 90:
+      return { x: -dy, y: dx };
+    case 180:
+      return { x: -dx, y: -dy };
+    case 270:
+      return { x: dy, y: -dx };
+    default:
+      return { x: dx, y: dy };
+  }
 };
 
 const getRoomMenuPlacement = ({
@@ -126,6 +158,7 @@ export const V2Room = ({
   const interactionStateRef = useRef<InteractionState>({ mode: 'idle' });
   const dragOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
   const resizeOriginRef = useRef({ width: room.width, height: room.height });
+  const resizeCenterOriginRef = useRef({ centerX: room.centerX, centerY: room.centerY });
   const isResizingRef = useRef(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [menuAnchorPosition, setMenuAnchorPosition] = useState<{ x: number; y: number } | null>(null);
@@ -133,23 +166,6 @@ export const V2Room = ({
 
   const roomRotation = room.rotation ?? 0;
   const roomCorners = useMemo(() => getRoomCorners(room), [room]);
-  const corners = useMemo(() => {
-    const rawCorners = roomCorners;
-    const points = [rawCorners.topLeft, rawCorners.topRight, rawCorners.bottomRight, rawCorners.bottomLeft].sort(
-      (a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y),
-    );
-
-    const [firstTop, secondTop, firstBottom, secondBottom] = points;
-    const [topLeft, topRight] = [firstTop, secondTop].sort((a, b) => a.x - b.x);
-    const [bottomLeft, bottomRight] = [firstBottom, secondBottom].sort((a, b) => a.x - b.x);
-
-    return {
-      topLeft,
-      topRight,
-      bottomRight,
-      bottomLeft,
-    };
-  }, [roomCorners]);
   const visualBounds = useMemo(() => getRoomVisualBounds(room), [room]);
   const visualBoundsScene = useMemo(() => worldToSceneRect(visualBounds), [visualBounds]);
 
@@ -177,9 +193,19 @@ export const V2Room = ({
       }
 
       if (state.mode === 'resize') {
-        const dx = event.clientX - state.startMouseX;
-        const dy = event.clientY - state.startMouseY;
-        onResize(room.id, state.startWidth + dx, state.startHeight + dy);
+        const worldDelta = {
+          x: event.clientX - state.startMouseX,
+          y: event.clientY - state.startMouseY,
+        };
+        const localDelta = rotateWorldDeltaToLocal(worldDelta.x, worldDelta.y, roomRotation);
+        const nextWidth = Math.max(MIN_ROOM_SIZE, state.startWidth + localDelta.x);
+        const nextHeight = Math.max(MIN_ROOM_SIZE, state.startHeight + localDelta.y);
+        const widthDelta = nextWidth - state.startWidth;
+        const heightDelta = nextHeight - state.startHeight;
+        const worldCenterShift = rotateLocalDeltaToWorld(widthDelta / 2, heightDelta / 2, roomRotation);
+
+        onMove(room.id, state.startCenterX + worldCenterShift.x, state.startCenterY + worldCenterShift.y);
+        onResize(room.id, nextWidth, nextHeight);
       }
     };
 
@@ -194,7 +220,7 @@ export const V2Room = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [onMove, onResize, room.id]);
+  }, [onMove, onResize, room.id, roomRotation]);
 
   useEffect(() => {
     if (!selected) {
@@ -230,11 +256,24 @@ export const V2Room = ({
       if (room.isSizeLocked) return;
       isResizingRef.current = true;
       resizeOriginRef.current = { width: room.width, height: room.height };
+      resizeCenterOriginRef.current = { centerX: room.centerX, centerY: room.centerY };
       onSelect(room.id);
     },
     onPanResponderMove: (_, gesture) => {
       if (room.isSizeLocked) return;
-      onResize(room.id, resizeOriginRef.current.width + gesture.dx, resizeOriginRef.current.height + gesture.dy);
+      const localDelta = rotateWorldDeltaToLocal(gesture.dx, gesture.dy, roomRotation);
+      const nextWidth = Math.max(MIN_ROOM_SIZE, resizeOriginRef.current.width + localDelta.x);
+      const nextHeight = Math.max(MIN_ROOM_SIZE, resizeOriginRef.current.height + localDelta.y);
+      const widthDelta = nextWidth - resizeOriginRef.current.width;
+      const heightDelta = nextHeight - resizeOriginRef.current.height;
+      const worldCenterShift = rotateLocalDeltaToWorld(widthDelta / 2, heightDelta / 2, roomRotation);
+
+      onMove(
+        room.id,
+        resizeCenterOriginRef.current.centerX + worldCenterShift.x,
+        resizeCenterOriginRef.current.centerY + worldCenterShift.y,
+      );
+      onResize(room.id, nextWidth, nextHeight);
     },
     onPanResponderRelease: () => {
       isResizingRef.current = false;
@@ -267,6 +306,8 @@ export const V2Room = ({
       mode: 'resize',
       startMouseX: event?.nativeEvent?.clientX ?? 0,
       startMouseY: event?.nativeEvent?.clientY ?? 0,
+      startCenterX: room.centerX,
+      startCenterY: room.centerY,
       startWidth: room.width,
       startHeight: room.height,
     };
@@ -377,6 +418,10 @@ export const V2Room = ({
             <V2RoomMenu
               roomId={room.id}
               room={room}
+              onRotate={(roomId) => {
+                onRotate(roomId);
+                setIsMenuOpen(false);
+              }}
               onRenamePreset={(roomId, name) => {
                 onRenamePreset(roomId, name);
                 setIsMenuOpen(false);
@@ -442,25 +487,6 @@ export const V2Room = ({
         </View>
       </Pressable>
 
-      {shouldShowRoomControls ? (
-        <Pressable
-          style={[
-            styles.rotateHandle,
-            {
-              left: worldToScenePoint(corners.topLeft).x - visualBoundsScene.x - HANDLE_SIZE / 2,
-              top: worldToScenePoint(corners.topLeft).y - visualBoundsScene.y - HANDLE_SIZE / 2,
-            },
-          ]}
-          onPress={(event) => {
-            event?.stopPropagation?.();
-            onRotate(room.id);
-          }}
-          hitSlop={8}
-        >
-          <Text style={styles.rotateIcon}>↻</Text>
-        </Pressable>
-      ) : null}
-
       {shouldShowRoomControls && !room.isSizeLocked ? (
         <Pressable
           {...(Platform.OS === 'web' || !interactive ? {} : resizeResponder.panHandlers)}
@@ -517,23 +543,6 @@ const styles = StyleSheet.create({
     color: 'rgba(30, 42, 70, 0.62)',
     backgroundColor: 'rgba(255,255,255,0.55)',
     textAlign: 'center',
-  },
-  rotateHandle: {
-    position: 'absolute',
-    width: HANDLE_SIZE,
-    height: HANDLE_SIZE,
-    borderRadius: HANDLE_SIZE / 2,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#2D5ED2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 20,
-  },
-  rotateIcon: {
-    color: '#2D5ED2',
-    fontSize: 12,
-    fontWeight: '700',
   },
   settingsHandle: {
     position: 'absolute',

@@ -23,6 +23,8 @@ export const V2RoomDimensions = ({ room, unit }: Props) => {
 
   const topValue = isVerticalOrientation ? heightValue : widthValue;
   const leftValue = isVerticalOrientation ? widthValue : heightValue;
+  const topLabel = formatDimensionByUnit(topValue, unit).replace(' ', '\u00A0');
+  const leftLabel = formatDimensionByUnit(leftValue, unit).replace(' ', '\u00A0');
 
   const bounds = worldToSceneRect(getRoomVisualBounds(room));
 
@@ -40,7 +42,7 @@ export const V2RoomDimensions = ({ room, unit }: Props) => {
       >
         <View style={styles.topEndCapLeft} />
         <View style={styles.topEndCapRight} />
-        <Text style={styles.topDimensionText}>{formatDimensionByUnit(topValue, unit)}</Text>
+        <Text style={styles.topDimensionText}>{topLabel}</Text>
       </View>
 
       <View
@@ -56,7 +58,9 @@ export const V2RoomDimensions = ({ room, unit }: Props) => {
         <View style={styles.leftEndCapTop} />
         <View style={styles.leftEndCapBottom} />
         <View style={styles.leftDimensionTextWrapper}>
-          <Text style={[styles.leftDimensionText, { whiteSpace: 'nowrap' } as any]}>{formatDimensionByUnit(leftValue, unit)}</Text>
+          <Text numberOfLines={1} style={styles.leftDimensionText}>
+            {leftLabel}
+          </Text>
         </View>
       </View>
     </View>
@@ -90,10 +94,9 @@ const styles = StyleSheet.create({
   topDimensionText: {
     position: 'absolute',
     top: -DIMENSION_TEXT_OFFSET,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    paddingHorizontal: 4,
     fontSize: 11,
     fontWeight: '700',
+    lineHeight: 14,
     color: '#0F172A',
   },
   leftDimensionLine: {
@@ -122,21 +125,19 @@ const styles = StyleSheet.create({
   },
   leftDimensionTextWrapper: {
     position: 'absolute',
-    left: -DIMENSION_TEXT_OFFSET,
+    left: -(DIMENSION_TEXT_OFFSET + 18),
     top: '50%',
-    minWidth: 86,
+    width: 104,
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ translateY: -20 }, { rotate: '-90deg' }],
+    transform: [{ translateY: -7 }, { rotate: '-90deg' }],
   },
   leftDimensionText: {
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 4,
     fontSize: 11,
     fontWeight: '700',
+    lineHeight: 14,
     color: '#0F172A',
-    opacity: 1,
+    textAlign: 'center',
+    width: '100%',
   },
 });
