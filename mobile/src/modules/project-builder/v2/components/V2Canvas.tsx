@@ -207,16 +207,6 @@ export const V2Canvas = ({
         source: 'getRoomCorners()',
       },
       {
-        id: `${selectedRoom.id}:rotate-button`,
-        type: 'rotateButton',
-        roomId: selectedRoom.id,
-        anchor: 'corner-top-left',
-        coordSpace: 'world',
-        x: corners.topLeft.x,
-        y: corners.topLeft.y,
-        source: 'getRoomCorners()',
-      },
-      {
         id: `${selectedRoom.id}:settings-button`,
         type: 'settingsButton',
         roomId: selectedRoom.id,

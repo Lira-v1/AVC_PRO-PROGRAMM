@@ -6,6 +6,7 @@ import { formatRoomSize, parseRoomSizeToMm, RoomSizeUnit } from '../utils/roomUn
 type Props = {
   roomId: string;
   room: RoomV2;
+  onRotate: (roomId: string) => void;
   onRenamePreset: (roomId: string, name: string) => void;
   onRenameCustom: (roomId: string, name: string) => void;
   onOpenSettings: (roomId: string) => void;
@@ -25,6 +26,7 @@ type Props = {
 export const V2RoomMenu = ({
   roomId,
   room,
+  onRotate,
   onRenamePreset,
   onRenameCustom,
   onOpenSettings,
@@ -104,16 +106,18 @@ export const V2RoomMenu = ({
 
   const renderRootMenu = () => (
     <>
-      <Pressable style={styles.item} onPress={() => { onOpenSettings(roomId); setSubmenu('settings'); }}>
-        <Text style={styles.itemText}>Настроить комнату</Text>
+      <Pressable
+        style={styles.item}
+        onPress={() => {
+          onOpenSettings(roomId);
+          setSubmenu('settings');
+        }}
+      >
+        <Text style={styles.itemText}>Настройка комнаты</Text>
       </Pressable>
 
-      <Pressable style={styles.item} onPress={() => setSubmenu('name')}>
-        <Text style={styles.itemText}>Имя комнаты</Text>
-      </Pressable>
-
-      <Pressable style={styles.item} onPress={() => onOpenRoom(roomId)}>
-        <Text style={styles.itemText}>Открыть комнату</Text>
+      <Pressable style={styles.item} onPress={() => onRotate(roomId)}>
+        <Text style={styles.itemText}>Поворот комнаты</Text>
       </Pressable>
     </>
   );
@@ -233,6 +237,14 @@ export const V2RoomMenu = ({
           </Pressable>
         )}
       </View>
+
+      <Pressable style={styles.item} onPress={() => setSubmenu('name')}>
+        <Text style={styles.itemText}>Имя комнаты</Text>
+      </Pressable>
+
+      <Pressable style={styles.item} onPress={() => onOpenRoom(roomId)}>
+        <Text style={styles.itemText}>Открыть комнату</Text>
+      </Pressable>
 
       <Pressable style={styles.item} onPress={() => onToggleSizeLock(roomId, !room.isSizeLocked)}>
         <Text style={styles.itemText}>{room.isSizeLocked ? '☑ Зафиксировать размеры' : '☐ Зафиксировать размеры'}</Text>
