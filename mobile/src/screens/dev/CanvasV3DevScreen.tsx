@@ -108,6 +108,7 @@ export const CanvasV3DevScreen = () => {
   const [isGridVisible, setGridVisible] = useState(true);
   const [isFullscreenMode, setFullscreenMode] = useState(false);
   const [isRoomSettingsMenuOpen, setRoomSettingsMenuOpen] = useState(false);
+  const [roomMenuSection, setRoomMenuSection] = useState<'root' | 'settings'>('root');
 
   const refreshState = useCallback(() => {
     setSnapshot(engineRef.current.getSnapshot());
@@ -329,6 +330,7 @@ export const CanvasV3DevScreen = () => {
   useEffect(() => {
     if (!snapshot.activeRoomId) {
       setRoomSettingsMenuOpen(false);
+      setRoomMenuSection('root');
     }
   }, [snapshot.activeRoomId]);
 
@@ -430,34 +432,6 @@ export const CanvasV3DevScreen = () => {
                   />
                 ))}
 
-                {roomGeometry.isActive
-                  ? roomGeometry.corners.map((corner, index) => (
-                      <View
-                        key={`${roomGeometry.roomId}-corner-${index}`}
-                        pointerEvents="none"
-                        style={[
-                          styles.roomCornerMarker,
-                          styles.roomCornerMarkerActive,
-                          {
-                            left: corner.x - 4,
-                            top: corner.y - 4,
-                          },
-                        ]}
-                      />
-                    ))
-                  : null}
-
-                <View
-                  style={[
-                    styles.roomCenterMarker,
-                    roomGeometry.isActive ? styles.roomCenterMarkerActive : null,
-                    {
-                      left: roomGeometry.center.x - (roomGeometry.isActive ? 7 : 5),
-                      top: roomGeometry.center.y - (roomGeometry.isActive ? 7 : 5),
-                    },
-                  ]}
-                  pointerEvents="none"
-                />
               </React.Fragment>
             ))}
 
@@ -525,10 +499,9 @@ export const CanvasV3DevScreen = () => {
                             textAlign: 'center',
                           }
                         : {
-                            left: label.textAnchor.x - 16,
-                            top: label.textAnchor.y - 30,
-                            width: 32,
-                            minHeight: 60,
+                            left: label.textAnchor.x - 34,
+                            top: label.textAnchor.y - 9,
+                            width: 68,
                             textAlign: 'center',
                             transform: [{ rotate: '-90deg' }],
                           },
@@ -548,8 +521,8 @@ export const CanvasV3DevScreen = () => {
                   styles.resizeHandle,
                   handle.isActive ? styles.resizeHandleActive : null,
                   {
-                    left: handle.point.x - (handle.isActive ? 6 : 5),
-                    top: handle.point.y - (handle.isActive ? 6 : 5),
+                    left: handle.point.x - (handle.isActive ? 8 : 7),
+                    top: handle.point.y - (handle.isActive ? 8 : 7),
                   },
                 ]}
               />
@@ -561,26 +534,12 @@ export const CanvasV3DevScreen = () => {
                   style={[
                     styles.overlayControlButton,
                     {
-                      left: activeRoomGeometry.bounds.left - 16,
-                      top: activeRoomGeometry.bounds.top - 16,
-                    },
-                  ]}
-                  onPress={() => {
-                    handleRotateRoom();
-                  }}
-                >
-                  <Text style={styles.overlayControlIcon}>↻</Text>
-                </Pressable>
-
-                <Pressable
-                  style={[
-                    styles.overlayControlButton,
-                    {
                       left: activeRoomGeometry.bounds.right - 16,
                       top: activeRoomGeometry.bounds.top - 16,
                     },
                   ]}
                   onPress={() => {
+                    setRoomMenuSection('root');
                     setRoomSettingsMenuOpen((current) => !current);
                   }}
                 >
@@ -597,8 +556,25 @@ export const CanvasV3DevScreen = () => {
                       },
                     ]}
                   >
-                    <Text style={styles.roomSettingsPopupTitle}>Room settings</Text>
-                    <Text style={styles.roomSettingsPopupPlaceholder}>Пустое меню</Text>
+                    {roomMenuSection === 'root' ? (
+                      <>
+                        <Text style={styles.roomSettingsPopupTitle}>Меню комнаты</Text>
+                        <Pressable style={styles.roomSettingsMenuItem} onPress={() => setRoomMenuSection('settings')}>
+                          <Text style={styles.roomSettingsMenuText}>Настройка комнаты</Text>
+                        </Pressable>
+                        <Pressable style={styles.roomSettingsMenuItem} onPress={handleRotateRoom}>
+                          <Text style={styles.roomSettingsMenuText}>Поворот комнаты</Text>
+                        </Pressable>
+                      </>
+                    ) : (
+                      <>
+                        <Pressable style={styles.roomSettingsBackItem} onPress={() => setRoomMenuSection('root')}>
+                          <Text style={styles.roomSettingsBackText}>← Назад</Text>
+                        </Pressable>
+                        <Text style={styles.roomSettingsPopupTitle}>Настройка комнаты</Text>
+                        <Text style={styles.roomSettingsPopupPlaceholder}>Панель настроек комнаты будет расширена в Canvas V3.</Text>
+                      </>
+                    )}
                   </View>
                 ) : null}
               </View>
@@ -872,9 +848,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.02)',
   },
   roomFillActive: {
-    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    backgroundColor: 'rgba(91, 192, 222, 0.14)',
     borderWidth: 1,
-    borderColor: 'rgba(37, 99, 235, 0.18)',
+    borderColor: 'rgba(56, 189, 248, 0.28)',
   },
   roomEdge: {
     position: 'absolute',
@@ -884,72 +860,49 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
   },
   roomEdgeActive: {
-    backgroundColor: '#2563EB',
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.12,
-    shadowRadius: 2,
-  },
-  roomCornerMarker: {
-    position: 'absolute',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#374151',
-  },
-  roomCornerMarkerActive: {
-    backgroundColor: '#2563EB',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    backgroundColor: '#22C1DC',
+    shadowColor: '#22C1DC',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
   },
   resizeHandle: {
     position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
     backgroundColor: '#FFFFFF',
     borderWidth: 2,
-    borderColor: '#2563EB',
+    borderColor: '#22C1DC',
     shadowColor: '#0F172A',
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
   },
   resizeHandleActive: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#DBEAFE',
-    borderColor: '#1D4ED8',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#D9F7FB',
+    borderColor: '#0EA5B7',
     borderWidth: 2,
-  },
-  roomCenterMarker: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#374151',
   },
   dimensionLine: {
     position: 'absolute',
-    backgroundColor: '#1F2937',
+    backgroundColor: '#334155',
   },
   dimensionTick: {
     position: 'absolute',
-    backgroundColor: '#1F2937',
+    backgroundColor: '#334155',
   },
   dimensionValue: {
     position: 'absolute',
-    color: '#111827',
+    color: '#1E293B',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     includeFontPadding: false,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
   roomOverlayControlsLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -961,7 +914,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#2563EB',
+    borderColor: '#22C1DC',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#0F172A',
@@ -970,7 +923,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   overlayControlIcon: {
-    color: '#2563EB',
+    color: '#0F9EB3',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -980,7 +933,7 @@ const styles = StyleSheet.create({
     minHeight: 88,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D6E2F5',
+    borderColor: '#BFEAF2',
     backgroundColor: 'rgba(255,255,255,0.98)',
     padding: 12,
     shadowColor: '#0F172A',
@@ -999,13 +952,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  roomCenterMarkerActive: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#DBEAFE',
-    borderColor: '#2563EB',
-    borderWidth: 3,
+  roomSettingsMenuItem: {
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: '#F0FBFD',
+  },
+  roomSettingsMenuText: {
+    color: '#155E75',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  roomSettingsBackItem: {
+    paddingVertical: 2,
+  },
+  roomSettingsBackText: {
+    color: '#0F9EB3',
+    fontSize: 12,
+    fontWeight: '600',
   },
   ribbonCard: {
     backgroundColor: '#FFFFFF',

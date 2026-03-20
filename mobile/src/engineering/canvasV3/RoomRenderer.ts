@@ -18,8 +18,6 @@ const createScreenEdge = (id: string, from: ScreenPoint, to: ScreenPoint): Scree
   };
 };
 
-const RESIZE_HANDLE_IDS: RoomResizeHandleId[] = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
-
 export class RoomRenderer {
   static toScreenGeometry(engine: CanvasEngine, roomGeometry: RoomWorldGeometry): RoomScreenGeometry {
     const isActive = engine.getActiveRoomId() === roomGeometry.roomId;
@@ -79,11 +77,11 @@ export class RoomRenderer {
       return [];
     }
 
-    return roomGeometry.corners.map((corner, index) => ({
+    return [{
       roomId: roomGeometry.roomId,
-      handleId: RESIZE_HANDLE_IDS[index],
-      point: engine.worldToScreen(corner),
-      isActive: activeHandleId === RESIZE_HANDLE_IDS[index],
-    }));
+      handleId: 'bottom-right' as RoomResizeHandleId,
+      point: engine.worldToScreen(roomGeometry.corners[2]),
+      isActive: activeHandleId === 'bottom-right',
+    }];
   }
 }
