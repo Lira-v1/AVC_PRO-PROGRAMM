@@ -499,7 +499,7 @@ export const CanvasV3DevScreen = () => {
                             textAlign: 'center',
                           }
                         : {
-                            left: label.textAnchor.x - 88,
+                            left: label.textAnchor.x - 52,
                             top: label.textAnchor.y - 10,
                             width: 72,
                             textAlign: 'center',
@@ -900,9 +900,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     includeFontPadding: false,
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
   roomOverlayControlsLayer: {
     ...StyleSheet.absoluteFillObject,
