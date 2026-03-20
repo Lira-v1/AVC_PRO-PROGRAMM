@@ -107,6 +107,7 @@ export const CanvasV3DevScreen = () => {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isGridVisible, setGridVisible] = useState(true);
   const [isFullscreenMode, setFullscreenMode] = useState(false);
+  const [isRoomSettingsMenuOpen, setRoomSettingsMenuOpen] = useState(false);
 
   const refreshState = useCallback(() => {
     setSnapshot(engineRef.current.getSnapshot());
@@ -304,6 +305,7 @@ export const CanvasV3DevScreen = () => {
   const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
   const dimensionLabels = engineRef.current.getActiveRoomDimensionLabels();
   const roomData = engineRef.current.getRooms();
+  const activeRoomGeometry = roomGeometries.find((roomGeometry) => roomGeometry.isActive) ?? null;
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
@@ -317,6 +319,18 @@ export const CanvasV3DevScreen = () => {
       setCopyStatus('error');
     }
   }, [debugInspectorText]);
+
+  const handleRotateRoom = useCallback(() => {
+    engineRef.current.rotateActiveRoom();
+    setRoomSettingsMenuOpen(false);
+    refreshState();
+  }, [refreshState]);
+
+  useEffect(() => {
+    if (!snapshot.activeRoomId) {
+      setRoomSettingsMenuOpen(false);
+    }
+  }, [snapshot.activeRoomId]);
 
   return (
     <View style={styles.root}>
@@ -511,10 +525,12 @@ export const CanvasV3DevScreen = () => {
                             textAlign: 'center',
                           }
                         : {
-                            left: label.textAnchor.x - 22,
-                            top: label.textAnchor.y - 9,
-                            width: 44,
+                            left: label.textAnchor.x - 16,
+                            top: label.textAnchor.y - 30,
+                            width: 32,
+                            minHeight: 60,
                             textAlign: 'center',
+                            transform: [{ rotate: '-90deg' }],
                           },
                     ]}
                   >
@@ -538,6 +554,55 @@ export const CanvasV3DevScreen = () => {
                 ]}
               />
             ))}
+
+            {activeRoomGeometry ? (
+              <View pointerEvents="box-none" style={styles.roomOverlayControlsLayer}>
+                <Pressable
+                  style={[
+                    styles.overlayControlButton,
+                    {
+                      left: activeRoomGeometry.bounds.left - 16,
+                      top: activeRoomGeometry.bounds.top - 16,
+                    },
+                  ]}
+                  onPress={() => {
+                    handleRotateRoom();
+                  }}
+                >
+                  <Text style={styles.overlayControlIcon}>↻</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.overlayControlButton,
+                    {
+                      left: activeRoomGeometry.bounds.right - 16,
+                      top: activeRoomGeometry.bounds.top - 16,
+                    },
+                  ]}
+                  onPress={() => {
+                    setRoomSettingsMenuOpen((current) => !current);
+                  }}
+                >
+                  <Text style={styles.overlayControlIcon}>⚙</Text>
+                </Pressable>
+
+                {isRoomSettingsMenuOpen ? (
+                  <View
+                    style={[
+                      styles.roomSettingsPopup,
+                      {
+                        left: Math.max(12, activeRoomGeometry.bounds.right - 180),
+                        top: Math.max(12, activeRoomGeometry.bounds.top + 24),
+                      },
+                    ]}
+                  >
+                    <Text style={styles.roomSettingsPopupTitle}>Room settings</Text>
+                    <Text style={styles.roomSettingsPopupPlaceholder}>Пустое меню</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
             {isInspectorVisible ? (
               <View style={styles.inspectorOverlay} pointerEvents="box-none">
@@ -881,6 +946,58 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     includeFontPadding: false,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  roomOverlayControlsLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  overlayControlButton: {
+    position: 'absolute',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  overlayControlIcon: {
+    color: '#2563EB',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  roomSettingsPopup: {
+    position: 'absolute',
+    width: 180,
+    minHeight: 88,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D6E2F5',
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    padding: 12,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    gap: 4,
+  },
+  roomSettingsPopupTitle: {
+    color: '#1D2D4A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  roomSettingsPopupPlaceholder: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '500',
   },
   roomCenterMarkerActive: {
     width: 14,
