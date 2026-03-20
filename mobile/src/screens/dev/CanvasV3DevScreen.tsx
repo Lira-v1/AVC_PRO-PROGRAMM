@@ -848,9 +848,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.02)',
   },
   roomFillActive: {
-    backgroundColor: 'rgba(95, 183, 198, 0.14)',
+    backgroundColor: 'rgba(58, 123, 255, 0.07)',
     borderWidth: 1,
-    borderColor: 'rgba(95, 183, 198, 0.24)',
+    borderColor: 'rgba(58, 123, 255, 0.18)',
   },
   roomEdge: {
     position: 'absolute',
@@ -860,8 +860,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
   },
   roomEdgeActive: {
-    backgroundColor: '#5FB7C6',
-    shadowColor: '#5FB7C6',
+    backgroundColor: '#3A7BFF',
+    shadowColor: '#3A7BFF',
     shadowOpacity: 0.18,
     shadowRadius: 4,
   },
