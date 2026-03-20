@@ -7,6 +7,9 @@ import { CanvasDebugState, CanvasSnapshot, RoomModel, ScreenPoint } from '../../
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
 const DRAG_THRESHOLD_PX = 3;
+const SELECTED_ROOM_COLOR = '#3A7BFF';
+const SELECTED_ROOM_FILL = 'rgba(58, 123, 255, 0.07)';
+const SELECTED_ROOM_BORDER = 'rgba(58, 123, 255, 0.22)';
 
 type DragMode = 'idle' | 'room' | 'resize' | 'pan';
 
@@ -848,9 +851,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.02)',
   },
   roomFillActive: {
-    backgroundColor: 'rgba(58, 123, 255, 0.07)',
+    backgroundColor: SELECTED_ROOM_FILL,
     borderWidth: 1,
-    borderColor: 'rgba(58, 123, 255, 0.18)',
+    borderColor: SELECTED_ROOM_BORDER,
   },
   roomEdge: {
     position: 'absolute',
@@ -860,8 +863,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#111827',
   },
   roomEdgeActive: {
-    backgroundColor: '#3A7BFF',
-    shadowColor: '#3A7BFF',
+    backgroundColor: SELECTED_ROOM_COLOR,
+    shadowColor: SELECTED_ROOM_COLOR,
     shadowOpacity: 0.18,
     shadowRadius: 4,
   },
@@ -872,7 +875,7 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     backgroundColor: '#FFFFFF',
     borderWidth: 2,
-    borderColor: '#5FB7C6',
+    borderColor: SELECTED_ROOM_COLOR,
     shadowColor: '#0F172A',
     shadowOpacity: 0.12,
     shadowRadius: 4,
@@ -882,8 +885,8 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: '#E8F7FA',
-    borderColor: '#5FB7C6',
+    backgroundColor: 'rgba(58, 123, 255, 0.08)',
+    borderColor: SELECTED_ROOM_COLOR,
     borderWidth: 2,
   },
   dimensionLine: {
@@ -914,7 +917,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#5FB7C6',
+    borderColor: SELECTED_ROOM_COLOR,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#0F172A',
@@ -923,7 +926,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   overlayControlIcon: {
-    color: '#3A96A7',
+    color: SELECTED_ROOM_COLOR,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -933,7 +936,7 @@ const styles = StyleSheet.create({
     minHeight: 88,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#C7E8ED',
+    borderColor: SELECTED_ROOM_BORDER,
     backgroundColor: 'rgba(255,255,255,0.98)',
     padding: 12,
     shadowColor: '#0F172A',
@@ -956,10 +959,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 10,
-    backgroundColor: '#F2FBFC',
+    backgroundColor: 'rgba(58, 123, 255, 0.08)',
   },
   roomSettingsMenuText: {
-    color: '#2F7F8D',
+    color: SELECTED_ROOM_COLOR,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -967,7 +970,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   roomSettingsBackText: {
-    color: '#3A96A7',
+    color: SELECTED_ROOM_COLOR,
     fontSize: 12,
     fontWeight: '600',
   },
