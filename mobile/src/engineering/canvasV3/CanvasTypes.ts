@@ -54,8 +54,39 @@ export type RoomModel = {
   centerY: number;
   widthMm: number;
   heightMm: number;
+  wallHeightMm?: number;
   rotationDeg: number;
   settings?: RoomSettings;
+};
+
+export type CanvasMode = 'main' | 'room-surface-scene';
+export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'floor' | 'ceiling';
+
+export type RoomSurfaceWorldGeometry = {
+  surfaceId: string;
+  roomId: string;
+  type: RoomSurfaceType;
+  widthMm: number;
+  heightMm: number;
+  center: WorldPoint;
+  bounds: WorldBounds;
+};
+
+export type RoomSurfaceScreenGeometry = {
+  surfaceId: string;
+  roomId: string;
+  type: RoomSurfaceType;
+  widthPx: number;
+  heightPx: number;
+  center: ScreenPoint;
+  bounds: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
 };
 
 export type RoomWorldGeometry = {
@@ -161,6 +192,8 @@ export type CanvasSnapshot = {
   canvasState: CanvasState;
   activeRoomId: string | null;
   roomIds: string[];
+  mode: CanvasMode;
+  surfaceSceneRoomId: string | null;
 };
 
 export type RoomOpenEntryPoint = {

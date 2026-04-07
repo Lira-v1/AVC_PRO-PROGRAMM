@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
+import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, RoomSurfaceType, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
@@ -147,6 +147,15 @@ const getRoomDisplayName = (room: RoomModel, index: number) => {
   }
 
   return `Комната ${index + 1}`;
+};
+
+const SURFACE_LABELS: Record<RoomSurfaceType, string> = {
+  north: 'north wall',
+  south: 'south wall',
+  west: 'west wall',
+  east: 'east wall',
+  floor: 'floor',
+  ceiling: 'ceiling',
 };
 
 export const CanvasV3DevScreen = () => {
@@ -383,6 +392,9 @@ export const CanvasV3DevScreen = () => {
   );
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
+  const surfaceGeometries = engineRef.current.getRoomSurfaceSceneScreenGeometry();
+  const isSurfaceSceneMode = snapshot.mode === 'room-surface-scene';
+  const visibleRoomGeometries = isSurfaceSceneMode ? [] : roomGeometries;
   const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
   const dimensionLabels = engineRef.current.getActiveRoomDimensionLabels();
   const roomData = engineRef.current.getRooms();
@@ -394,7 +406,7 @@ export const CanvasV3DevScreen = () => {
       }, {}),
     [roomData],
   );
-  const activeRoomGeometry = roomGeometries.find((roomGeometry) => roomGeometry.isActive) ?? null;
+  const activeRoomGeometry = visibleRoomGeometries.find((roomGeometry) => roomGeometry.isActive) ?? null;
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
@@ -485,8 +497,18 @@ export const CanvasV3DevScreen = () => {
       return;
     }
 
-    setOpenRoomStatus(`Точка входа подготовлена: ${entryPoint.roomName} (${entryPoint.roomId}), ${entryPoint.widthMm}×${entryPoint.heightMm} мм.`);
-  }, [activeRoom]);
+    engineRef.current.openRoomSurfaceScene(activeRoom.roomId);
+    setOpenRoomStatus(`Открыта развёртка комнаты: ${entryPoint.roomName} (${entryPoint.roomId}).`);
+    setRoomSettingsMenuOpen(false);
+    setRoomMenuSection('root');
+    refreshState();
+  }, [activeRoom, refreshState]);
+
+  const handleBackFromSurfaceScene = useCallback(() => {
+    engineRef.current.closeRoomSurfaceScene();
+    setOpenRoomStatus(null);
+    refreshState();
+  }, [refreshState]);
 
   useEffect(() => {
     if (!snapshot.activeRoomId) {
@@ -562,7 +584,7 @@ export const CanvasV3DevScreen = () => {
                 ))
               : null}
 
-            {roomGeometries.map((roomGeometry) => (
+            {visibleRoomGeometries.map((roomGeometry) => (
               <React.Fragment key={roomGeometry.roomId}>
                 <View
                   pointerEvents="none"
@@ -707,6 +729,34 @@ export const CanvasV3DevScreen = () => {
                 ]}
               />
             ))}
+
+            {isSurfaceSceneMode
+              ? surfaceGeometries.map((surface) => (
+                  <View
+                    key={surface.surfaceId}
+                    pointerEvents="none"
+                    style={[
+                      styles.surfaceCard,
+                      {
+                        width: surface.bounds.width,
+                        height: surface.bounds.height,
+                        left: surface.bounds.left,
+                        top: surface.bounds.top,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.surfaceTitle}>{SURFACE_LABELS[surface.type]}</Text>
+                  </View>
+                ))
+              : null}
+
+            {isSurfaceSceneMode ? (
+              <View style={styles.surfaceBackButtonWrap} pointerEvents="box-none">
+                <Pressable style={styles.surfaceBackButton} onPress={handleBackFromSurfaceScene}>
+                  <Text style={styles.surfaceBackButtonText}>Назад</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {activeRoomGeometry ? (
               <View pointerEvents="box-none" style={styles.roomOverlayControlsLayer}>
@@ -1094,6 +1144,38 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#F8FAFC',
     position: 'relative',
+  },
+  surfaceCard: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    borderRadius: 8,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 6,
+  },
+  surfaceTitle: {
+    color: '#1E3A8A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  surfaceBackButtonWrap: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+  },
+  surfaceBackButton: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  surfaceBackButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   gridLine: {
     position: 'absolute',
