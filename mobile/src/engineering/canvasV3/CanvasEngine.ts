@@ -12,6 +12,7 @@ import {
   RoomSettings,
   RoomResizeHandleId,
   RoomResizeHandleScreenGeometry,
+  RoomOpenEntryPoint,
   RoomScreenGeometry,
   RoomWorldGeometry,
   ScreenPoint,
@@ -154,6 +155,22 @@ export class CanvasEngine {
 
   updateRoomName(roomId: string, name: string): RoomModel | null {
     return this.updateRoomSettings(roomId, { name });
+  }
+
+  getRoomOpenEntryPoint(roomId: string): RoomOpenEntryPoint | null {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    return {
+      roomId: room.roomId,
+      roomName: room.settings?.name ?? DEFAULT_ROOM_SETTINGS.name,
+      widthMm: room.widthMm,
+      heightMm: room.heightMm,
+      rotationDeg: room.rotationDeg,
+    };
   }
 
   selectRoom(roomId: string): string | null {

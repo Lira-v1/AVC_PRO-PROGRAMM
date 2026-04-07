@@ -162,6 +162,14 @@ export type CanvasSnapshot = {
   roomIds: string[];
 };
 
+export type RoomOpenEntryPoint = {
+  roomId: string;
+  roomName: string;
+  widthMm: number;
+  heightMm: number;
+  rotationDeg: number;
+};
+
 export type CanvasDebugState = {
   cameraZoom: number;
   displayZoom: number;
