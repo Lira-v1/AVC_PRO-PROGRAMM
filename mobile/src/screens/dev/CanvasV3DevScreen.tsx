@@ -140,6 +140,7 @@ const formatRoomTitle = (_roomId: string, index: number) => `Комната ${in
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
   const canvasRef = useRef<View | null>(null);
+  const roomSettingsPopupRef = useRef<View | null>(null);
   const dragSessionRef = useRef<DragSession>(IDLE_DRAG_SESSION);
   const { height: windowHeight } = useWindowDimensions();
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
@@ -325,6 +326,28 @@ export const CanvasV3DevScreen = () => {
     return () => clearTimeout(timeoutId);
   }, [copyStatus]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !isRoomSettingsMenuOpen) {
+      return undefined;
+    }
+
+    const popupNode = roomSettingsPopupRef.current as unknown as { addEventListener?: Function; removeEventListener?: Function } | null;
+
+    if (!popupNode?.addEventListener) {
+      return undefined;
+    }
+
+    const onPopupWheel = (event: WheelEvent) => {
+      event.stopPropagation();
+    };
+
+    popupNode.addEventListener('wheel', onPopupWheel, { passive: true });
+
+    return () => {
+      popupNode.removeEventListener?.('wheel', onPopupWheel);
+    };
+  }, [isRoomSettingsMenuOpen]);
+
   const responderHandlers = useMemo(
     () => ({
       onStartShouldSetResponder: () => true,
@@ -355,6 +378,8 @@ export const CanvasV3DevScreen = () => {
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
   const canvasHeight = isFullscreenMode ? Math.max(windowHeight - 180, 520) : Math.max(Math.min(windowHeight * 0.62, 720), 420);
+  const roomSettingsPopupTop = activeRoomGeometry ? Math.max(12, activeRoomGeometry.bounds.top + 24) : 12;
+  const roomSettingsPopupMaxHeight = Math.max(170, windowHeight - roomSettingsPopupTop - 16);
 
   const handleCopyInspector = useCallback(async () => {
     try {
@@ -653,176 +678,186 @@ export const CanvasV3DevScreen = () => {
 
                 {isRoomSettingsMenuOpen ? (
                   <View
+                    ref={roomSettingsPopupRef}
                     style={[
                       styles.roomSettingsPopup,
                       {
                         left: Math.max(12, activeRoomGeometry.bounds.right - 180),
-                        top: Math.max(12, activeRoomGeometry.bounds.top + 24),
+                        top: roomSettingsPopupTop,
+                        maxHeight: roomSettingsPopupMaxHeight,
                       },
                     ]}
                   >
-                    {roomMenuSection === 'root' ? (
-                      <>
-                        <Text style={styles.roomSettingsPopupTitle}>Меню комнаты</Text>
-                        <Pressable style={styles.roomSettingsMenuItem} onPress={() => setRoomMenuSection('settings')}>
-                          <Text style={styles.roomSettingsMenuText}>Настройка комнаты</Text>
-                        </Pressable>
-                        <Pressable style={styles.roomSettingsMenuItem} onPress={handleRotateRoom}>
-                          <Text style={styles.roomSettingsMenuText}>Поворот комнаты</Text>
-                        </Pressable>
-                      </>
-                    ) : (
-                      <>
-                        <Pressable style={styles.roomSettingsBackItem} onPress={() => setRoomMenuSection('root')}>
-                          <Text style={styles.roomSettingsBackText}>← Назад</Text>
-                        </Pressable>
-                        <Text style={styles.roomSettingsPopupTitle}>Настройка комнаты</Text>
-                        <View style={styles.unitRow}>
-                          {(['mm', 'cm', 'm'] as DimensionUnit[]).map((unit) => (
-                            <Pressable
-                              key={unit}
-                              style={[styles.unitChip, activeRoomUnit === unit ? styles.unitChipActive : null]}
-                              onPress={() => {
-                                if (!activeRoom) {
-                                  return;
-                                }
+                    <ScrollView
+                      style={styles.roomSettingsScroll}
+                      contentContainerStyle={styles.roomSettingsScrollContent}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator
+                      bounces={false}
+                    >
+                      {roomMenuSection === 'root' ? (
+                        <>
+                          <Text style={styles.roomSettingsPopupTitle}>Меню комнаты</Text>
+                          <Pressable style={styles.roomSettingsMenuItem} onPress={() => setRoomMenuSection('settings')}>
+                            <Text style={styles.roomSettingsMenuText}>Настройка комнаты</Text>
+                          </Pressable>
+                          <Pressable style={styles.roomSettingsMenuItem} onPress={handleRotateRoom}>
+                            <Text style={styles.roomSettingsMenuText}>Поворот комнаты</Text>
+                          </Pressable>
+                        </>
+                      ) : (
+                        <>
+                          <Pressable style={styles.roomSettingsBackItem} onPress={() => setRoomMenuSection('root')}>
+                            <Text style={styles.roomSettingsBackText}>← Назад</Text>
+                          </Pressable>
+                          <Text style={styles.roomSettingsPopupTitle}>Настройка комнаты</Text>
+                          <View style={styles.unitRow}>
+                            {(['mm', 'cm', 'm'] as DimensionUnit[]).map((unit) => (
+                              <Pressable
+                                key={unit}
+                                style={[styles.unitChip, activeRoomUnit === unit ? styles.unitChipActive : null]}
+                                onPress={() => {
+                                  if (!activeRoom) {
+                                    return;
+                                  }
 
-                                engineRef.current.updateRoomDimensionUnit(activeRoom.roomId, unit);
-                                setRoomSettingsEditField(null);
-                                setRoomSettingsDraftValue('');
-                                refreshState();
-                              }}
-                            >
-                              <Text style={[styles.unitChipText, activeRoomUnit === unit ? styles.unitChipTextActive : null]}>{unit}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-
-                        <View style={styles.fieldRow}>
-                          <Text style={styles.fieldLabel}>Ширина</Text>
-                          {roomSettingsEditField === 'width' ? (
-                            <View style={styles.inlineEditor}>
-                              <TextInput
-                                value={roomSettingsDraftValue}
-                                onChangeText={setRoomSettingsDraftValue}
-                                autoFocus
-                                keyboardType="numeric"
-                                style={styles.fieldInput}
-                                onSubmitEditing={commitRoomFieldEdit}
-                                onBlur={commitRoomFieldEdit}
-                              />
-                              <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
-                                <Text style={styles.confirmButtonText}>✓</Text>
+                                  engineRef.current.updateRoomDimensionUnit(activeRoom.roomId, unit);
+                                  setRoomSettingsEditField(null);
+                                  setRoomSettingsDraftValue('');
+                                  refreshState();
+                                }}
+                              >
+                                <Text style={[styles.unitChipText, activeRoomUnit === unit ? styles.unitChipTextActive : null]}>{unit}</Text>
                               </Pressable>
-                            </View>
-                          ) : (
-                            <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('width')}>
-                              <Text style={styles.valueBoxText}>{activeRoom ? `${formatRoomSize(activeRoom.widthMm, activeRoomUnit)} ${activeRoomUnit}` : '-'}</Text>
-                            </Pressable>
-                          )}
-                        </View>
+                            ))}
+                          </View>
 
-                        <View style={styles.fieldRow}>
-                          <Text style={styles.fieldLabel}>Длина</Text>
-                          {roomSettingsEditField === 'height' ? (
-                            <View style={styles.inlineEditor}>
-                              <TextInput
-                                value={roomSettingsDraftValue}
-                                onChangeText={setRoomSettingsDraftValue}
-                                autoFocus
-                                keyboardType="numeric"
-                                style={styles.fieldInput}
-                                onSubmitEditing={commitRoomFieldEdit}
-                                onBlur={commitRoomFieldEdit}
-                              />
-                              <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
-                                <Text style={styles.confirmButtonText}>✓</Text>
+                          <View style={styles.fieldRow}>
+                            <Text style={styles.fieldLabel}>Ширина</Text>
+                            {roomSettingsEditField === 'width' ? (
+                              <View style={styles.inlineEditor}>
+                                <TextInput
+                                  value={roomSettingsDraftValue}
+                                  onChangeText={setRoomSettingsDraftValue}
+                                  autoFocus
+                                  keyboardType="numeric"
+                                  style={styles.fieldInput}
+                                  onSubmitEditing={commitRoomFieldEdit}
+                                  onBlur={commitRoomFieldEdit}
+                                />
+                                <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
+                                  <Text style={styles.confirmButtonText}>✓</Text>
+                                </Pressable>
+                              </View>
+                            ) : (
+                              <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('width')}>
+                                <Text style={styles.valueBoxText}>{activeRoom ? `${formatRoomSize(activeRoom.widthMm, activeRoomUnit)} ${activeRoomUnit}` : '-'}</Text>
                               </Pressable>
-                            </View>
-                          ) : (
-                            <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('height')}>
-                              <Text style={styles.valueBoxText}>{activeRoom ? `${formatRoomSize(activeRoom.heightMm, activeRoomUnit)} ${activeRoomUnit}` : '-'}</Text>
-                            </Pressable>
-                          )}
-                        </View>
+                            )}
+                          </View>
 
-                        <View style={styles.fieldRow}>
-                          <Text style={styles.fieldLabel}>Имя комнаты</Text>
-                          {roomSettingsEditField === 'name' ? (
-                            <View style={styles.inlineEditor}>
-                              <TextInput
-                                value={roomSettingsDraftValue}
-                                onChangeText={setRoomSettingsDraftValue}
-                                autoFocus
-                                style={styles.fieldInput}
-                                onSubmitEditing={commitRoomFieldEdit}
-                                onBlur={commitRoomFieldEdit}
-                              />
-                              <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
-                                <Text style={styles.confirmButtonText}>✓</Text>
+                          <View style={styles.fieldRow}>
+                            <Text style={styles.fieldLabel}>Длина</Text>
+                            {roomSettingsEditField === 'height' ? (
+                              <View style={styles.inlineEditor}>
+                                <TextInput
+                                  value={roomSettingsDraftValue}
+                                  onChangeText={setRoomSettingsDraftValue}
+                                  autoFocus
+                                  keyboardType="numeric"
+                                  style={styles.fieldInput}
+                                  onSubmitEditing={commitRoomFieldEdit}
+                                  onBlur={commitRoomFieldEdit}
+                                />
+                                <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
+                                  <Text style={styles.confirmButtonText}>✓</Text>
+                                </Pressable>
+                              </View>
+                            ) : (
+                              <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('height')}>
+                                <Text style={styles.valueBoxText}>{activeRoom ? `${formatRoomSize(activeRoom.heightMm, activeRoomUnit)} ${activeRoomUnit}` : '-'}</Text>
                               </Pressable>
-                            </View>
-                          ) : (
-                            <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('name')}>
-                              <Text style={styles.valueBoxText} numberOfLines={1}>{activeRoom?.settings?.name ?? '-'}</Text>
-                            </Pressable>
-                          )}
-                        </View>
+                            )}
+                          </View>
 
-                        <View style={styles.presetNamesRow}>
-                          {ROOM_NAME_PRESETS.map((presetName) => (
-                            <Pressable
-                              key={presetName}
-                              style={styles.presetNameChip}
-                              onPress={() => {
-                                if (!activeRoom) {
-                                  return;
-                                }
+                          <View style={styles.fieldRow}>
+                            <Text style={styles.fieldLabel}>Имя комнаты</Text>
+                            {roomSettingsEditField === 'name' ? (
+                              <View style={styles.inlineEditor}>
+                                <TextInput
+                                  value={roomSettingsDraftValue}
+                                  onChangeText={setRoomSettingsDraftValue}
+                                  autoFocus
+                                  style={styles.fieldInput}
+                                  onSubmitEditing={commitRoomFieldEdit}
+                                  onBlur={commitRoomFieldEdit}
+                                />
+                                <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
+                                  <Text style={styles.confirmButtonText}>✓</Text>
+                                </Pressable>
+                              </View>
+                            ) : (
+                              <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('name')}>
+                                <Text style={styles.valueBoxText} numberOfLines={1}>{activeRoom?.settings?.name ?? '-'}</Text>
+                              </Pressable>
+                            )}
+                          </View>
 
-                                engineRef.current.updateRoomName(activeRoom.roomId, presetName);
-                                refreshState();
-                              }}
-                            >
-                              <Text style={styles.presetNameText}>{presetName}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
+                          <View style={styles.presetNamesRow}>
+                            {ROOM_NAME_PRESETS.map((presetName) => (
+                              <Pressable
+                                key={presetName}
+                                style={styles.presetNameChip}
+                                onPress={() => {
+                                  if (!activeRoom) {
+                                    return;
+                                  }
 
-                        <Pressable style={styles.roomSettingsMenuItem} onPress={handleOpenRoom}>
-                          <Text style={styles.roomSettingsMenuText}>Открыть комнату</Text>
-                        </Pressable>
+                                  engineRef.current.updateRoomName(activeRoom.roomId, presetName);
+                                  refreshState();
+                                }}
+                              >
+                                <Text style={styles.presetNameText}>{presetName}</Text>
+                              </Pressable>
+                            ))}
+                          </View>
 
-                        <Pressable
-                          style={styles.roomSettingsMenuItem}
-                          onPress={() => {
-                            if (!activeRoom) {
-                              return;
-                            }
+                          <Pressable style={styles.roomSettingsMenuItem} onPress={handleOpenRoom}>
+                            <Text style={styles.roomSettingsMenuText}>Открыть комнату</Text>
+                          </Pressable>
 
-                            engineRef.current.updateRoomSettings(activeRoom.roomId, { isSizeLocked: !activeRoom.settings?.isSizeLocked });
-                            refreshState();
-                          }}
-                        >
-                          <Text style={styles.roomSettingsMenuText}>{activeRoom?.settings?.isSizeLocked ? '☑ Зафиксировать размеры' : '☐ Зафиксировать размеры'}</Text>
-                        </Pressable>
+                          <Pressable
+                            style={styles.roomSettingsMenuItem}
+                            onPress={() => {
+                              if (!activeRoom) {
+                                return;
+                              }
 
-                        <Pressable
-                          style={styles.roomSettingsMenuItem}
-                          onPress={() => {
-                            if (!activeRoom) {
-                              return;
-                            }
+                              engineRef.current.updateRoomSettings(activeRoom.roomId, { isSizeLocked: !activeRoom.settings?.isSizeLocked });
+                              refreshState();
+                            }}
+                          >
+                            <Text style={styles.roomSettingsMenuText}>{activeRoom?.settings?.isSizeLocked ? '☑ Зафиксировать размеры' : '☐ Зафиксировать размеры'}</Text>
+                          </Pressable>
 
-                            engineRef.current.updateRoomSettings(activeRoom.roomId, { isDimensionsHidden: !activeRoom.settings?.isDimensionsHidden });
-                            refreshState();
-                          }}
-                        >
-                          <Text style={styles.roomSettingsMenuText}>{activeRoom?.settings?.isDimensionsHidden ? '☑ Скрыть размеры' : '☐ Скрыть размеры'}</Text>
-                        </Pressable>
+                          <Pressable
+                            style={styles.roomSettingsMenuItem}
+                            onPress={() => {
+                              if (!activeRoom) {
+                                return;
+                              }
 
-                        {openRoomStatus ? <Text style={styles.roomSettingsStatusText}>{openRoomStatus}</Text> : null}
-                      </>
-                    )}
+                              engineRef.current.updateRoomSettings(activeRoom.roomId, { isDimensionsHidden: !activeRoom.settings?.isDimensionsHidden });
+                              refreshState();
+                            }}
+                          >
+                            <Text style={styles.roomSettingsMenuText}>{activeRoom?.settings?.isDimensionsHidden ? '☑ Скрыть размеры' : '☐ Скрыть размеры'}</Text>
+                          </Pressable>
+
+                          {openRoomStatus ? <Text style={styles.roomSettingsStatusText}>{openRoomStatus}</Text> : null}
+                        </>
+                      )}
+                    </ScrollView>
                   </View>
                 ) : null}
               </View>
@@ -1188,6 +1223,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
+    overflow: 'hidden',
+  },
+  roomSettingsScroll: {
+    flexGrow: 0,
+  },
+  roomSettingsScrollContent: {
     gap: 4,
   },
   roomSettingsPopupTitle: {
