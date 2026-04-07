@@ -41,6 +41,7 @@ const IDLE_DRAG_SESSION: DragSession = {
 
 const DEV_ROOM: RoomModel = {
   roomId: 'room-1',
+  roomName: 'Комната 1',
   centerX: 0,
   centerY: 0,
   widthMm: 1000,
@@ -138,7 +139,15 @@ const copyTextToClipboard = async (text: string) => {
 };
 
 const formatZoomState = (displayZoom: number) => `${displayZoom > 0 ? '+' : ''}${displayZoom.toFixed(0)}`;
-const formatRoomTitle = (_roomId: string, index: number) => `Комната ${index + 1}`;
+const getRoomDisplayName = (room: RoomModel, index: number) => {
+  const explicitRoomName = room.roomName?.trim() || room.settings?.name?.trim();
+
+  if (explicitRoomName) {
+    return explicitRoomName;
+  }
+
+  return `Комната ${index + 1}`;
+};
 
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
@@ -377,6 +386,14 @@ export const CanvasV3DevScreen = () => {
   const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
   const dimensionLabels = engineRef.current.getActiveRoomDimensionLabels();
   const roomData = engineRef.current.getRooms();
+  const roomNameById = useMemo(
+    () =>
+      roomData.reduce<Record<string, string>>((acc, room, index) => {
+        acc[room.roomId] = getRoomDisplayName(room, index);
+        return acc;
+      }, {}),
+    [roomData],
+  );
   const activeRoomGeometry = roomGeometries.find((roomGeometry) => roomGeometry.isActive) ?? null;
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
@@ -417,7 +434,7 @@ export const CanvasV3DevScreen = () => {
     setRoomNamePresetsOpen(field === 'name');
 
     if (field === 'name') {
-      setRoomSettingsDraftValue(activeRoom.settings?.name ?? '');
+      setRoomSettingsDraftValue(activeRoom.roomName ?? activeRoom.settings?.name ?? '');
       return;
     }
 
@@ -432,9 +449,7 @@ export const CanvasV3DevScreen = () => {
 
     if (roomSettingsEditField === 'name') {
       const trimmedName = roomSettingsDraftValue.trim();
-      if (trimmedName) {
-        engineRef.current.updateRoomName(activeRoom.roomId, trimmedName);
-      }
+      engineRef.current.updateRoomName(activeRoom.roomId, trimmedName);
       setRoomSettingsEditField(null);
       setRoomSettingsDraftValue('');
       setRoomNamePresetsOpen(false);
@@ -581,6 +596,21 @@ export const CanvasV3DevScreen = () => {
                     ]}
                   />
                 ))}
+
+                <Text
+                  pointerEvents="none"
+                  style={[
+                    styles.roomNameLabel,
+                    {
+                      left: roomGeometry.center.x - 80,
+                      top: roomGeometry.center.y - 12,
+                      transform: [{ rotate: `${roomGeometry.rotationDeg}deg` }],
+                    },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {roomNameById[roomGeometry.roomId] ?? 'Комната 1'}
+                </Text>
 
               </React.Fragment>
             ))}
@@ -824,7 +854,7 @@ export const CanvasV3DevScreen = () => {
                                   setRoomNamePresetsOpen((current) => !current);
                                 }}
                               >
-                                <Text style={styles.valueBoxText} numberOfLines={1}>{activeRoom?.settings?.name ?? '-'}</Text>
+                                <Text style={styles.valueBoxText} numberOfLines={1}>{activeRoom ? roomNameById[activeRoom.roomId] : '-'}</Text>
                               </Pressable>
                             )}
                           </View>
@@ -920,6 +950,7 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
                   <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
                   <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>activeRoomName: {activeRoom ? roomNameById[activeRoom.roomId] : 'null'}</Text>
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>activeResizeHandleId: {debugState.activeResizeHandleId ?? 'null'}</Text>
@@ -968,8 +999,9 @@ export const CanvasV3DevScreen = () => {
               <View style={styles.roomCardsWrap}>
                 {roomData.map((room, index) => (
                   <View key={room.roomId} style={styles.roomDataCard}>
-                    <Text style={styles.roomDataTitle}>{formatRoomTitle(room.roomId, index)}</Text>
+                    <Text style={styles.roomDataTitle}>{getRoomDisplayName(room, index)}</Text>
                     <Text style={styles.roomDataMeta}>roomId: {room.roomId}</Text>
+                    <Text style={styles.roomDataMeta}>roomName: {room.roomName || '(fallback)'}</Text>
                     <Text style={styles.roomDataMeta}>centerX: {room.centerX}</Text>
                     <Text style={styles.roomDataMeta}>centerY: {room.centerY}</Text>
                     <Text style={styles.roomDataMeta}>widthMm: {room.widthMm}</Text>
@@ -1165,6 +1197,14 @@ const styles = StyleSheet.create({
     backgroundColor: SELECTED_ROOM_FILL,
     borderWidth: 1,
     borderColor: SELECTED_ROOM_BORDER,
+  },
+  roomNameLabel: {
+    position: 'absolute',
+    width: 160,
+    textAlign: 'center',
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '700',
   },
   roomEdge: {
     position: 'absolute',

@@ -50,6 +50,7 @@ const MIN_ZOOM = 0.005;
 const MAX_ZOOM = 6;
 const ZOOM_EPSILON = 1e-9;
 const DEFAULT_GRID_STEP_MM = 100;
+const ROOM_FALLBACK_PREFIX = 'Комната';
 
 const getDisplayZoom = (cameraZoom: number, _minZoom: number, baseZoom: number, _maxZoom: number) => {
   if (Math.abs(cameraZoom - baseZoom) <= ZOOM_EPSILON) {
@@ -71,6 +72,28 @@ export class CanvasEngine {
   rotate: RoomRotateSystem;
   private rooms: RoomModel[] = [];
   private lastPointerWorldPoint: WorldPoint | null = null;
+
+  private getRoomFallbackNameById(roomId: string): string {
+    const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
+
+    return `${ROOM_FALLBACK_PREFIX} ${roomIndex >= 0 ? roomIndex + 1 : 1}`;
+  }
+
+  private resolveRoomName(room: RoomModel): string {
+    const explicitRoomName = room.roomName?.trim();
+
+    if (explicitRoomName) {
+      return explicitRoomName;
+    }
+
+    const legacySettingsName = room.settings?.name?.trim();
+
+    if (legacySettingsName) {
+      return legacySettingsName;
+    }
+
+    return this.getRoomFallbackNameById(room.roomId);
+  }
 
   constructor(worldWidth = 500, worldHeight = 500) {
     this.worldWidth = worldWidth;
@@ -96,7 +119,16 @@ export class CanvasEngine {
   }
 
   setRooms(rooms: RoomModel[]) {
-    this.rooms = rooms.map((room) => withDefaultSettings(cloneRoom(room)));
+    this.rooms = rooms.map((room) => {
+      const normalizedRoom = withDefaultSettings(cloneRoom(room));
+      const legacySettingsName = normalizedRoom.settings?.name?.trim();
+
+      if (!normalizedRoom.roomName && legacySettingsName) {
+        normalizedRoom.roomName = legacySettingsName;
+      }
+
+      return normalizedRoom;
+    });
     this.selection.setRooms(this.rooms);
     this.transform.setRooms(this.rooms);
     this.transform.setActiveRoomId(this.selection.getActiveRoomId());
@@ -154,7 +186,21 @@ export class CanvasEngine {
   }
 
   updateRoomName(roomId: string, name: string): RoomModel | null {
-    return this.updateRoomSettings(roomId, { name });
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    const nextRoomName = name.trim();
+    room.roomName = nextRoomName;
+    room.settings = {
+      ...DEFAULT_ROOM_SETTINGS,
+      ...(room.settings ?? {}),
+      name: nextRoomName,
+    };
+
+    return withDefaultSettings({ ...room });
   }
 
   getRoomOpenEntryPoint(roomId: string): RoomOpenEntryPoint | null {
@@ -166,7 +212,7 @@ export class CanvasEngine {
 
     return {
       roomId: room.roomId,
-      roomName: room.settings?.name ?? DEFAULT_ROOM_SETTINGS.name,
+      roomName: this.resolveRoomName(room),
       widthMm: room.widthMm,
       heightMm: room.heightMm,
       rotationDeg: room.rotationDeg,
