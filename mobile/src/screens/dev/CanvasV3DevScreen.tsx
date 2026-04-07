@@ -156,6 +156,7 @@ export const CanvasV3DevScreen = () => {
   const [roomMenuSection, setRoomMenuSection] = useState<'root' | 'settings'>('root');
   const [roomSettingsEditField, setRoomSettingsEditField] = useState<'width' | 'height' | 'name' | null>(null);
   const [roomSettingsDraftValue, setRoomSettingsDraftValue] = useState('');
+  const [isRoomNamePresetsOpen, setRoomNamePresetsOpen] = useState(false);
   const [openRoomStatus, setOpenRoomStatus] = useState<string | null>(null);
 
   const refreshState = useCallback(() => {
@@ -413,6 +414,7 @@ export const CanvasV3DevScreen = () => {
     }
 
     setRoomSettingsEditField(field);
+    setRoomNamePresetsOpen(field === 'name');
 
     if (field === 'name') {
       setRoomSettingsDraftValue(activeRoom.settings?.name ?? '');
@@ -435,6 +437,7 @@ export const CanvasV3DevScreen = () => {
       }
       setRoomSettingsEditField(null);
       setRoomSettingsDraftValue('');
+      setRoomNamePresetsOpen(false);
       refreshState();
       return;
     }
@@ -451,6 +454,7 @@ export const CanvasV3DevScreen = () => {
     engineRef.current.updateRoomDimensions(activeRoom.roomId, widthMm, heightMm);
     setRoomSettingsEditField(null);
     setRoomSettingsDraftValue('');
+    setRoomNamePresetsOpen(false);
     refreshState();
   }, [activeRoom, activeRoomUnit, refreshState, roomSettingsDraftValue, roomSettingsEditField]);
 
@@ -459,7 +463,14 @@ export const CanvasV3DevScreen = () => {
       return;
     }
 
-    setOpenRoomStatus(`Точка входа подготовлена для комнаты "${activeRoom.settings?.name ?? activeRoom.roomId}" (${activeRoom.roomId}).`);
+    const entryPoint = engineRef.current.getRoomOpenEntryPoint(activeRoom.roomId);
+
+    if (!entryPoint) {
+      setOpenRoomStatus('Не удалось подготовить точку входа для выбранной комнаты.');
+      return;
+    }
+
+    setOpenRoomStatus(`Точка входа подготовлена: ${entryPoint.roomName} (${entryPoint.roomId}), ${entryPoint.widthMm}×${entryPoint.heightMm} мм.`);
   }, [activeRoom]);
 
   useEffect(() => {
@@ -468,6 +479,7 @@ export const CanvasV3DevScreen = () => {
       setRoomMenuSection('root');
       setRoomSettingsEditField(null);
       setRoomSettingsDraftValue('');
+      setRoomNamePresetsOpen(false);
       setOpenRoomStatus(null);
     }
   }, [snapshot.activeRoomId]);
@@ -805,30 +817,41 @@ export const CanvasV3DevScreen = () => {
                                 </Pressable>
                               </View>
                             ) : (
-                              <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('name')}>
+                              <Pressable
+                                style={styles.valueBox}
+                                onPress={() => {
+                                  beginRoomFieldEdit('name');
+                                  setRoomNamePresetsOpen((current) => !current);
+                                }}
+                              >
                                 <Text style={styles.valueBoxText} numberOfLines={1}>{activeRoom?.settings?.name ?? '-'}</Text>
                               </Pressable>
                             )}
                           </View>
 
-                          <View style={styles.presetNamesRow}>
-                            {ROOM_NAME_PRESETS.map((presetName) => (
-                              <Pressable
-                                key={presetName}
-                                style={styles.presetNameChip}
-                                onPress={() => {
-                                  if (!activeRoom) {
-                                    return;
-                                  }
+                          {isRoomNamePresetsOpen ? (
+                            <View style={styles.presetNamesRow}>
+                              {ROOM_NAME_PRESETS.map((presetName) => (
+                                <Pressable
+                                  key={presetName}
+                                  style={styles.presetNameChip}
+                                  onPress={() => {
+                                    if (!activeRoom) {
+                                      return;
+                                    }
 
-                                  engineRef.current.updateRoomName(activeRoom.roomId, presetName);
-                                  refreshState();
-                                }}
-                              >
-                                <Text style={styles.presetNameText}>{presetName}</Text>
-                              </Pressable>
-                            ))}
-                          </View>
+                                    engineRef.current.updateRoomName(activeRoom.roomId, presetName);
+                                    setRoomSettingsEditField(null);
+                                    setRoomSettingsDraftValue('');
+                                    setRoomNamePresetsOpen(false);
+                                    refreshState();
+                                  }}
+                                >
+                                  <Text style={styles.presetNameText}>{presetName}</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          ) : null}
 
                           <Pressable style={styles.roomSettingsMenuItem} onPress={handleOpenRoom}>
                             <Text style={styles.roomSettingsMenuText}>Открыть комнату</Text>
