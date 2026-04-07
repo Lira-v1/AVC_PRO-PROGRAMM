@@ -11,6 +11,9 @@ const SELECTED_ROOM_COLOR = '#3A7BFF';
 const SELECTED_ROOM_FILL = 'rgba(58, 123, 255, 0.07)';
 const SELECTED_ROOM_BORDER = 'rgba(58, 123, 255, 0.22)';
 const ROOM_NAME_PRESETS = ['Кухня', 'Спальня', 'Зал', 'Прихожая', 'Холл'] as const;
+const ROOM_SETTINGS_POPUP_WIDTH = 260;
+const ROOM_SETTINGS_POPUP_MARGIN = 12;
+const ROOM_SETTINGS_POPUP_MIN_HEIGHT = 170;
 
 type DragMode = 'idle' | 'room' | 'resize' | 'pan';
 
@@ -378,8 +381,13 @@ export const CanvasV3DevScreen = () => {
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
   const canvasHeight = isFullscreenMode ? Math.max(windowHeight - 180, 520) : Math.max(Math.min(windowHeight * 0.62, 720), 420);
-  const roomSettingsPopupTop = activeRoomGeometry ? Math.max(12, activeRoomGeometry.bounds.top + 24) : 12;
-  const roomSettingsPopupMaxHeight = Math.max(170, windowHeight - roomSettingsPopupTop - 16);
+  const roomSettingsPopupTopAnchor = activeRoomGeometry ? activeRoomGeometry.bounds.top + 24 : ROOM_SETTINGS_POPUP_MARGIN;
+  const roomSettingsPopupTopLimit = Math.max(ROOM_SETTINGS_POPUP_MARGIN, canvasHeight - ROOM_SETTINGS_POPUP_MARGIN - ROOM_SETTINGS_POPUP_MIN_HEIGHT);
+  const roomSettingsPopupTop = Math.min(Math.max(roomSettingsPopupTopAnchor, ROOM_SETTINGS_POPUP_MARGIN), roomSettingsPopupTopLimit);
+  const roomSettingsPopupMaxHeight = Math.max(120, canvasHeight - roomSettingsPopupTop - ROOM_SETTINGS_POPUP_MARGIN);
+  const roomSettingsPopupLeftAnchor = activeRoomGeometry ? activeRoomGeometry.bounds.right - 180 : ROOM_SETTINGS_POPUP_MARGIN;
+  const roomSettingsPopupLeftLimit = Math.max(ROOM_SETTINGS_POPUP_MARGIN, debugState.viewport.width - ROOM_SETTINGS_POPUP_WIDTH - ROOM_SETTINGS_POPUP_MARGIN);
+  const roomSettingsPopupLeft = Math.min(Math.max(roomSettingsPopupLeftAnchor, ROOM_SETTINGS_POPUP_MARGIN), roomSettingsPopupLeftLimit);
 
   const handleCopyInspector = useCallback(async () => {
     try {
@@ -682,7 +690,7 @@ export const CanvasV3DevScreen = () => {
                     style={[
                       styles.roomSettingsPopup,
                       {
-                        left: Math.max(12, activeRoomGeometry.bounds.right - 180),
+                        left: roomSettingsPopupLeft,
                         top: roomSettingsPopupTop,
                         maxHeight: roomSettingsPopupMaxHeight,
                       },
@@ -1189,6 +1197,8 @@ const styles = StyleSheet.create({
   },
   roomOverlayControlsLayer: {
     ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
   },
   overlayControlButton: {
     position: 'absolute',
@@ -1212,7 +1222,7 @@ const styles = StyleSheet.create({
   },
   roomSettingsPopup: {
     position: 'absolute',
-    width: 260,
+    width: ROOM_SETTINGS_POPUP_WIDTH,
     minHeight: 88,
     borderRadius: 12,
     borderWidth: 1,
@@ -1224,12 +1234,15 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     overflow: 'hidden',
+    zIndex: 30,
+    elevation: 30,
   },
   roomSettingsScroll: {
     flexGrow: 0,
   },
   roomSettingsScrollContent: {
     gap: 4,
+    paddingBottom: 8,
   },
   roomSettingsPopupTitle: {
     color: '#1D2D4A',
