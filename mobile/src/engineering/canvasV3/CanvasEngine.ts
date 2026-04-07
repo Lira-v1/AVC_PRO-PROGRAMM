@@ -2,6 +2,7 @@ import { CameraSystem } from './CameraSystem';
 import { CoordinateSystem } from './CoordinateSystem';
 import { GridSystem } from './GridSystem';
 import {
+  CanvasMode,
   CanvasDebugState,
   CanvasSnapshot,
   CanvasState,
@@ -13,6 +14,9 @@ import {
   RoomResizeHandleId,
   RoomResizeHandleScreenGeometry,
   RoomOpenEntryPoint,
+  RoomSurfaceScreenGeometry,
+  RoomSurfaceType,
+  RoomSurfaceWorldGeometry,
   RoomScreenGeometry,
   RoomWorldGeometry,
   ScreenPoint,
@@ -51,6 +55,8 @@ const MAX_ZOOM = 6;
 const ZOOM_EPSILON = 1e-9;
 const DEFAULT_GRID_STEP_MM = 100;
 const ROOM_FALLBACK_PREFIX = 'Комната';
+const DEFAULT_WALL_HEIGHT_MM = 2700;
+const SURFACE_SCENE_GAP_MM = 280;
 
 const getDisplayZoom = (cameraZoom: number, _minZoom: number, baseZoom: number, _maxZoom: number) => {
   if (Math.abs(cameraZoom - baseZoom) <= ZOOM_EPSILON) {
@@ -72,6 +78,8 @@ export class CanvasEngine {
   rotate: RoomRotateSystem;
   private rooms: RoomModel[] = [];
   private lastPointerWorldPoint: WorldPoint | null = null;
+  private mode: CanvasMode = 'main';
+  private surfaceSceneRoomId: string | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -143,6 +151,10 @@ export class CanvasEngine {
   }
 
   getActiveRoomId(): string | null {
+    if (this.mode === 'room-surface-scene') {
+      return this.surfaceSceneRoomId;
+    }
+
     return this.selection.getActiveRoomId();
   }
 
@@ -220,6 +232,10 @@ export class CanvasEngine {
   }
 
   selectRoom(roomId: string): string | null {
+    if (this.mode === 'room-surface-scene') {
+      return this.surfaceSceneRoomId;
+    }
+
     const activeRoomId = this.selection.selectRoom(roomId);
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
@@ -228,6 +244,10 @@ export class CanvasEngine {
   }
 
   clearActiveRoom(): string | null {
+    if (this.mode === 'room-surface-scene') {
+      return this.surfaceSceneRoomId;
+    }
+
     const activeRoomId = this.selection.clearSelection();
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
@@ -242,10 +262,19 @@ export class CanvasEngine {
   }
 
   getRoomIdAtScreenPoint(point: ScreenPoint): string | null {
+    if (this.mode === 'room-surface-scene') {
+      return this.surfaceSceneRoomId;
+    }
+
     return this.selection.getRoomIdAt(this.updateLastPointer(point));
   }
 
   handleTap(point: ScreenPoint): string | null {
+    if (this.mode === 'room-surface-scene') {
+      this.updateLastPointer(point);
+      return this.surfaceSceneRoomId;
+    }
+
     const worldPoint = this.updateLastPointer(point);
     const activeRoomId = this.selection.selectRoomAt(worldPoint);
     this.transform.setActiveRoomId(activeRoomId);
@@ -255,16 +284,28 @@ export class CanvasEngine {
   }
 
   startDrag(): boolean {
+    if (this.mode === 'room-surface-scene') {
+      return false;
+    }
+
     this.resize.endResize();
     return this.transform.startDrag();
   }
 
   startResize(handleId: RoomResizeHandleId): boolean {
+    if (this.mode === 'room-surface-scene') {
+      return false;
+    }
+
     this.transform.endDrag();
     return this.resize.startResize(handleId);
   }
 
   dragBy(screenDelta: ScreenPoint): RoomModel | null {
+    if (this.mode === 'room-surface-scene') {
+      return null;
+    }
+
     const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
     const room = this.transform.dragByWorldDelta(worldDelta);
 
@@ -276,6 +317,10 @@ export class CanvasEngine {
   }
 
   resizeBy(screenDelta: ScreenPoint): RoomModel | null {
+    if (this.mode === 'room-surface-scene') {
+      return null;
+    }
+
     const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
     const room = this.resize.resizeByWorldDelta(worldDelta);
 
@@ -287,6 +332,10 @@ export class CanvasEngine {
   }
 
   rotateActiveRoom(stepDeg = 90): RoomModel | null {
+    if (this.mode === 'room-surface-scene') {
+      return null;
+    }
+
     this.transform.endDrag();
     this.resize.endResize();
 
@@ -378,7 +427,131 @@ export class CanvasEngine {
     return RoomRenderer.toScreenGeometry(this, this.getRoomGeometry(room));
   }
 
+  getCanvasMode(): CanvasMode {
+    return this.mode;
+  }
+
+  getSurfaceSceneRoomId(): string | null {
+    return this.surfaceSceneRoomId;
+  }
+
+  openRoomSurfaceScene(roomId: string): RoomSurfaceWorldGeometry[] | null {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    this.mode = 'room-surface-scene';
+    this.surfaceSceneRoomId = roomId;
+    this.transform.endDrag();
+    this.resize.endResize();
+
+    return this.getRoomSurfaceSceneWorldGeometry();
+  }
+
+  closeRoomSurfaceScene() {
+    this.mode = 'main';
+    this.surfaceSceneRoomId = null;
+  }
+
+  private getWallHeightMm(room: RoomModel): number {
+    return Math.max(400, room.wallHeightMm ?? DEFAULT_WALL_HEIGHT_MM);
+  }
+
+  getRoomSurfaceSceneWorldGeometry(): RoomSurfaceWorldGeometry[] {
+    if (this.mode !== 'room-surface-scene' || !this.surfaceSceneRoomId) {
+      return [];
+    }
+
+    const room = this.rooms.find((candidate) => candidate.roomId === this.surfaceSceneRoomId);
+
+    if (!room) {
+      return [];
+    }
+
+    const wallHeightMm = this.getWallHeightMm(room);
+    const north = { widthMm: room.widthMm, heightMm: wallHeightMm };
+    const south = { widthMm: room.widthMm, heightMm: wallHeightMm };
+    const west = { widthMm: room.heightMm, heightMm: wallHeightMm };
+    const east = { widthMm: room.heightMm, heightMm: wallHeightMm };
+    const floor = { widthMm: room.widthMm, heightMm: room.heightMm };
+    const ceiling = { widthMm: room.widthMm, heightMm: room.heightMm };
+
+    const rowY = 0;
+    const northX = 0;
+    const westX = northX - (north.widthMm / 2 + SURFACE_SCENE_GAP_MM + west.widthMm / 2);
+    const eastX = northX + (north.widthMm / 2 + SURFACE_SCENE_GAP_MM + east.widthMm / 2);
+    const southX = eastX + (east.widthMm / 2 + SURFACE_SCENE_GAP_MM + south.widthMm / 2);
+    const ceilingY = rowY - (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + ceiling.heightMm / 2);
+    const floorY = rowY + (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + floor.heightMm / 2);
+
+    const surfaces: Array<{ type: RoomSurfaceType; widthMm: number; heightMm: number; centerX: number; centerY: number }> = [
+      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, centerX: westX, centerY: rowY },
+      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, centerX: northX, centerY: rowY },
+      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, centerX: eastX, centerY: rowY },
+      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, centerX: southX, centerY: rowY },
+      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, centerX: northX, centerY: ceilingY },
+      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, centerX: northX, centerY: floorY },
+    ];
+
+    return surfaces.map((surface) => {
+      const halfWidth = surface.widthMm / 2;
+      const halfHeight = surface.heightMm / 2;
+      const bounds = {
+        minX: surface.centerX - halfWidth,
+        maxX: surface.centerX + halfWidth,
+        minY: surface.centerY - halfHeight,
+        maxY: surface.centerY + halfHeight,
+      };
+
+      return {
+        surfaceId: `${room.roomId}-${surface.type}`,
+        roomId: room.roomId,
+        type: surface.type,
+        widthMm: surface.widthMm,
+        heightMm: surface.heightMm,
+        center: { x: surface.centerX, y: surface.centerY },
+        bounds: {
+          ...bounds,
+          width: bounds.maxX - bounds.minX,
+          height: bounds.maxY - bounds.minY,
+        },
+      };
+    });
+  }
+
+  getRoomSurfaceSceneScreenGeometry(): RoomSurfaceScreenGeometry[] {
+    return this.getRoomSurfaceSceneWorldGeometry().map((surface) => {
+      const topLeft = this.worldToScreen({ x: surface.bounds.minX, y: surface.bounds.minY });
+      const bottomRight = this.worldToScreen({ x: surface.bounds.maxX, y: surface.bounds.maxY });
+      const width = Math.abs(bottomRight.x - topLeft.x);
+      const height = Math.abs(bottomRight.y - topLeft.y);
+
+      return {
+        surfaceId: surface.surfaceId,
+        roomId: surface.roomId,
+        type: surface.type,
+        widthPx: width,
+        heightPx: height,
+        center: this.worldToScreen(surface.center),
+        bounds: {
+          left: Math.min(topLeft.x, bottomRight.x),
+          right: Math.max(topLeft.x, bottomRight.x),
+          top: Math.min(topLeft.y, bottomRight.y),
+          bottom: Math.max(topLeft.y, bottomRight.y),
+          width,
+          height,
+        },
+      };
+    });
+  }
+
   getActiveRoomDimensionLabels(): DimensionLineScreenGeometry[] {
+    if (this.mode === 'room-surface-scene') {
+      return [];
+    }
+
     const activeRoom = this.getActiveRoom();
 
     if (!activeRoom || activeRoom.settings?.isDimensionsHidden) {
@@ -392,6 +565,10 @@ export class CanvasEngine {
   }
 
   getActiveRoomResizeHandles(): RoomResizeHandleScreenGeometry[] {
+    if (this.mode === 'room-surface-scene') {
+      return [];
+    }
+
     const activeRoom = this.getActiveRoom();
 
     if (!activeRoom) {
@@ -424,6 +601,8 @@ export class CanvasEngine {
       canvasState: this.canvasState,
       activeRoomId: this.getActiveRoomId(),
       roomIds: this.rooms.map((room) => room.roomId),
+      mode: this.mode,
+      surfaceSceneRoomId: this.surfaceSceneRoomId,
     };
   }
 }
