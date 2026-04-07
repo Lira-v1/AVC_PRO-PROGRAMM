@@ -49,6 +49,7 @@ export type RoomSettings = {
 
 export type RoomModel = {
   roomId: string;
+  roomName?: string;
   centerX: number;
   centerY: number;
   widthMm: number;
