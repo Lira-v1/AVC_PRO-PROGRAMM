@@ -1,11 +1,19 @@
-import { DimensionLineWorldGeometry, RoomModel, RoomWorldGeometry, WorldPoint } from './CanvasTypes';
+import { DimensionLineWorldGeometry, DimensionUnit, RoomModel, RoomWorldGeometry, WorldPoint } from './CanvasTypes';
 import { RoomGeometry } from './RoomGeometry';
 
 const DIMENSION_OFFSET_MM = 320;
 const TICK_HALF_SIZE_MM = 90;
-const MILLIMETERS_IN_METER = 1000;
+const formatDimensionValue = (valueMm: number, unit: DimensionUnit): string => {
+  if (unit === 'mm') {
+    return `${Math.round(valueMm)} мм`;
+  }
 
-const formatDimensionValue = (valueMm: number): string => `${(valueMm / MILLIMETERS_IN_METER).toFixed(2)} м`;
+  if (unit === 'cm') {
+    return `${(valueMm / 10).toFixed(1)} см`;
+  }
+
+  return `${(valueMm / 1000).toFixed(2)} м`;
+};
 
 const createTick = (center: WorldPoint, axis: 'horizontal' | 'vertical') => {
   if (axis === 'horizontal') {
@@ -28,6 +36,7 @@ export class DimensionLabelSystem {
     }
 
     const geometry = roomGeometry ?? RoomGeometry.fromModel(room);
+    const unit = room.settings?.dimensionUnit ?? 'm';
     const { minX, maxX, minY, maxY, width, height } = geometry.bounds;
     const topY = minY - DIMENSION_OFFSET_MM;
     const leftX = minX - DIMENSION_OFFSET_MM;
@@ -43,7 +52,7 @@ export class DimensionLabelSystem {
         kind: 'length',
         axis: 'horizontal',
         valueMm: width,
-        formattedValue: formatDimensionValue(width),
+        formattedValue: formatDimensionValue(width, unit),
         lineFrom: topLineFrom,
         lineTo: topLineTo,
         textAnchor: { x: (minX + maxX) / 2, y: topY },
@@ -55,7 +64,7 @@ export class DimensionLabelSystem {
         kind: 'width',
         axis: 'vertical',
         valueMm: height,
-        formattedValue: formatDimensionValue(height),
+        formattedValue: formatDimensionValue(height, unit),
         lineFrom: leftLineFrom,
         lineTo: leftLineTo,
         textAnchor: { x: leftX, y: (minY + maxY) / 2 },

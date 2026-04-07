@@ -7,7 +7,9 @@ import {
   CanvasState,
   DimensionLineScreenGeometry,
   DimensionLineWorldGeometry,
+  DimensionUnit,
   RoomModel,
+  RoomSettings,
   RoomResizeHandleId,
   RoomResizeHandleScreenGeometry,
   RoomScreenGeometry,
@@ -25,6 +27,20 @@ import { RoomResizeSystem } from './RoomResizeSystem';
 import { RoomRotateSystem } from './RoomRotateSystem';
 
 const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
+const DEFAULT_ROOM_SETTINGS: RoomSettings = {
+  name: 'Комната',
+  dimensionUnit: 'm',
+  isSizeLocked: false,
+  isDimensionsHidden: false,
+};
+
+const withDefaultSettings = (room: RoomModel): RoomModel => ({
+  ...room,
+  settings: {
+    ...DEFAULT_ROOM_SETTINGS,
+    ...(room.settings ?? {}),
+  },
+});
 const DISPLAY_ZOOM_STEP = 20;
 const BASELINE_DISPLAY_ZOOM_OFFSET = 30;
 const LEGACY_BASE_ZOOM = 0.03;
@@ -79,7 +95,7 @@ export class CanvasEngine {
   }
 
   setRooms(rooms: RoomModel[]) {
-    this.rooms = rooms.map(cloneRoom);
+    this.rooms = rooms.map((room) => withDefaultSettings(cloneRoom(room)));
     this.selection.setRooms(this.rooms);
     this.transform.setRooms(this.rooms);
     this.transform.setActiveRoomId(this.selection.getActiveRoomId());
@@ -90,7 +106,7 @@ export class CanvasEngine {
   }
 
   getRooms(): RoomModel[] {
-    return this.rooms.map(cloneRoom);
+    return this.rooms.map((room) => withDefaultSettings(cloneRoom(room)));
   }
 
   getActiveRoomId(): string | null {
@@ -98,7 +114,46 @@ export class CanvasEngine {
   }
 
   getActiveRoom(): RoomModel | null {
-    return this.selection.getActiveRoom();
+    const activeRoom = this.selection.getActiveRoom();
+
+    return activeRoom ? withDefaultSettings(activeRoom) : null;
+  }
+
+  updateRoomDimensions(roomId: string, widthMm: number, heightMm: number): RoomModel | null {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    room.widthMm = Math.max(400, widthMm);
+    room.heightMm = Math.max(400, heightMm);
+
+    return withDefaultSettings({ ...room });
+  }
+
+  updateRoomSettings(roomId: string, patch: Partial<RoomSettings>): RoomModel | null {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    room.settings = {
+      ...DEFAULT_ROOM_SETTINGS,
+      ...(room.settings ?? {}),
+      ...patch,
+    };
+
+    return withDefaultSettings({ ...room });
+  }
+
+  updateRoomDimensionUnit(roomId: string, unit: DimensionUnit): RoomModel | null {
+    return this.updateRoomSettings(roomId, { dimensionUnit: unit });
+  }
+
+  updateRoomName(roomId: string, name: string): RoomModel | null {
+    return this.updateRoomSettings(roomId, { name });
   }
 
   selectRoom(roomId: string): string | null {
@@ -263,7 +318,7 @@ export class CanvasEngine {
   getActiveRoomDimensionLabels(): DimensionLineScreenGeometry[] {
     const activeRoom = this.getActiveRoom();
 
-    if (!activeRoom) {
+    if (!activeRoom || activeRoom.settings?.isDimensionsHidden) {
       return [];
     }
 

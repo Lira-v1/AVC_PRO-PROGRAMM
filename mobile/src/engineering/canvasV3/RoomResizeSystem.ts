@@ -47,7 +47,7 @@ export class RoomResizeSystem {
   startResize(handleId: RoomResizeHandleId): boolean {
     const room = this.getActiveRoom();
 
-    if (!room) {
+    if (!room || room.settings?.isSizeLocked) {
       this.session = null;
       return false;
     }
@@ -64,6 +64,11 @@ export class RoomResizeSystem {
     const room = this.getActiveRoom();
 
     if (!room) {
+      this.session = null;
+      return null;
+    }
+
+    if (room.settings?.isSizeLocked) {
       this.session = null;
       return null;
     }

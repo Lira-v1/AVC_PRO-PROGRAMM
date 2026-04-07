@@ -38,6 +38,14 @@ export type ScreenEdge = {
 };
 
 export type RoomResizeHandleId = 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left';
+export type DimensionUnit = 'mm' | 'cm' | 'm';
+
+export type RoomSettings = {
+  name: string;
+  dimensionUnit: DimensionUnit;
+  isSizeLocked: boolean;
+  isDimensionsHidden: boolean;
+};
 
 export type RoomModel = {
   roomId: string;
@@ -46,6 +54,7 @@ export type RoomModel = {
   widthMm: number;
   heightMm: number;
   rotationDeg: number;
+  settings?: RoomSettings;
 };
 
 export type RoomWorldGeometry = {
