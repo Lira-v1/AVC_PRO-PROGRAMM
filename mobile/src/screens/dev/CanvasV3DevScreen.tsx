@@ -151,12 +151,12 @@ const getRoomDisplayName = (room: RoomModel, index: number) => {
 };
 
 const SURFACE_LABELS: Record<RoomSurfaceType, string> = {
-  north: 'north wall',
-  south: 'south wall',
-  west: 'west wall',
-  east: 'east wall',
-  floor: 'floor',
-  ceiling: 'ceiling',
+  north: 'стена север',
+  south: 'стена юг',
+  west: 'стена запад',
+  east: 'стена восток',
+  floor: 'пол',
+  ceiling: 'потолок',
 };
 
 export const CanvasV3DevScreen = () => {
