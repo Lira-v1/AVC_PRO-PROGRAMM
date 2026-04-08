@@ -747,6 +747,7 @@ export const CanvasV3DevScreen = () => {
                         height: surface.bounds.height,
                         left: surface.bounds.left,
                         top: surface.bounds.top,
+                        transform: [{ rotate: `${surface.rotationDeg}deg` }],
                       },
                     ]}
                   >
