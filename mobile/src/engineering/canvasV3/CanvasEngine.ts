@@ -66,6 +66,13 @@ const getDisplayZoom = (cameraZoom: number, _minZoom: number, baseZoom: number, 
   return Math.log(cameraZoom / baseZoom) / Math.log(2) * DISPLAY_ZOOM_STEP;
 };
 
+const withDefaultWallHeight = (room: RoomModel): RoomModel => ({
+  ...room,
+  wallHeightMm: Math.max(400, room.wallHeightMm ?? DEFAULT_WALL_HEIGHT_MM),
+});
+
+const normalizeRoomModel = (room: RoomModel): RoomModel => withDefaultWallHeight(withDefaultSettings(cloneRoom(room)));
+
 export class CanvasEngine {
   worldWidth: number;
   worldHeight: number;
@@ -128,7 +135,7 @@ export class CanvasEngine {
 
   setRooms(rooms: RoomModel[]) {
     this.rooms = rooms.map((room) => {
-      const normalizedRoom = withDefaultSettings(cloneRoom(room));
+      const normalizedRoom = normalizeRoomModel(room);
       const legacySettingsName = normalizedRoom.settings?.name?.trim();
 
       if (!normalizedRoom.roomName && legacySettingsName) {
@@ -147,7 +154,7 @@ export class CanvasEngine {
   }
 
   getRooms(): RoomModel[] {
-    return this.rooms.map((room) => withDefaultSettings(cloneRoom(room)));
+    return this.rooms.map((room) => normalizeRoomModel(room));
   }
 
   getActiveRoomId(): string | null {
@@ -161,7 +168,7 @@ export class CanvasEngine {
   getActiveRoom(): RoomModel | null {
     const activeRoom = this.selection.getActiveRoom();
 
-    return activeRoom ? withDefaultSettings(activeRoom) : null;
+    return activeRoom ? normalizeRoomModel(activeRoom) : null;
   }
 
   updateRoomDimensions(roomId: string, widthMm: number, heightMm: number): RoomModel | null {
@@ -190,7 +197,7 @@ export class CanvasEngine {
       ...patch,
     };
 
-    return withDefaultSettings({ ...room });
+    return normalizeRoomModel(room);
   }
 
   updateRoomDimensionUnit(roomId: string, unit: DimensionUnit): RoomModel | null {
@@ -212,7 +219,19 @@ export class CanvasEngine {
       name: nextRoomName,
     };
 
-    return withDefaultSettings({ ...room });
+    return normalizeRoomModel(room);
+  }
+
+  updateRoomWallHeight(roomId: string, wallHeightMm: number): RoomModel | null {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    room.wallHeightMm = Math.max(400, wallHeightMm);
+
+    return normalizeRoomModel(room);
   }
 
   getRoomOpenEntryPoint(roomId: string): RoomOpenEntryPoint | null {

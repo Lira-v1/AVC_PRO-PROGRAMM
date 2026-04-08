@@ -46,6 +46,7 @@ const DEV_ROOM: RoomModel = {
   centerY: 0,
   widthMm: 1000,
   heightMm: 1000,
+  wallHeightMm: 2700,
   rotationDeg: 0,
   settings: {
     name: 'Комната 1',
@@ -172,7 +173,7 @@ export const CanvasV3DevScreen = () => {
   const [isFullscreenMode, setFullscreenMode] = useState(false);
   const [isRoomSettingsMenuOpen, setRoomSettingsMenuOpen] = useState(false);
   const [roomMenuSection, setRoomMenuSection] = useState<'root' | 'settings'>('root');
-  const [roomSettingsEditField, setRoomSettingsEditField] = useState<'width' | 'height' | 'name' | null>(null);
+  const [roomSettingsEditField, setRoomSettingsEditField] = useState<'width' | 'height' | 'wallHeight' | 'name' | null>(null);
   const [roomSettingsDraftValue, setRoomSettingsDraftValue] = useState('');
   const [isRoomNamePresetsOpen, setRoomNamePresetsOpen] = useState(false);
   const [openRoomStatus, setOpenRoomStatus] = useState<string | null>(null);
@@ -437,7 +438,7 @@ export const CanvasV3DevScreen = () => {
   const activeRoom = engineRef.current.getActiveRoom();
   const activeRoomUnit = activeRoom?.settings?.dimensionUnit ?? 'm';
 
-  const beginRoomFieldEdit = useCallback((field: 'width' | 'height' | 'name') => {
+  const beginRoomFieldEdit = useCallback((field: 'width' | 'height' | 'wallHeight' | 'name') => {
     if (!activeRoom) {
       return;
     }
@@ -450,7 +451,7 @@ export const CanvasV3DevScreen = () => {
       return;
     }
 
-    const sourceValue = field === 'width' ? activeRoom.widthMm : activeRoom.heightMm;
+    const sourceValue = field === 'width' ? activeRoom.widthMm : field === 'height' ? activeRoom.heightMm : activeRoom.wallHeightMm ?? 2700;
     setRoomSettingsDraftValue(formatRoomSize(sourceValue, activeRoomUnit));
   }, [activeRoom, activeRoomUnit]);
 
@@ -476,9 +477,13 @@ export const CanvasV3DevScreen = () => {
       return;
     }
 
-    const widthMm = roomSettingsEditField === 'width' ? nextValueMm : activeRoom.widthMm;
-    const heightMm = roomSettingsEditField === 'height' ? nextValueMm : activeRoom.heightMm;
-    engineRef.current.updateRoomDimensions(activeRoom.roomId, widthMm, heightMm);
+    if (roomSettingsEditField === 'wallHeight') {
+      engineRef.current.updateRoomWallHeight(activeRoom.roomId, nextValueMm);
+    } else {
+      const widthMm = roomSettingsEditField === 'width' ? nextValueMm : activeRoom.widthMm;
+      const heightMm = roomSettingsEditField === 'height' ? nextValueMm : activeRoom.heightMm;
+      engineRef.current.updateRoomDimensions(activeRoom.roomId, widthMm, heightMm);
+    }
     setRoomSettingsEditField(null);
     setRoomSettingsDraftValue('');
     setRoomNamePresetsOpen(false);
@@ -881,6 +886,30 @@ export const CanvasV3DevScreen = () => {
                           </View>
 
                           <View style={styles.fieldRow}>
+                            <Text style={styles.fieldLabel}>Высота</Text>
+                            {roomSettingsEditField === 'wallHeight' ? (
+                              <View style={styles.inlineEditor}>
+                                <TextInput
+                                  value={roomSettingsDraftValue}
+                                  onChangeText={setRoomSettingsDraftValue}
+                                  autoFocus
+                                  keyboardType="numeric"
+                                  style={styles.fieldInput}
+                                  onSubmitEditing={commitRoomFieldEdit}
+                                  onBlur={commitRoomFieldEdit}
+                                />
+                                <Pressable style={styles.confirmButton} onPress={commitRoomFieldEdit}>
+                                  <Text style={styles.confirmButtonText}>✓</Text>
+                                </Pressable>
+                              </View>
+                            ) : (
+                              <Pressable style={styles.valueBox} onPress={() => beginRoomFieldEdit('wallHeight')}>
+                                <Text style={styles.valueBoxText}>{activeRoom ? `${formatRoomSize(activeRoom.wallHeightMm ?? 2700, activeRoomUnit)} ${activeRoomUnit}` : '-'}</Text>
+                              </Pressable>
+                            )}
+                          </View>
+
+                          <View style={styles.fieldRow}>
                             <Text style={styles.fieldLabel}>Имя комнаты</Text>
                             {roomSettingsEditField === 'name' ? (
                               <View style={styles.inlineEditor}>
@@ -1056,6 +1085,7 @@ export const CanvasV3DevScreen = () => {
                     <Text style={styles.roomDataMeta}>centerY: {room.centerY}</Text>
                     <Text style={styles.roomDataMeta}>widthMm: {room.widthMm}</Text>
                     <Text style={styles.roomDataMeta}>heightMm: {room.heightMm}</Text>
+                    <Text style={styles.roomDataMeta}>wallHeightMm: {room.wallHeightMm ?? 2700}</Text>
                     <Text style={styles.roomDataMeta}>rotationDeg: {room.rotationDeg}</Text>
                     <Text style={styles.roomDataMeta}>gridStepMm: {debugState.gridStepMm}</Text>
                     <Text style={styles.roomDataMeta}>gridLevel: {debugState.gridLevel}</Text>
