@@ -497,21 +497,31 @@ export class CanvasEngine {
     const floor = { widthMm: room.widthMm, heightMm: room.heightMm };
     const ceiling = { widthMm: room.widthMm, heightMm: room.heightMm };
 
-    const rowY = 0;
-    const northX = 0;
-    const westX = northX - (north.widthMm / 2 + SURFACE_SCENE_GAP_MM + west.widthMm / 2);
-    const eastX = northX + (north.widthMm / 2 + SURFACE_SCENE_GAP_MM + east.widthMm / 2);
-    const southX = eastX + (east.widthMm / 2 + SURFACE_SCENE_GAP_MM + south.widthMm / 2);
-    const ceilingY = rowY - (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + ceiling.heightMm / 2);
-    const floorY = rowY + (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + floor.heightMm / 2);
+    const floorCenterX = 0;
+    const floorCenterY = 0;
+
+    const northCenterX = floorCenterX;
+    const northCenterY = floorCenterY - (floor.heightMm / 2 + SURFACE_SCENE_GAP_MM + north.heightMm / 2);
+
+    const southCenterX = floorCenterX;
+    const southCenterY = floorCenterY + (floor.heightMm / 2 + SURFACE_SCENE_GAP_MM + south.heightMm / 2);
+
+    const westCenterX = floorCenterX - (floor.widthMm / 2 + SURFACE_SCENE_GAP_MM + west.widthMm / 2);
+    const westCenterY = floorCenterY;
+
+    const eastCenterX = floorCenterX + (floor.widthMm / 2 + SURFACE_SCENE_GAP_MM + east.widthMm / 2);
+    const eastCenterY = floorCenterY;
+
+    const ceilingCenterX = northCenterX;
+    const ceilingCenterY = northCenterY - (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + ceiling.heightMm / 2);
 
     const surfaces: Array<{ type: RoomSurfaceType; widthMm: number; heightMm: number; centerX: number; centerY: number }> = [
-      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, centerX: westX, centerY: rowY },
-      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, centerX: northX, centerY: rowY },
-      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, centerX: eastX, centerY: rowY },
-      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, centerX: southX, centerY: rowY },
-      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, centerX: northX, centerY: ceilingY },
-      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, centerX: northX, centerY: floorY },
+      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, centerX: floorCenterX, centerY: floorCenterY },
+      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, centerX: northCenterX, centerY: northCenterY },
+      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, centerX: southCenterX, centerY: southCenterY },
+      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, centerX: westCenterX, centerY: westCenterY },
+      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, centerX: eastCenterX, centerY: eastCenterY },
+      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, centerX: ceilingCenterX, centerY: ceilingCenterY },
     ];
 
     return surfaces.map((surface) => {
