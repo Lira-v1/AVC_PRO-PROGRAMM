@@ -518,13 +518,13 @@ export class CanvasEngine {
     const ceilingCenterX = northCenterX;
     const ceilingCenterY = northCenterY - (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + ceiling.heightMm / 2);
 
-    const surfaces: Array<{ type: RoomSurfaceType; widthMm: number; heightMm: number; centerX: number; centerY: number }> = [
-      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, centerX: floorCenterX, centerY: floorCenterY },
-      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, centerX: northCenterX, centerY: northCenterY },
-      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, centerX: southCenterX, centerY: southCenterY },
-      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, centerX: westCenterX, centerY: westCenterY },
-      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, centerX: eastCenterX, centerY: eastCenterY },
-      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, centerX: ceilingCenterX, centerY: ceilingCenterY },
+    const surfaces: Array<{ type: RoomSurfaceType; widthMm: number; heightMm: number; rotationDeg: number; centerX: number; centerY: number }> = [
+      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, rotationDeg: 0, centerX: floorCenterX, centerY: floorCenterY },
+      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, rotationDeg: 0, centerX: northCenterX, centerY: northCenterY },
+      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, rotationDeg: 0, centerX: southCenterX, centerY: southCenterY },
+      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, rotationDeg: 90, centerX: westCenterX, centerY: westCenterY },
+      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, rotationDeg: 90, centerX: eastCenterX, centerY: eastCenterY },
+      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, rotationDeg: 0, centerX: ceilingCenterX, centerY: ceilingCenterY },
     ];
 
     return surfaces.map((surface) => {
@@ -543,6 +543,7 @@ export class CanvasEngine {
         type: surface.type,
         widthMm: surface.widthMm,
         heightMm: surface.heightMm,
+        rotationDeg: surface.rotationDeg,
         center: { x: surface.centerX, y: surface.centerY },
         bounds: {
           ...bounds,
@@ -566,6 +567,7 @@ export class CanvasEngine {
         type: surface.type,
         widthPx: width,
         heightPx: height,
+        rotationDeg: surface.rotationDeg,
         center: this.worldToScreen(surface.center),
         bounds: {
           left: Math.min(topLeft.x, bottomRight.x),

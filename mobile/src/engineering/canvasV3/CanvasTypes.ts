@@ -68,6 +68,7 @@ export type RoomSurfaceWorldGeometry = {
   type: RoomSurfaceType;
   widthMm: number;
   heightMm: number;
+  rotationDeg: number;
   center: WorldPoint;
   bounds: WorldBounds;
 };
@@ -78,6 +79,7 @@ export type RoomSurfaceScreenGeometry = {
   type: RoomSurfaceType;
   widthPx: number;
   heightPx: number;
+  rotationDeg: number;
   center: ScreenPoint;
   bounds: {
     left: number;
