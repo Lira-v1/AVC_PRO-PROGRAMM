@@ -83,7 +83,12 @@ const withDefaultWallHeight = (room: RoomModel): RoomModel => ({
   wallHeightMm: Math.max(400, room.wallHeightMm ?? DEFAULT_WALL_HEIGHT_MM),
 });
 
-const normalizeRoomModel = (room: RoomModel): RoomModel => withDefaultWallHeight(withDefaultSettings(cloneRoom(room)));
+const withDefaultRoomLabelVisibility = (room: RoomModel): RoomModel => ({
+  ...room,
+  roomLabelVisible: room.roomLabelVisible ?? true,
+});
+
+const normalizeRoomModel = (room: RoomModel): RoomModel => withDefaultRoomLabelVisibility(withDefaultWallHeight(withDefaultSettings(cloneRoom(room))));
 
 export class CanvasEngine {
   worldWidth: number;
@@ -230,6 +235,18 @@ export class CanvasEngine {
       ...(room.settings ?? {}),
       name: nextRoomName,
     };
+
+    return normalizeRoomModel(room);
+  }
+
+  updateRoomLabelVisibility(roomId: string, isVisible: boolean): RoomModel | null {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return null;
+    }
+
+    room.roomLabelVisible = isVisible;
 
     return normalizeRoomModel(room);
   }

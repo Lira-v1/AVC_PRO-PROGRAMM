@@ -42,6 +42,7 @@ const IDLE_DRAG_SESSION: DragSession = {
 const DEV_ROOM: RoomModel = {
   roomId: 'room-1',
   roomName: 'Комната 1',
+  roomLabelVisible: true,
   centerX: 0,
   centerY: 0,
   widthMm: 1000,
@@ -148,6 +149,17 @@ const getRoomDisplayName = (room: RoomModel, index: number) => {
   }
 
   return `Комната ${index + 1}`;
+};
+
+const getRoomLabelMetrics = (roomGeometry: { bounds: { width: number; height: number } }) => {
+  const minRoomSize = Math.max(1, Math.min(roomGeometry.bounds.width, roomGeometry.bounds.height));
+  const labelFontSize = Math.min(24, Math.max(8, minRoomSize * 0.18));
+  const labelWidth = Math.min(260, Math.max(64, roomGeometry.bounds.width * 0.82));
+
+  return {
+    labelFontSize,
+    labelWidth,
+  };
 };
 
 const SURFACE_LABELS: Record<RoomSurfaceType, string> = {
@@ -509,6 +521,15 @@ export const CanvasV3DevScreen = () => {
     refreshState();
   }, [activeRoom, refreshState]);
 
+  const handleToggleRoomLabel = useCallback(() => {
+    if (!activeRoom) {
+      return;
+    }
+
+    engineRef.current.updateRoomLabelVisibility(activeRoom.roomId, activeRoom.roomLabelVisible === false);
+    refreshState();
+  }, [activeRoom, refreshState]);
+
   const handleBackFromSurfaceScene = useCallback(() => {
     engineRef.current.closeRoomSurfaceScene();
     setOpenRoomStatus(null);
@@ -624,20 +645,30 @@ export const CanvasV3DevScreen = () => {
                   />
                 ))}
 
-                <Text
-                  pointerEvents="none"
-                  style={[
-                    styles.roomNameLabel,
-                    {
-                      left: roomGeometry.center.x - 80,
-                      top: roomGeometry.center.y - 12,
-                      transform: [{ rotate: `${roomGeometry.rotationDeg}deg` }],
-                    },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {roomNameById[roomGeometry.roomId] ?? 'Комната 1'}
-                </Text>
+                {(roomData.find((room) => room.roomId === roomGeometry.roomId)?.roomLabelVisible ?? true)
+                  ? (() => {
+                      const { labelFontSize, labelWidth } = getRoomLabelMetrics(roomGeometry);
+
+                      return (
+                        <Text
+                          pointerEvents="none"
+                          style={[
+                            styles.roomNameLabel,
+                            {
+                              left: roomGeometry.center.x - labelWidth / 2,
+                              top: roomGeometry.center.y - labelFontSize * 0.6,
+                              width: labelWidth,
+                              fontSize: labelFontSize,
+                              transform: [{ rotate: `${roomGeometry.rotationDeg}deg` }],
+                            },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {roomNameById[roomGeometry.roomId] ?? 'Комната 1'}
+                        </Text>
+                      );
+                    })()
+                  : null}
 
               </React.Fragment>
             ))}
@@ -804,6 +835,12 @@ export const CanvasV3DevScreen = () => {
                       {roomMenuSection === 'root' ? (
                         <>
                           <Text style={styles.roomSettingsPopupTitle}>Меню комнаты</Text>
+                          <Pressable style={styles.roomSettingsMenuItem} onPress={handleOpenRoom}>
+                            <Text style={styles.roomSettingsMenuText}>Открыть комнату</Text>
+                          </Pressable>
+                          <Pressable style={styles.roomSettingsMenuItem} onPress={handleToggleRoomLabel}>
+                            <Text style={styles.roomSettingsMenuText}>{activeRoom?.roomLabelVisible === false ? 'Показать название' : 'Скрыть название'}</Text>
+                          </Pressable>
                           <Pressable style={styles.roomSettingsMenuItem} onPress={() => setRoomMenuSection('settings')}>
                             <Text style={styles.roomSettingsMenuText}>Настройка комнаты</Text>
                           </Pressable>
@@ -963,10 +1000,6 @@ export const CanvasV3DevScreen = () => {
                             </View>
                           ) : null}
 
-                          <Pressable style={styles.roomSettingsMenuItem} onPress={handleOpenRoom}>
-                            <Text style={styles.roomSettingsMenuText}>Открыть комнату</Text>
-                          </Pressable>
-
                           <Pressable
                             style={styles.roomSettingsMenuItem}
                             onPress={() => {
@@ -1082,6 +1115,7 @@ export const CanvasV3DevScreen = () => {
                     <Text style={styles.roomDataTitle}>{getRoomDisplayName(room, index)}</Text>
                     <Text style={styles.roomDataMeta}>roomId: {room.roomId}</Text>
                     <Text style={styles.roomDataMeta}>roomName: {room.roomName || '(fallback)'}</Text>
+                    <Text style={styles.roomDataMeta}>roomLabelVisible: {room.roomLabelVisible === false ? 'false' : 'true'}</Text>
                     <Text style={styles.roomDataMeta}>centerX: {room.centerX}</Text>
                     <Text style={styles.roomDataMeta}>centerY: {room.centerY}</Text>
                     <Text style={styles.roomDataMeta}>widthMm: {room.widthMm}</Text>
