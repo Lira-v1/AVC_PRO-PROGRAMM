@@ -489,13 +489,16 @@ export class CanvasEngine {
       return [];
     }
 
-    const wallHeightMm = this.getWallHeightMm(room);
-    const north = { widthMm: room.widthMm, heightMm: wallHeightMm };
-    const south = { widthMm: room.widthMm, heightMm: wallHeightMm };
-    const west = { widthMm: room.heightMm, heightMm: wallHeightMm };
-    const east = { widthMm: room.heightMm, heightMm: wallHeightMm };
-    const floor = { widthMm: room.widthMm, heightMm: room.heightMm };
-    const ceiling = { widthMm: room.widthMm, heightMm: room.heightMm };
+    const roomWidthMm = room.widthMm;
+    const roomLengthMm = room.heightMm;
+    const roomHeightMm = this.getWallHeightMm(room);
+
+    const floor = { widthMm: roomWidthMm, heightMm: roomLengthMm };
+    const ceiling = { widthMm: roomWidthMm, heightMm: roomLengthMm };
+    const north = { widthMm: roomWidthMm, heightMm: roomHeightMm };
+    const south = { widthMm: roomWidthMm, heightMm: roomHeightMm };
+    const west = { widthMm: roomLengthMm, heightMm: roomHeightMm };
+    const east = { widthMm: roomLengthMm, heightMm: roomHeightMm };
 
     const floorCenterX = 0;
     const floorCenterY = 0;
