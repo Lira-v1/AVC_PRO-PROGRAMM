@@ -58,6 +58,18 @@ const ROOM_FALLBACK_PREFIX = 'Комната';
 const DEFAULT_WALL_HEIGHT_MM = 2700;
 const SURFACE_SCENE_GAP_MM = 280;
 
+const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
+  const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
+  const angleRad = normalizedRotation * (Math.PI / 180);
+  const absCos = Math.abs(Math.cos(angleRad));
+  const absSin = Math.abs(Math.sin(angleRad));
+
+  return {
+    halfWidth: (widthMm * absCos + heightMm * absSin) / 2,
+    halfHeight: (widthMm * absSin + heightMm * absCos) / 2,
+  };
+};
+
 const getDisplayZoom = (cameraZoom: number, _minZoom: number, baseZoom: number, _maxZoom: number) => {
   if (Math.abs(cameraZoom - baseZoom) <= ZOOM_EPSILON) {
     return 0;
@@ -499,32 +511,45 @@ export class CanvasEngine {
     const south = { widthMm: roomWidthMm, heightMm: roomHeightMm };
     const west = { widthMm: roomLengthMm, heightMm: roomHeightMm };
     const east = { widthMm: roomLengthMm, heightMm: roomHeightMm };
+    const floorRotationDeg = 0;
+    const northRotationDeg = 0;
+    const southRotationDeg = 0;
+    const westRotationDeg = 90;
+    const eastRotationDeg = 90;
+    const ceilingRotationDeg = 0;
+
+    const floorExtent = getRotatedHalfExtent(floor.widthMm, floor.heightMm, floorRotationDeg);
+    const northExtent = getRotatedHalfExtent(north.widthMm, north.heightMm, northRotationDeg);
+    const southExtent = getRotatedHalfExtent(south.widthMm, south.heightMm, southRotationDeg);
+    const westExtent = getRotatedHalfExtent(west.widthMm, west.heightMm, westRotationDeg);
+    const eastExtent = getRotatedHalfExtent(east.widthMm, east.heightMm, eastRotationDeg);
+    const ceilingExtent = getRotatedHalfExtent(ceiling.widthMm, ceiling.heightMm, ceilingRotationDeg);
 
     const floorCenterX = 0;
     const floorCenterY = 0;
 
     const northCenterX = floorCenterX;
-    const northCenterY = floorCenterY - (floor.heightMm / 2 + SURFACE_SCENE_GAP_MM + north.heightMm / 2);
+    const northCenterY = floorCenterY - (floorExtent.halfHeight + SURFACE_SCENE_GAP_MM + northExtent.halfHeight);
 
     const southCenterX = floorCenterX;
-    const southCenterY = floorCenterY + (floor.heightMm / 2 + SURFACE_SCENE_GAP_MM + south.heightMm / 2);
+    const southCenterY = floorCenterY + (floorExtent.halfHeight + SURFACE_SCENE_GAP_MM + southExtent.halfHeight);
 
-    const westCenterX = floorCenterX - (floor.widthMm / 2 + SURFACE_SCENE_GAP_MM + west.widthMm / 2);
+    const westCenterX = floorCenterX - (floorExtent.halfWidth + SURFACE_SCENE_GAP_MM + westExtent.halfWidth);
     const westCenterY = floorCenterY;
 
-    const eastCenterX = floorCenterX + (floor.widthMm / 2 + SURFACE_SCENE_GAP_MM + east.widthMm / 2);
+    const eastCenterX = floorCenterX + (floorExtent.halfWidth + SURFACE_SCENE_GAP_MM + eastExtent.halfWidth);
     const eastCenterY = floorCenterY;
 
     const ceilingCenterX = northCenterX;
-    const ceilingCenterY = northCenterY - (north.heightMm / 2 + SURFACE_SCENE_GAP_MM + ceiling.heightMm / 2);
+    const ceilingCenterY = northCenterY - (northExtent.halfHeight + SURFACE_SCENE_GAP_MM + ceilingExtent.halfHeight);
 
     const surfaces: Array<{ type: RoomSurfaceType; widthMm: number; heightMm: number; rotationDeg: number; centerX: number; centerY: number }> = [
-      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, rotationDeg: 0, centerX: floorCenterX, centerY: floorCenterY },
-      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, rotationDeg: 0, centerX: northCenterX, centerY: northCenterY },
-      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, rotationDeg: 0, centerX: southCenterX, centerY: southCenterY },
-      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, rotationDeg: 90, centerX: westCenterX, centerY: westCenterY },
-      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, rotationDeg: 90, centerX: eastCenterX, centerY: eastCenterY },
-      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, rotationDeg: 0, centerX: ceilingCenterX, centerY: ceilingCenterY },
+      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, rotationDeg: floorRotationDeg, centerX: floorCenterX, centerY: floorCenterY },
+      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, rotationDeg: northRotationDeg, centerX: northCenterX, centerY: northCenterY },
+      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, rotationDeg: southRotationDeg, centerX: southCenterX, centerY: southCenterY },
+      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, rotationDeg: westRotationDeg, centerX: westCenterX, centerY: westCenterY },
+      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, rotationDeg: eastRotationDeg, centerX: eastCenterX, centerY: eastCenterY },
+      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, rotationDeg: ceilingRotationDeg, centerX: ceilingCenterX, centerY: ceilingCenterY },
     ];
 
     return surfaces.map((surface) => {
