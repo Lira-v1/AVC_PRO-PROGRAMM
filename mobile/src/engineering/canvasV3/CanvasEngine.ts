@@ -57,6 +57,9 @@ const ZOOM_EPSILON = 1e-9;
 const DEFAULT_GRID_STEP_MM = 100;
 const ROOM_FALLBACK_PREFIX = 'Комната';
 const DEFAULT_WALL_HEIGHT_MM = 2700;
+const DEFAULT_ROOM_SIZE_MM = 1000;
+const NEW_ROOM_OFFSET_MM = 1200;
+const NEW_ROOM_COLUMNS = 3;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
@@ -106,6 +109,7 @@ export class CanvasEngine {
   resize: RoomResizeSystem;
   rotate: RoomRotateSystem;
   private rooms: RoomModel[] = [];
+  private readonly projectId: string;
   private lastPointerWorldPoint: WorldPoint | null = null;
   private mode: CanvasMode = 'main';
   private surfaceSceneRoomId: string | null = null;
@@ -148,6 +152,55 @@ export class CanvasEngine {
       isReady: false,
       viewport: { width: 0, height: 0 },
     };
+    this.projectId = `project-${Date.now().toString(36)}-${Math.floor(Math.random() * 999).toString(36)}`;
+  }
+
+  getProjectId(): string {
+    return this.projectId;
+  }
+
+  private getNextRoomId(): string {
+    const maxNumericId = this.rooms.reduce((maxValue, room) => {
+      const match = room.roomId.match(/^room-(\d+)$/);
+      const parsed = match ? Number(match[1]) : Number.NaN;
+
+      if (!Number.isFinite(parsed)) {
+        return maxValue;
+      }
+
+      return Math.max(maxValue, parsed);
+    }, 0);
+
+    return `room-${maxNumericId + 1}`;
+  }
+
+  addRoom(): RoomModel {
+    const nextIndex = this.rooms.length;
+    const column = nextIndex % NEW_ROOM_COLUMNS;
+    const row = Math.floor(nextIndex / NEW_ROOM_COLUMNS);
+    const roomId = this.getNextRoomId();
+    const roomName = `${ROOM_FALLBACK_PREFIX} ${nextIndex + 1}`;
+    const nextRoom = normalizeRoomModel({
+      roomId,
+      roomName,
+      roomLabelVisible: true,
+      centerX: column * NEW_ROOM_OFFSET_MM,
+      centerY: row * NEW_ROOM_OFFSET_MM,
+      widthMm: DEFAULT_ROOM_SIZE_MM,
+      heightMm: DEFAULT_ROOM_SIZE_MM,
+      wallHeightMm: DEFAULT_WALL_HEIGHT_MM,
+      rotationDeg: 0,
+      settings: {
+        ...DEFAULT_ROOM_SETTINGS,
+        name: roomName,
+      },
+    });
+
+    this.rooms.push(nextRoom);
+    this.setRooms(this.rooms);
+    this.selectRoom(roomId);
+
+    return normalizeRoomModel(nextRoom);
   }
 
   setViewport(viewport: Viewport) {
@@ -442,6 +495,7 @@ export class CanvasEngine {
     const gridMetrics = this.grid.getGridMetrics();
 
     return {
+      projectId: this.projectId,
       cameraZoom: camera.zoom,
       displayZoom,
       zoomPercent: Math.round(camera.zoom * 100),
@@ -459,6 +513,7 @@ export class CanvasEngine {
       activeResizeHandleId: this.resize.getActiveHandleId(),
       activeRoomRotationDeg: this.getActiveRoom()?.rotationDeg ?? null,
       roomIds: this.rooms.map((room) => room.roomId),
+      roomsCount: this.rooms.length,
       gridStepMm: gridMetrics.gridStepMm,
       gridLevel: gridMetrics.gridLevel,
       cellsPerMeter: gridMetrics.cellsPerMeter,
@@ -856,6 +911,7 @@ export class CanvasEngine {
       : this.grid.getGridState(this.camera, this.canvasState.viewport);
 
     return {
+      projectId: this.projectId,
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       camera: this.camera.getState(),
@@ -863,6 +919,7 @@ export class CanvasEngine {
       canvasState: this.canvasState,
       activeRoomId: this.getActiveRoomId(),
       roomIds: this.rooms.map((room) => room.roomId),
+      roomsCount: this.rooms.length,
       mode: this.mode,
       surfaceSceneRoomId: this.surfaceSceneRoomId,
       activeSurfaceId: this.activeSurfaceId,
