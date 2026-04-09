@@ -2,7 +2,10 @@ import { RoomModel, WorldBounds, WorldPoint } from './CanvasTypes';
 import { RoomGeometry } from './RoomGeometry';
 
 const DEFAULT_GRID_STEP_MM = 100;
-const DEFAULT_SNAP_THRESHOLD_MM = 140;
+const DEFAULT_ROOM_SNAP_ENTER_THRESHOLD_MM = 80;
+const DEFAULT_ROOM_SNAP_RELEASE_THRESHOLD_MM = 110;
+const DEFAULT_GRID_SNAP_ENTER_THRESHOLD_MM = 35;
+const DEFAULT_GRID_SNAP_RELEASE_THRESHOLD_MM = 55;
 const OVERLAP_EPSILON_MM = 0.001;
 
 type SnapResult = {
@@ -35,13 +38,27 @@ export class RoomTransformSystem {
   private activeRoomId: string | null = null;
   private isDragging = false;
   private readonly gridStepMm: number;
-  private readonly snapThresholdMm: number;
+  private readonly roomSnapEnterThresholdMm: number;
+  private readonly roomSnapReleaseThresholdMm: number;
+  private readonly gridSnapEnterThresholdMm: number;
+  private readonly gridSnapReleaseThresholdMm: number;
   private snappedRoomId: string | null = null;
   private snapTargetRoomId: string | null = null;
+  private isGridSnappedX = false;
+  private isGridSnappedY = false;
 
-  constructor(gridStepMm = DEFAULT_GRID_STEP_MM, snapThresholdMm = DEFAULT_SNAP_THRESHOLD_MM) {
+  constructor(
+    gridStepMm = DEFAULT_GRID_STEP_MM,
+    roomSnapEnterThresholdMm = DEFAULT_ROOM_SNAP_ENTER_THRESHOLD_MM,
+    roomSnapReleaseThresholdMm = DEFAULT_ROOM_SNAP_RELEASE_THRESHOLD_MM,
+    gridSnapEnterThresholdMm = DEFAULT_GRID_SNAP_ENTER_THRESHOLD_MM,
+    gridSnapReleaseThresholdMm = DEFAULT_GRID_SNAP_RELEASE_THRESHOLD_MM,
+  ) {
     this.gridStepMm = gridStepMm;
-    this.snapThresholdMm = snapThresholdMm;
+    this.roomSnapEnterThresholdMm = roomSnapEnterThresholdMm;
+    this.roomSnapReleaseThresholdMm = Math.max(roomSnapEnterThresholdMm, roomSnapReleaseThresholdMm);
+    this.gridSnapEnterThresholdMm = gridSnapEnterThresholdMm;
+    this.gridSnapReleaseThresholdMm = Math.max(gridSnapEnterThresholdMm, gridSnapReleaseThresholdMm);
   }
 
   setRooms(rooms: RoomModel[]) {
@@ -50,11 +67,15 @@ export class RoomTransformSystem {
     if (this.activeRoomId && !this.rooms.some((room) => room.roomId === this.activeRoomId)) {
       this.activeRoomId = null;
       this.isDragging = false;
+      this.isGridSnappedX = false;
+      this.isGridSnappedY = false;
     }
 
     if (this.snapTargetRoomId && !this.rooms.some((room) => room.roomId === this.snapTargetRoomId)) {
       this.snapTargetRoomId = null;
       this.snappedRoomId = null;
+      this.isGridSnappedX = false;
+      this.isGridSnappedY = false;
     }
   }
 
@@ -65,6 +86,8 @@ export class RoomTransformSystem {
       this.isDragging = false;
       this.snappedRoomId = null;
       this.snapTargetRoomId = null;
+      this.isGridSnappedX = false;
+      this.isGridSnappedY = false;
     }
   }
 
@@ -75,6 +98,8 @@ export class RoomTransformSystem {
     if (!canDrag) {
       this.snappedRoomId = null;
       this.snapTargetRoomId = null;
+      this.isGridSnappedX = false;
+      this.isGridSnappedY = false;
     }
 
     return canDrag;
@@ -104,12 +129,21 @@ export class RoomTransformSystem {
     return true;
   }
 
-  private getSnapCandidate(movedRoom: RoomModel, centerX: number, centerY: number): SnapCandidate | null {
+  private getSnapCandidate(
+    movedRoom: RoomModel,
+    centerX: number,
+    centerY: number,
+    thresholdMm: number,
+    onlyTargetRoomId?: string,
+  ): SnapCandidate | null {
     const movedBounds = this.getBoundsWithCenter(movedRoom, centerX, centerY);
     let bestCandidate: SnapCandidate | null = null;
 
     for (const targetRoom of this.rooms) {
       if (targetRoom.roomId === movedRoom.roomId) {
+        continue;
+      }
+      if (onlyTargetRoomId && targetRoom.roomId !== onlyTargetRoomId) {
         continue;
       }
 
@@ -121,7 +155,7 @@ export class RoomTransformSystem {
       if (verticalOverlap) {
         const leftToRightDistance = targetBounds.maxX - movedBounds.minX;
 
-        if (Math.abs(leftToRightDistance) <= this.snapThresholdMm) {
+        if (Math.abs(leftToRightDistance) <= thresholdMm) {
           const candidateCenterX = centerX + leftToRightDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, candidateCenterX, centerY)) {
@@ -141,7 +175,7 @@ export class RoomTransformSystem {
 
         const rightToLeftDistance = targetBounds.minX - movedBounds.maxX;
 
-        if (Math.abs(rightToLeftDistance) <= this.snapThresholdMm) {
+        if (Math.abs(rightToLeftDistance) <= thresholdMm) {
           const candidateCenterX = centerX + rightToLeftDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, candidateCenterX, centerY)) {
@@ -163,7 +197,7 @@ export class RoomTransformSystem {
       if (horizontalOverlap) {
         const topToBottomDistance = targetBounds.maxY - movedBounds.minY;
 
-        if (Math.abs(topToBottomDistance) <= this.snapThresholdMm) {
+        if (Math.abs(topToBottomDistance) <= thresholdMm) {
           const candidateCenterY = centerY + topToBottomDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, centerX, candidateCenterY)) {
@@ -183,7 +217,7 @@ export class RoomTransformSystem {
 
         const bottomToTopDistance = targetBounds.minY - movedBounds.maxY;
 
-        if (Math.abs(bottomToTopDistance) <= this.snapThresholdMm) {
+        if (Math.abs(bottomToTopDistance) <= thresholdMm) {
           const candidateCenterY = centerY + bottomToTopDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, centerX, candidateCenterY)) {
@@ -206,25 +240,45 @@ export class RoomTransformSystem {
     return bestCandidate;
   }
 
-  private resolveDragPosition(room: RoomModel, centerX: number, centerY: number): SnapResult {
-    const gridAlignedCenterX = snapToStep(centerX, this.gridStepMm);
-    const gridAlignedCenterY = snapToStep(centerY, this.gridStepMm);
-    const snapCandidate = this.getSnapCandidate(room, gridAlignedCenterX, gridAlignedCenterY);
+  private resolveGridAxis(value: number, isSnapped: boolean): { value: number; isSnapped: boolean } {
+    const snappedValue = snapToStep(value, this.gridStepMm);
+    const distanceToGrid = Math.abs(value - snappedValue);
+    const threshold = isSnapped ? this.gridSnapReleaseThresholdMm : this.gridSnapEnterThresholdMm;
 
-    if (!snapCandidate) {
+    if (distanceToGrid <= threshold) {
+      return { value: snappedValue, isSnapped: true };
+    }
+
+    return { value, isSnapped: false };
+  }
+
+  private resolveDragPosition(room: RoomModel, centerX: number, centerY: number): SnapResult {
+    const snapCandidate =
+      (this.snapTargetRoomId
+        ? this.getSnapCandidate(room, centerX, centerY, this.roomSnapReleaseThresholdMm, this.snapTargetRoomId)
+        : null) ?? this.getSnapCandidate(room, centerX, centerY, this.roomSnapEnterThresholdMm);
+
+    if (snapCandidate) {
+      this.isGridSnappedX = false;
+      this.isGridSnappedY = false;
       return {
-        centerX: gridAlignedCenterX,
-        centerY: gridAlignedCenterY,
-        snappedRoomId: null,
-        snapTargetRoomId: null,
+        centerX: snapCandidate.centerX,
+        centerY: snapCandidate.centerY,
+        snappedRoomId: snapCandidate.sourceRoomId,
+        snapTargetRoomId: snapCandidate.targetRoomId,
       };
     }
 
+    const nextGridX = this.resolveGridAxis(centerX, this.isGridSnappedX);
+    const nextGridY = this.resolveGridAxis(centerY, this.isGridSnappedY);
+    this.isGridSnappedX = nextGridX.isSnapped;
+    this.isGridSnappedY = nextGridY.isSnapped;
+
     return {
-      centerX: snapCandidate.centerX,
-      centerY: snapCandidate.centerY,
-      snappedRoomId: snapCandidate.sourceRoomId,
-      snapTargetRoomId: snapCandidate.targetRoomId,
+      centerX: nextGridX.value,
+      centerY: nextGridY.value,
+      snappedRoomId: null,
+      snapTargetRoomId: null,
     };
   }
 
@@ -239,6 +293,8 @@ export class RoomTransformSystem {
       this.isDragging = false;
       this.snappedRoomId = null;
       this.snapTargetRoomId = null;
+      this.isGridSnappedX = false;
+      this.isGridSnappedY = false;
       return null;
     }
 
@@ -258,6 +314,8 @@ export class RoomTransformSystem {
     this.isDragging = false;
     this.snappedRoomId = null;
     this.snapTargetRoomId = null;
+    this.isGridSnappedX = false;
+    this.isGridSnappedY = false;
   }
 
   isDragActive(): boolean {
