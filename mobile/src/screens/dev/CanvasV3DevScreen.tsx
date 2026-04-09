@@ -100,6 +100,8 @@ const formatDebugText = (debugState: CanvasDebugState) => {
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
 
   return [
+    `projectId: ${debugState.projectId}`,
+    `roomsCount: ${debugState.roomsCount}`,
     `cameraZoom: ${debugState.cameraZoom.toFixed(3)}`,
     `displayZoom: ${displayZoomLabel}`,
     `zoomPercent: ${debugState.zoomPercent}%`,
@@ -611,6 +613,16 @@ export const CanvasV3DevScreen = () => {
 
     refreshState();
   }, [refreshState]);
+
+  const handleAddRoom = useCallback(() => {
+    if (snapshot.mode !== 'main') {
+      return;
+    }
+
+    engineRef.current.addRoom();
+    setOpenRoomStatus(null);
+    refreshState();
+  }, [refreshState, snapshot.mode]);
 
   useEffect(() => {
     if (!snapshot.activeRoomId) {
@@ -1168,6 +1180,19 @@ export const CanvasV3DevScreen = () => {
               </View>
             ) : null}
 
+            {snapshot.mode === 'main' ? (
+              <View style={styles.taskPanelLayer} pointerEvents="box-none">
+                <View style={styles.taskPanelCard} pointerEvents="auto">
+                  <Text style={styles.taskPanelTitle}>Task Panel</Text>
+                  <Text style={styles.taskPanelMeta}>projectId: {snapshot.projectId}</Text>
+                  <Text style={styles.taskPanelMeta}>rooms: {snapshot.roomsCount}</Text>
+                  <Pressable style={styles.taskPanelActionButton} onPress={handleAddRoom}>
+                    <Text style={styles.taskPanelActionText}>Добавить комнату</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
             {isInspectorVisible ? (
               <View style={styles.inspectorOverlay} pointerEvents="box-none">
                 <View style={styles.inspectorPopup}>
@@ -1189,6 +1214,8 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})</Text>
                   <Text style={styles.metaText}>screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})</Text>
                   <Text style={styles.metaText}>world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})</Text>
+                  <Text style={styles.metaText}>projectId: {snapshot.projectId}</Text>
+                  <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
                   <Text style={styles.metaText}>gridStepMm: {debugState.gridStepMm}</Text>
                   <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
@@ -1623,6 +1650,51 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 20,
     elevation: 20,
+  },
+  taskPanelLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 18,
+    elevation: 18,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    paddingTop: 12,
+    paddingRight: 12,
+  },
+  taskPanelCard: {
+    width: 190,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderWidth: 1,
+    borderColor: '#D7E2F4',
+    padding: 10,
+    gap: 6,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  taskPanelTitle: {
+    color: '#1E293B',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  taskPanelMeta: {
+    color: '#475569',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  taskPanelActionButton: {
+    marginTop: 4,
+    borderRadius: 10,
+    backgroundColor: '#2563EB',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  taskPanelActionText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   overlayControlButton: {
     position: 'absolute',

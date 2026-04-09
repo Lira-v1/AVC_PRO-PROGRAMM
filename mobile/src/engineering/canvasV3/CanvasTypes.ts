@@ -188,6 +188,7 @@ export type CanvasState = {
 };
 
 export type CanvasSnapshot = {
+  projectId: string;
   worldWidth: number;
   worldHeight: number;
   camera: CameraState;
@@ -195,6 +196,7 @@ export type CanvasSnapshot = {
   canvasState: CanvasState;
   activeRoomId: string | null;
   roomIds: string[];
+  roomsCount: number;
   mode: CanvasMode;
   surfaceSceneRoomId: string | null;
   activeSurfaceId: string | null;
@@ -210,6 +212,7 @@ export type RoomOpenEntryPoint = {
 };
 
 export type CanvasDebugState = {
+  projectId: string;
   cameraZoom: number;
   displayZoom: number;
   zoomPercent: number;
@@ -227,6 +230,7 @@ export type CanvasDebugState = {
   activeResizeHandleId: RoomResizeHandleId | null;
   activeRoomRotationDeg: number | null;
   roomIds: string[];
+  roomsCount: number;
   gridStepMm: number;
   gridLevel: string;
   cellsPerMeter: number;
