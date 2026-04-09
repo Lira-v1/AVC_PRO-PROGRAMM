@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, RoomSurfaceType, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
+import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
@@ -162,14 +162,8 @@ const getRoomLabelMetrics = (roomGeometry: { bounds: { width: number; height: nu
   };
 };
 
-const SURFACE_LABELS: Record<RoomSurfaceType, string> = {
-  north: 'стена север',
-  south: 'стена юг',
-  west: 'стена запад',
-  east: 'стена восток',
-  floor: 'пол',
-  ceiling: 'потолок',
-};
+const formatMetersLabel = (valueMm: number) => `${(valueMm / 1000).toFixed(2)} м`;
+const formatAreaLabel = (widthMm: number, lengthMm: number) => `${((widthMm * lengthMm) / 1_000_000).toFixed(2)} м²`;
 
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
@@ -451,6 +445,17 @@ export const CanvasV3DevScreen = () => {
   const roomSettingsPopupLeftAnchor = activeRoomGeometry ? activeRoomGeometry.bounds.right - 180 : ROOM_SETTINGS_POPUP_MARGIN;
   const roomSettingsPopupLeftLimit = Math.max(ROOM_SETTINGS_POPUP_MARGIN, debugState.viewport.width - ROOM_SETTINGS_POPUP_WIDTH - ROOM_SETTINGS_POPUP_MARGIN);
   const roomSettingsPopupLeft = Math.min(Math.max(roomSettingsPopupLeftAnchor, ROOM_SETTINGS_POPUP_MARGIN), roomSettingsPopupLeftLimit);
+  const surfaceSceneRoom = snapshot.surfaceSceneRoomId ? roomData.find((room) => room.roomId === snapshot.surfaceSceneRoomId) ?? null : null;
+  const miniMapWidth = 128;
+  const miniMapHeight = 92;
+  const miniMapPadding = 12;
+  const miniMapInnerWidth = miniMapWidth - miniMapPadding * 2;
+  const miniMapInnerHeight = miniMapHeight - miniMapPadding * 2;
+  const miniMapRoomWidth = surfaceSceneRoom?.widthMm ?? 1;
+  const miniMapRoomLength = surfaceSceneRoom?.heightMm ?? 1;
+  const miniMapScale = Math.min(miniMapInnerWidth / Math.max(1, miniMapRoomWidth), miniMapInnerHeight / Math.max(1, miniMapRoomLength));
+  const miniMapRectWidth = Math.max(18, miniMapRoomWidth * miniMapScale);
+  const miniMapRectHeight = Math.max(18, miniMapRoomLength * miniMapScale);
 
   const handleCopyInspector = useCallback(async () => {
     try {
@@ -801,17 +806,54 @@ export const CanvasV3DevScreen = () => {
                         transform: [{ rotate: `${surface.rotationDeg}deg` }],
                       },
                     ]}
-                  >
-                    <Text style={styles.surfaceTitle}>{SURFACE_LABELS[surface.type]}</Text>
-                  </View>
+                  />
                 ))
               : null}
 
             {isSurfaceSceneMode ? (
-              <View style={styles.surfaceBackButtonWrap} pointerEvents="box-none">
-                <Pressable style={styles.surfaceBackButton} onPress={handleBackFromSurfaceScene}>
-                  <Text style={styles.surfaceBackButtonText}>Назад</Text>
-                </Pressable>
+              <View style={styles.surfaceSceneOverlayLayer} pointerEvents="box-none">
+                <View style={styles.surfaceBackButtonWrap} pointerEvents="box-none">
+                  <Pressable style={styles.surfaceBackButton} onPress={handleBackFromSurfaceScene}>
+                    <Text style={styles.surfaceBackButtonText}>Назад</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.surfaceMiniMapWrap} pointerEvents="none">
+                  <Text style={styles.surfaceOverlayTitle}>Вид сверху</Text>
+                  <View style={styles.surfaceMiniMapCard}>
+                    <View style={[styles.surfaceMiniMapRoomShape, { width: miniMapRectWidth, height: miniMapRectHeight }]} />
+                  </View>
+                </View>
+
+                <View style={styles.surfaceInfoWrap} pointerEvents="none">
+                  <Text style={styles.surfaceOverlayTitle}>Комната</Text>
+                  <View style={styles.surfaceInfoCard}>
+                    <View style={styles.surfaceInfoRow}>
+                      <Text style={styles.surfaceInfoLabel}>Комната</Text>
+                      <Text style={styles.surfaceInfoValue} numberOfLines={1}>
+                        {surfaceSceneRoom ? roomNameById[surfaceSceneRoom.roomId] : '-'}
+                      </Text>
+                    </View>
+                    <View style={styles.surfaceInfoRow}>
+                      <Text style={styles.surfaceInfoLabel}>Ширина</Text>
+                      <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.widthMm) : '-'}</Text>
+                    </View>
+                    <View style={styles.surfaceInfoRow}>
+                      <Text style={styles.surfaceInfoLabel}>Длина</Text>
+                      <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.heightMm) : '-'}</Text>
+                    </View>
+                    <View style={styles.surfaceInfoRow}>
+                      <Text style={styles.surfaceInfoLabel}>Высота</Text>
+                      <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.wallHeightMm ?? 2700) : '-'}</Text>
+                    </View>
+                    <View style={styles.surfaceInfoRow}>
+                      <Text style={styles.surfaceInfoLabel}>Площадь</Text>
+                      <Text style={styles.surfaceInfoValue}>
+                        {surfaceSceneRoom ? formatAreaLabel(surfaceSceneRoom.widthMm, surfaceSceneRoom.heightMm) : '-'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
               </View>
             ) : null}
 
@@ -1236,14 +1278,9 @@ const styles = StyleSheet.create({
     borderColor: '#2563EB',
     borderRadius: 8,
     backgroundColor: 'rgba(37, 99, 235, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 6,
   },
-  surfaceTitle: {
-    color: '#1E3A8A',
-    fontSize: 12,
-    fontWeight: '700',
+  surfaceSceneOverlayLayer: {
+    ...StyleSheet.absoluteFillObject,
   },
   surfaceBackButtonWrap: {
     position: 'absolute',
@@ -1261,6 +1298,69 @@ const styles = StyleSheet.create({
   surfaceBackButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  surfaceMiniMapWrap: {
+    position: 'absolute',
+    left: 12,
+    top: 62,
+    width: 156,
+    gap: 6,
+  },
+  surfaceInfoWrap: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    width: 228,
+    gap: 6,
+  },
+  surfaceOverlayTitle: {
+    color: '#1E293B',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  surfaceMiniMapCard: {
+    minHeight: 108,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  surfaceMiniMapRoomShape: {
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#2563EB',
+    backgroundColor: 'rgba(37, 99, 235, 0.12)',
+  },
+  surfaceInfoCard: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  surfaceInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  surfaceInfoLabel: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  surfaceInfoValue: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'right',
   },
   gridLine: {
     position: 'absolute',
