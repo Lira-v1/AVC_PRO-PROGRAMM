@@ -198,9 +198,6 @@ export type CanvasSnapshot = {
   mode: CanvasMode;
   surfaceSceneRoomId: string | null;
   activeSurfaceId: string | null;
-  isSurfaceFocusMode: boolean;
-  savedCameraState: CameraState | null;
-  restoredCameraState: CameraState | null;
 };
 
 export type RoomOpenEntryPoint = {
