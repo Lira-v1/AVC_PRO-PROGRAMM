@@ -36,7 +36,10 @@ import { RoomTransformSystem } from './RoomTransformSystem';
 import { RoomResizeSystem } from './RoomResizeSystem';
 import { RoomRotateSystem } from './RoomRotateSystem';
 
-const cloneRoom = (room: RoomModel): RoomModel => ({ ...room });
+const cloneRoom = (room: RoomModel): RoomModel => ({
+  ...room,
+  verticesMm: room.verticesMm?.map((vertex) => ({ ...vertex })),
+});
 const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   name: 'Комната',
   dimensionUnit: 'm',
@@ -64,13 +67,13 @@ const DEFAULT_WALL_HEIGHT_MM = 2700;
 const DEFAULT_ROOM_SIZE_MM = 1000;
 const NEW_ROOM_OFFSET_MM = 1200;
 const NEW_ROOM_COLUMNS = 3;
-const MIN_CONTOUR_POINTS_TO_CLOSE = 3;
+const MIN_CONTOUR_POINTS_TO_CLOSE = 4;
 const CONTOUR_CLOSE_THRESHOLD_MM = 160;
 const ORTHOGONAL_SEGMENT_ANGLES_DEG = [0, 45, 90, 135] as const;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
-const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east'];
+const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east', 'wall'];
 const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor', 'ceiling'];
 const SHARED_SURFACE_TOLERANCE_MM = 0.5;
 
@@ -109,6 +112,7 @@ type WallSurfaceSegment = {
   surfaceId: string;
   roomId: string;
   type: RoomSurfaceType;
+  directionDeg: number;
   from: WorldPoint;
   to: WorldPoint;
   length: number;
@@ -413,6 +417,10 @@ export class CanvasEngine {
       x: (bounds.minX + bounds.maxX) / 2,
       y: (bounds.minY + bounds.maxY) / 2,
     });
+    const verticesMm = points.map((point) => ({
+      x: point.x - center.x,
+      y: point.y - center.y,
+    }));
     const roomName = `${ROOM_FALLBACK_PREFIX} ${this.rooms.length + 1}`;
     const room = normalizeRoomModel({
       roomId: this.getNextRoomId(),
@@ -420,6 +428,7 @@ export class CanvasEngine {
       roomLabelVisible: true,
       centerX: center.x,
       centerY: center.y,
+      verticesMm,
       widthMm,
       heightMm,
       wallHeightMm: DEFAULT_WALL_HEIGHT_MM,
@@ -497,11 +506,19 @@ export class CanvasEngine {
     return activeRoom ? normalizeRoomModel(activeRoom) : null;
   }
 
+  isPolygonRoom(room: RoomModel): boolean {
+    return RoomGeometry.hasPolygonGeometry(room);
+  }
+
   updateRoomDimensions(roomId: string, widthMm: number, heightMm: number): RoomModel | null {
     const room = this.rooms.find((candidate) => candidate.roomId === roomId);
 
     if (!room) {
       return null;
+    }
+
+    if (this.isPolygonRoom(room)) {
+      return normalizeRoomModel(room);
     }
 
     room.widthMm = Math.max(400, widthMm);
@@ -579,11 +596,13 @@ export class CanvasEngine {
       return null;
     }
 
+    const geometry = this.getRoomGeometry(room);
+
     return {
       roomId: room.roomId,
       roomName: this.resolveRoomName(room),
-      widthMm: room.widthMm,
-      heightMm: room.heightMm,
+      widthMm: geometry.bounds.width,
+      heightMm: geometry.bounds.height,
       rotationDeg: room.rotationDeg,
     };
   }
@@ -741,15 +760,14 @@ export class CanvasEngine {
   }
 
   private getWallSegments(): WallSurfaceSegment[] {
-    const wallTypeByEdgeIndex: RoomSurfaceType[] = ['north', 'east', 'south', 'west'];
-
     return this.rooms.flatMap((room) => {
       const geometry = this.getRoomGeometry(room);
 
       return geometry.edges.map((edge, edgeIndex) => ({
-        surfaceId: `${room.roomId}-${wallTypeByEdgeIndex[edgeIndex]}`,
+        surfaceId: `${room.roomId}-wall-${edgeIndex + 1}`,
         roomId: room.roomId,
-        type: wallTypeByEdgeIndex[edgeIndex],
+        type: edgeIndex < 4 ? (['north', 'east', 'south', 'west'][edgeIndex] as RoomSurfaceType) : 'wall',
+        directionDeg: (Math.atan2(edge.to.y - edge.from.y, edge.to.x - edge.from.x) * 180) / Math.PI,
         from: edge.from,
         to: edge.to,
         length: distance(edge.from, edge.to),
@@ -891,6 +909,10 @@ export class CanvasEngine {
     const displayZoom = getDisplayZoom(camera.zoom, camera.minZoom, BASE_ZOOM, camera.maxZoom);
 
     const gridMetrics = this.grid.getGridMetrics();
+    const activeRoom = this.getActiveRoom();
+    const activeRoomGeometry = activeRoom ? this.getRoomGeometry(activeRoom) : null;
+    const roomVerticesCount = activeRoomGeometry?.corners.length ?? null;
+    const roomEdgesCount = activeRoomGeometry?.edges.length ?? null;
 
     return {
       projectId: this.projectId,
@@ -923,6 +945,9 @@ export class CanvasEngine {
       isContourClosed: this.isContourClosed,
       isContourConvertedToRoom: this.isContourConvertedToRoom,
       lastCreatedShapeId: this.lastCreatedShapeId,
+      roomVerticesCount,
+      roomIsPolygon: Boolean(activeRoom && this.isPolygonRoom(activeRoom)),
+      roomEdgesCount,
       activeSurfaceSharedDebug: this.getSurfaceSharedDebugState(),
       gridStepMm: gridMetrics.gridStepMm,
       gridLevel: gridMetrics.gridLevel,
@@ -957,12 +982,11 @@ export class CanvasEngine {
 
     const geometry = this.getRoomGeometry(room);
     const linksBySurfaceId = this.getSharedSurfaceLinksById();
-    const wallTypeByEdgeIndex: RoomSurfaceType[] = ['north', 'east', 'south', 'west'];
     const wallHeight = this.getWallHeightMm(room);
 
     return geometry.edges.map((edge, edgeIndex) => {
-      const surfaceType = wallTypeByEdgeIndex[edgeIndex];
-      const surfaceId = `${room.roomId}-${surfaceType}`;
+      const surfaceType = edgeIndex < 4 ? (['north', 'east', 'south', 'west'][edgeIndex] as RoomSurfaceType) : 'wall';
+      const surfaceId = `${room.roomId}-wall-${edgeIndex + 1}`;
       const sharedSurfaceLink = linksBySurfaceId.get(surfaceId) ?? null;
       const center = {
         x: (edge.from.x + edge.to.x) / 2,
@@ -977,6 +1001,7 @@ export class CanvasEngine {
         surfaceId,
         roomId: room.roomId,
         type: surfaceType,
+        directionDeg: angleDeg,
         widthMm,
         heightMm: wallHeight,
         rotationDeg: angleDeg,
@@ -1170,57 +1195,36 @@ export class CanvasEngine {
       return [];
     }
 
-    const roomWidthMm = room.widthMm;
-    const roomLengthMm = room.heightMm;
     const roomHeightMm = this.getWallHeightMm(room);
-
-    const floor = { widthMm: roomWidthMm, heightMm: roomLengthMm };
-    const ceiling = { widthMm: roomWidthMm, heightMm: roomLengthMm };
-    const north = { widthMm: roomWidthMm, heightMm: roomHeightMm };
-    const south = { widthMm: roomWidthMm, heightMm: roomHeightMm };
-    const west = { widthMm: roomLengthMm, heightMm: roomHeightMm };
-    const east = { widthMm: roomLengthMm, heightMm: roomHeightMm };
-    const floorRotationDeg = 0;
-    const northRotationDeg = 0;
-    const southRotationDeg = 0;
-    const westRotationDeg = 90;
-    const eastRotationDeg = 90;
-    const ceilingRotationDeg = 0;
-
-    const floorExtent = getRotatedHalfExtent(floor.widthMm, floor.heightMm, floorRotationDeg);
-    const northExtent = getRotatedHalfExtent(north.widthMm, north.heightMm, northRotationDeg);
-    const southExtent = getRotatedHalfExtent(south.widthMm, south.heightMm, southRotationDeg);
-    const westExtent = getRotatedHalfExtent(west.widthMm, west.heightMm, westRotationDeg);
-    const eastExtent = getRotatedHalfExtent(east.widthMm, east.heightMm, eastRotationDeg);
-    const ceilingExtent = getRotatedHalfExtent(ceiling.widthMm, ceiling.heightMm, ceilingRotationDeg);
-
+    const roomGeometry = this.getRoomGeometry(room);
+    const floor = { widthMm: roomGeometry.bounds.width, heightMm: roomGeometry.bounds.height };
+    const ceiling = { ...floor };
+    const floorExtent = getRotatedHalfExtent(floor.widthMm, floor.heightMm, 0);
     const floorCenterX = 0;
     const floorCenterY = 0;
+    const wallBaseSurfaces = this.getRoomWallSurfaceWorldGeometry(room.roomId);
+    const wallSurfaces = wallBaseSurfaces.map((wallSurface, index) => {
+      const wallExtent = getRotatedHalfExtent(wallSurface.widthMm, roomHeightMm, 0);
 
-    const northCenterX = floorCenterX;
-    const northCenterY = floorCenterY - (floorExtent.halfHeight + SURFACE_SCENE_GAP_MM + northExtent.halfHeight);
-
-    const southCenterX = floorCenterX;
-    const southCenterY = floorCenterY + (floorExtent.halfHeight + SURFACE_SCENE_GAP_MM + southExtent.halfHeight);
-
-    const westCenterX = floorCenterX - (floorExtent.halfWidth + SURFACE_SCENE_GAP_MM + westExtent.halfWidth);
-    const westCenterY = floorCenterY;
-
-    const eastCenterX = floorCenterX + (floorExtent.halfWidth + SURFACE_SCENE_GAP_MM + eastExtent.halfWidth);
-    const eastCenterY = floorCenterY;
-
-    const ceilingCenterX = northCenterX;
-    const ceilingCenterY = northCenterY - (northExtent.halfHeight + SURFACE_SCENE_GAP_MM + ceilingExtent.halfHeight);
-
-    const surfaces: Array<{ type: RoomSurfaceType; widthMm: number; heightMm: number; rotationDeg: number; centerX: number; centerY: number }> = [
-      { type: 'floor', widthMm: floor.widthMm, heightMm: floor.heightMm, rotationDeg: floorRotationDeg, centerX: floorCenterX, centerY: floorCenterY },
-      { type: 'north', widthMm: north.widthMm, heightMm: north.heightMm, rotationDeg: northRotationDeg, centerX: northCenterX, centerY: northCenterY },
-      { type: 'south', widthMm: south.widthMm, heightMm: south.heightMm, rotationDeg: southRotationDeg, centerX: southCenterX, centerY: southCenterY },
-      { type: 'west', widthMm: west.widthMm, heightMm: west.heightMm, rotationDeg: westRotationDeg, centerX: westCenterX, centerY: westCenterY },
-      { type: 'east', widthMm: east.widthMm, heightMm: east.heightMm, rotationDeg: eastRotationDeg, centerX: eastCenterX, centerY: eastCenterY },
-      { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, rotationDeg: ceilingRotationDeg, centerX: ceilingCenterX, centerY: ceilingCenterY },
+      return {
+        type: wallSurface.type,
+        surfaceId: wallSurface.surfaceId,
+        directionDeg: wallSurface.directionDeg,
+        widthMm: wallSurface.widthMm,
+        heightMm: roomHeightMm,
+        rotationDeg: 0,
+        centerX: floorCenterX,
+        centerY: floorCenterY - (floorExtent.halfHeight + SURFACE_SCENE_GAP_MM + wallExtent.halfHeight) - index * (roomHeightMm + SURFACE_SCENE_GAP_MM),
+      };
+    });
+    const ceilingExtent = getRotatedHalfExtent(ceiling.widthMm, ceiling.heightMm, 0);
+    const topWallCenterY = wallSurfaces.length > 0 ? wallSurfaces[wallSurfaces.length - 1].centerY : floorCenterY - (floorExtent.halfHeight + SURFACE_SCENE_GAP_MM);
+    const ceilingCenterY = topWallCenterY - (roomHeightMm / 2 + SURFACE_SCENE_GAP_MM + ceilingExtent.halfHeight);
+    const surfaces: Array<{ type: RoomSurfaceType; surfaceId: string; directionDeg: number; widthMm: number; heightMm: number; rotationDeg: number; centerX: number; centerY: number }> = [
+      { type: 'floor', surfaceId: `${room.roomId}-floor`, directionDeg: 0, widthMm: floor.widthMm, heightMm: floor.heightMm, rotationDeg: 0, centerX: floorCenterX, centerY: floorCenterY },
+      ...wallSurfaces,
+      { type: 'ceiling', surfaceId: `${room.roomId}-ceiling`, directionDeg: 0, widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, rotationDeg: 0, centerX: floorCenterX, centerY: ceilingCenterY },
     ];
-
     const linksBySurfaceId = this.getSharedSurfaceLinksById();
 
     return surfaces.map((surface) => {
@@ -1232,14 +1236,14 @@ export class CanvasEngine {
         minY: surface.centerY - halfHeight,
         maxY: surface.centerY + halfHeight,
       };
-      const surfaceId = `${room.roomId}-${surface.type}`;
-      const sharedSurfaceLink = linksBySurfaceId.get(surfaceId) ?? null;
+      const sharedSurfaceLink = linksBySurfaceId.get(surface.surfaceId) ?? null;
       const isWallSurface = WALL_SURFACE_TYPES.includes(surface.type);
 
       return {
-        surfaceId,
+        surfaceId: surface.surfaceId,
         roomId: room.roomId,
         type: surface.type,
+        directionDeg: surface.directionDeg,
         widthMm: surface.widthMm,
         heightMm: surface.heightMm,
         rotationDeg: surface.rotationDeg,
@@ -1347,6 +1351,9 @@ export class CanvasEngine {
     const activeRoom = this.getActiveRoom();
 
     if (!activeRoom) {
+      return [];
+    }
+    if (this.isPolygonRoom(activeRoom)) {
       return [];
     }
 

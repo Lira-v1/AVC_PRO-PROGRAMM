@@ -67,6 +67,11 @@ export type RoomModel = {
   roomLabelVisible?: boolean;
   centerX: number;
   centerY: number;
+  /**
+   * Polygon vertices stored in local room coordinates (relative to room center).
+   * If omitted, room geometry falls back to rectangular width/height model.
+   */
+  verticesMm?: WorldPoint[];
   widthMm: number;
   heightMm: number;
   wallHeightMm?: number;
@@ -75,7 +80,7 @@ export type RoomModel = {
 };
 
 export type CanvasMode = 'main' | 'room-surface-scene' | 'surface-scene';
-export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'floor' | 'ceiling';
+export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'wall' | 'floor' | 'ceiling';
 export type SharedSurfaceMode = 'full' | 'partial';
 export type SurfaceWallType = 'internal' | 'external';
 
@@ -92,6 +97,7 @@ export type RoomSurfaceWorldGeometry = {
   surfaceId: string;
   roomId: string;
   type: RoomSurfaceType;
+  directionDeg: number;
   widthMm: number;
   heightMm: number;
   rotationDeg: number;
@@ -123,8 +129,8 @@ export type RoomSurfaceScreenGeometry = {
 export type RoomWorldGeometry = {
   roomId: string;
   center: WorldPoint;
-  corners: [WorldPoint, WorldPoint, WorldPoint, WorldPoint];
-  edges: [WorldEdge, WorldEdge, WorldEdge, WorldEdge];
+  corners: WorldPoint[];
+  edges: WorldEdge[];
   bounds: WorldBounds;
 };
 
@@ -133,8 +139,8 @@ export type RoomScreenGeometry = {
   isActive: boolean;
   rotationDeg: number;
   center: ScreenPoint;
-  corners: [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
-  edges: [ScreenEdge, ScreenEdge, ScreenEdge, ScreenEdge];
+  corners: ScreenPoint[];
+  edges: ScreenEdge[];
   bounds: {
     left: number;
     top: number;
@@ -281,6 +287,9 @@ export type CanvasDebugState = {
   isContourClosed: boolean;
   isContourConvertedToRoom: boolean;
   lastCreatedShapeId: string | null;
+  roomVerticesCount: number | null;
+  roomIsPolygon: boolean;
+  roomEdgesCount: number | null;
   activeSurfaceSharedDebug: {
     isSharedSurface: boolean;
     linkedSurfaceId: string | null;
