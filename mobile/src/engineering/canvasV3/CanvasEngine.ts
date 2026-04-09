@@ -145,7 +145,7 @@ export class CanvasEngine {
     this.camera = new CameraSystem({ zoom: BASE_ZOOM, panX: 0, panY: 0, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
     this.grid = new GridSystem(DEFAULT_GRID_STEP_MM);
     this.selection = new RoomSelectionSystem();
-    this.transform = new RoomTransformSystem();
+    this.transform = new RoomTransformSystem(DEFAULT_GRID_STEP_MM);
     this.resize = new RoomResizeSystem();
     this.rotate = new RoomRotateSystem();
     this.canvasState = {
@@ -174,13 +174,23 @@ export class CanvasEngine {
     return `room-${maxNumericId + 1}`;
   }
 
+  private alignRoomPositionToGrid(room: RoomModel): RoomModel {
+    const snappedCenter = this.grid.snap({ x: room.centerX, y: room.centerY });
+
+    return {
+      ...room,
+      centerX: snappedCenter.x,
+      centerY: snappedCenter.y,
+    };
+  }
+
   addRoom(): RoomModel {
     const nextIndex = this.rooms.length;
     const column = nextIndex % NEW_ROOM_COLUMNS;
     const row = Math.floor(nextIndex / NEW_ROOM_COLUMNS);
     const roomId = this.getNextRoomId();
     const roomName = `${ROOM_FALLBACK_PREFIX} ${nextIndex + 1}`;
-    const nextRoom = normalizeRoomModel({
+    const nextRoom = this.alignRoomPositionToGrid(normalizeRoomModel({
       roomId,
       roomName,
       roomLabelVisible: true,
@@ -194,7 +204,7 @@ export class CanvasEngine {
         ...DEFAULT_ROOM_SETTINGS,
         name: roomName,
       },
-    });
+    }));
 
     this.rooms.push(nextRoom);
     this.setRooms(this.rooms);
@@ -217,7 +227,7 @@ export class CanvasEngine {
 
   setRooms(rooms: RoomModel[]) {
     this.rooms = rooms.map((room) => {
-      const normalizedRoom = normalizeRoomModel(room);
+      const normalizedRoom = this.alignRoomPositionToGrid(normalizeRoomModel(room));
       const legacySettingsName = normalizedRoom.settings?.name?.trim();
 
       if (!normalizedRoom.roomName && legacySettingsName) {
@@ -508,12 +518,15 @@ export class CanvasEngine {
       screenCenter,
       worldAtScreenCenter: this.screenToWorld(screenCenter),
       activeRoomId: this.getActiveRoomId(),
+      snappedRoomId: this.transform.getSnappedRoomId(),
+      snapTargetRoomId: this.transform.getSnapTargetRoomId(),
       isDraggingRoom: this.transform.isDragActive(),
       isResizingRoom: this.resize.isResizeActive(),
       activeResizeHandleId: this.resize.getActiveHandleId(),
       activeRoomRotationDeg: this.getActiveRoom()?.rotationDeg ?? null,
       roomIds: this.rooms.map((room) => room.roomId),
       roomsCount: this.rooms.length,
+      roomPositions: this.rooms.map((room) => ({ roomId: room.roomId, centerX: room.centerX, centerY: room.centerY })),
       gridStepMm: gridMetrics.gridStepMm,
       gridLevel: gridMetrics.gridLevel,
       cellsPerMeter: gridMetrics.cellsPerMeter,

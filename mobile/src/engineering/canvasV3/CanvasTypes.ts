@@ -225,12 +225,15 @@ export type CanvasDebugState = {
   screenCenter: ScreenPoint;
   worldAtScreenCenter: WorldPoint;
   activeRoomId: string | null;
+  snappedRoomId: string | null;
+  snapTargetRoomId: string | null;
   isDraggingRoom: boolean;
   isResizingRoom: boolean;
   activeResizeHandleId: RoomResizeHandleId | null;
   activeRoomRotationDeg: number | null;
   roomIds: string[];
   roomsCount: number;
+  roomPositions: Array<{ roomId: string; centerX: number; centerY: number }>;
   gridStepMm: number;
   gridLevel: string;
   cellsPerMeter: number;
