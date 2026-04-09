@@ -101,7 +101,7 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `roomPositions: ${roomPositions}`,
     `isDrawingMode: ${debugState.isDrawingMode ? 'true' : 'false'}`,
     `currentToolMode: ${debugState.currentToolMode}`,
-    `wallDrawingMode: ${debugState.wallDrawingMode ? 'true' : 'false'}`,
+    `isWallDrawingMode: ${debugState.isWallDrawingMode ? 'true' : 'false'}`,
     `isOrthogonalDrawingMode: ${debugState.isOrthogonalDrawingMode ? 'true' : 'false'}`,
     `currentSegmentAngle: ${debugState.currentSegmentAngle ?? 'null'}`,
     `currentContourPointsCount: ${debugState.currentContourPointsCount}`,
@@ -493,6 +493,7 @@ export const CanvasV3DevScreen = () => {
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
   const contourShapes = engineRef.current.getContourShapesScreen();
   const currentContourPoints = engineRef.current.getCurrentContourPointsScreen();
+  const wallSegments = engineRef.current.getWallGraphSegments();
   const isContourSnapToStart = engineRef.current.isContourSnapToStartActive();
   const surfaceWorldGeometries = engineRef.current.getRoomSurfaceSceneWorldGeometry();
   const surfaceGeometries = engineRef.current.getRoomSurfaceSceneScreenGeometry();
@@ -848,6 +849,31 @@ export const CanvasV3DevScreen = () => {
                 ]}
               />
             ))}
+
+            {wallSegments.map((segment) => {
+              const startPoint = engineRef.current.worldToScreen(segment.startPoint);
+              const endPoint = engineRef.current.worldToScreen(segment.endPoint);
+              const edgeLength = Math.hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y);
+              const centerX = (startPoint.x + endPoint.x) / 2;
+              const centerY = (startPoint.y + endPoint.y) / 2;
+              const angleDeg = (Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * 180) / Math.PI;
+
+              return (
+                <View
+                  key={`wall-segment-${segment.wallId}`}
+                  pointerEvents="none"
+                  style={[
+                    styles.wallSegmentLine,
+                    {
+                      width: Math.max(edgeLength, 1),
+                      left: centerX - edgeLength / 2,
+                      top: centerY - 1.5,
+                      transform: [{ rotate: `${angleDeg}deg` }],
+                    },
+                  ]}
+                />
+              );
+            })}
 
             {visibleRoomGeometries.map((roomGeometry) => (
               <React.Fragment key={roomGeometry.roomId}>
@@ -1402,7 +1428,7 @@ export const CanvasV3DevScreen = () => {
                         <Text style={styles.toolsMenuItemText}>🧱 Добавить комнату</Text>
                       </Pressable>
                       <Pressable style={styles.toolsMenuItem} onPress={handleToggleDrawingMode}>
-                        <Text style={styles.toolsMenuItemText}>{snapshot.wallDrawingMode ? '🧱 Стена: выкл' : '🧱 Стена: вкл'}</Text>
+                        <Text style={styles.toolsMenuItemText}>{snapshot.wallDrawingMode ? '🧱 Построить стену: выкл' : '🧱 Построить стену: вкл'}</Text>
                       </Pressable>
                       <Pressable
                         style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}
@@ -1441,7 +1467,7 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
                   <Text style={styles.metaText}>isDrawingMode: {debugState.isDrawingMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>currentToolMode: {debugState.currentToolMode}</Text>
-                  <Text style={styles.metaText}>wallDrawingMode: {debugState.wallDrawingMode ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>isWallDrawingMode: {debugState.isWallDrawingMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isOrthogonalDrawingMode: {debugState.isOrthogonalDrawingMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>currentSegmentAngle: {debugState.currentSegmentAngle ?? 'null'}</Text>
                   <Text style={styles.metaText}>currentContourPointsCount: {debugState.currentContourPointsCount}</Text>
@@ -1870,6 +1896,12 @@ const styles = StyleSheet.create({
     height: 2,
     borderRadius: 999,
     backgroundColor: 'rgba(14, 116, 144, 0.95)',
+  },
+  wallSegmentLine: {
+    position: 'absolute',
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(185, 28, 28, 0.9)',
   },
   contourPoint: {
     position: 'absolute',

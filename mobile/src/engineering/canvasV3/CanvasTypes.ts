@@ -313,6 +313,7 @@ export type CanvasDebugState = {
   isDrawingMode: boolean;
   currentToolMode: CanvasToolMode;
   wallDrawingMode: boolean;
+  isWallDrawingMode: boolean;
   isOrthogonalDrawingMode: boolean;
   currentSegmentAngle: number | null;
   currentContourPointsCount: number;
