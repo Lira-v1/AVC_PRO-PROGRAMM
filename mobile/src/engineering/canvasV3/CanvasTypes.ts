@@ -275,8 +275,11 @@ export type CanvasDebugState = {
   roomsCount: number;
   roomPositions: Array<{ roomId: string; centerX: number; centerY: number }>;
   isDrawingMode: boolean;
+  isOrthogonalDrawingMode: boolean;
+  currentSegmentAngle: number | null;
   currentContourPointsCount: number;
   isContourClosed: boolean;
+  isContourConvertedToRoom: boolean;
   lastCreatedShapeId: string | null;
   activeSurfaceSharedDebug: {
     isSharedSurface: boolean;
