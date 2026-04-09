@@ -16,11 +16,13 @@ import {
   RoomResizeHandleScreenGeometry,
   RoomOpenEntryPoint,
   RoomSurfaceScreenGeometry,
+  SharedSurfaceLink,
   RoomSurfaceType,
   RoomSurfaceWorldGeometry,
   RoomScreenGeometry,
   RoomWorldGeometry,
   ScreenPoint,
+  SharedSurfaceMode,
   Viewport,
   WorldPoint,
 } from './CanvasTypes';
@@ -65,6 +67,7 @@ const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
 const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east'];
 const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor', 'ceiling'];
+const SHARED_SURFACE_TOLERANCE_MM = 0.5;
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -97,6 +100,30 @@ const withDefaultRoomLabelVisibility = (room: RoomModel): RoomModel => ({
 });
 
 const normalizeRoomModel = (room: RoomModel): RoomModel => withDefaultRoomLabelVisibility(withDefaultWallHeight(withDefaultSettings(cloneRoom(room))));
+type WallSurfaceSegment = {
+  surfaceId: string;
+  roomId: string;
+  type: RoomSurfaceType;
+  from: WorldPoint;
+  to: WorldPoint;
+  length: number;
+};
+
+const distance = (from: WorldPoint, to: WorldPoint) => Math.hypot(to.x - from.x, to.y - from.y);
+const subtract = (a: WorldPoint, b: WorldPoint): WorldPoint => ({ x: a.x - b.x, y: a.y - b.y });
+const dot = (a: WorldPoint, b: WorldPoint): number => a.x * b.x + a.y * b.y;
+const cross = (a: WorldPoint, b: WorldPoint): number => a.x * b.y - a.y * b.x;
+const addScaled = (point: WorldPoint, direction: WorldPoint, scalar: number): WorldPoint => ({
+  x: point.x + direction.x * scalar,
+  y: point.y + direction.y * scalar,
+});
+
+type SharedSegmentDetection = {
+  start: WorldPoint;
+  end: WorldPoint;
+  length: number;
+  mode: SharedSurfaceMode;
+};
 
 export class CanvasEngine {
   worldWidth: number;
@@ -497,6 +524,151 @@ export class CanvasEngine {
     };
   }
 
+  private getWallSegments(): WallSurfaceSegment[] {
+    const wallTypeByEdgeIndex: RoomSurfaceType[] = ['north', 'east', 'south', 'west'];
+
+    return this.rooms.flatMap((room) => {
+      const geometry = this.getRoomGeometry(room);
+
+      return geometry.edges.map((edge, edgeIndex) => ({
+        surfaceId: `${room.roomId}-${wallTypeByEdgeIndex[edgeIndex]}`,
+        roomId: room.roomId,
+        type: wallTypeByEdgeIndex[edgeIndex],
+        from: edge.from,
+        to: edge.to,
+        length: distance(edge.from, edge.to),
+      }));
+    });
+  }
+
+  private detectSharedSegment(left: WallSurfaceSegment, right: WallSurfaceSegment, toleranceMm = SHARED_SURFACE_TOLERANCE_MM): SharedSegmentDetection | null {
+    if (left.roomId === right.roomId || left.length <= toleranceMm || right.length <= toleranceMm) {
+      return null;
+    }
+
+    const leftDirectionRaw = subtract(left.to, left.from);
+    const lineLength = left.length;
+    const leftDirection = { x: leftDirectionRaw.x / lineLength, y: leftDirectionRaw.y / lineLength };
+
+    const rightFromOffset = subtract(right.from, left.from);
+    const rightToOffset = subtract(right.to, left.from);
+    const rightFromCross = Math.abs(cross(leftDirectionRaw, rightFromOffset));
+    const rightToCross = Math.abs(cross(leftDirectionRaw, rightToOffset));
+    const lineDistanceTolerance = toleranceMm * lineLength;
+
+    if (rightFromCross > lineDistanceTolerance || rightToCross > lineDistanceTolerance) {
+      return null;
+    }
+
+    const leftStart = 0;
+    const leftEnd = lineLength;
+    const rightFromProjection = dot(rightFromOffset, leftDirection);
+    const rightToProjection = dot(rightToOffset, leftDirection);
+    const rightStart = Math.min(rightFromProjection, rightToProjection);
+    const rightEnd = Math.max(rightFromProjection, rightToProjection);
+    const overlapStart = Math.max(leftStart, rightStart);
+    const overlapEnd = Math.min(leftEnd, rightEnd);
+    const overlapLength = overlapEnd - overlapStart;
+
+    if (overlapLength <= toleranceMm) {
+      return null;
+    }
+
+    const sharedMode: SharedSurfaceMode =
+      Math.abs(overlapLength - left.length) <= toleranceMm && Math.abs(overlapLength - right.length) <= toleranceMm ? 'full' : 'partial';
+
+    return {
+      start: addScaled(left.from, leftDirection, overlapStart),
+      end: addScaled(left.from, leftDirection, overlapEnd),
+      length: overlapLength,
+      mode: sharedMode,
+    };
+  }
+
+  private getSharedSurfaceLinksById(): Map<string, SharedSurfaceLink> {
+    const segments = this.getWallSegments();
+    const pairCandidates: Array<{
+      source: WallSurfaceSegment;
+      target: WallSurfaceSegment;
+      sharedLength: number;
+      sharedMode: SharedSurfaceMode;
+      sharedSegmentStart: WorldPoint;
+      sharedSegmentEnd: WorldPoint;
+    }> = [];
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const source = segments[index];
+
+      for (let nextIndex = index + 1; nextIndex < segments.length; nextIndex += 1) {
+        const target = segments[nextIndex];
+        const shared = this.detectSharedSegment(source, target);
+
+        if (!shared) {
+          continue;
+        }
+
+        pairCandidates.push({
+          source,
+          target,
+          sharedLength: shared.length,
+          sharedMode: shared.mode,
+          sharedSegmentStart: shared.start,
+          sharedSegmentEnd: shared.end,
+        });
+      }
+    }
+
+    const linksById = new Map<string, SharedSurfaceLink>();
+    const assignedSurfaceIds = new Set<string>();
+    pairCandidates.sort((left, right) => right.sharedLength - left.sharedLength);
+
+    for (const pair of pairCandidates) {
+      if (assignedSurfaceIds.has(pair.source.surfaceId) || assignedSurfaceIds.has(pair.target.surfaceId)) {
+        continue;
+      }
+
+      linksById.set(pair.source.surfaceId, {
+        linkedSurfaceId: pair.target.surfaceId,
+        linkedRoomId: pair.target.roomId,
+        sharedMode: pair.sharedMode,
+        sharedSegmentStart: pair.sharedSegmentStart,
+        sharedSegmentEnd: pair.sharedSegmentEnd,
+        sharedLength: pair.sharedLength,
+      });
+      linksById.set(pair.target.surfaceId, {
+        linkedSurfaceId: pair.source.surfaceId,
+        linkedRoomId: pair.source.roomId,
+        sharedMode: pair.sharedMode,
+        sharedSegmentStart: pair.sharedSegmentStart,
+        sharedSegmentEnd: pair.sharedSegmentEnd,
+        sharedLength: pair.sharedLength,
+      });
+      assignedSurfaceIds.add(pair.source.surfaceId);
+      assignedSurfaceIds.add(pair.target.surfaceId);
+    }
+
+    return linksById;
+  }
+
+  private getSurfaceSharedDebugState() {
+    const activeSurfaceId = this.activeSurfaceId;
+
+    if (!activeSurfaceId) {
+      return null;
+    }
+
+    const link = this.getSharedSurfaceLinksById().get(activeSurfaceId) ?? null;
+
+    return {
+      isSharedSurface: Boolean(link),
+      linkedSurfaceId: link?.linkedSurfaceId ?? null,
+      linkedRoomId: link?.linkedRoomId ?? null,
+      sharedMode: link?.sharedMode ?? null,
+      sharedLength: link ? Math.round(link.sharedLength * 1000) / 1000 : null,
+      surfaceType: link ? 'internal' : 'external',
+    } as const;
+  }
+
   getDebugState(): CanvasDebugState {
     const camera = this.camera.getState();
     const screenCenter = this.getScreenCenter();
@@ -528,6 +700,7 @@ export class CanvasEngine {
       roomIds: this.rooms.map((room) => room.roomId),
       roomsCount: this.rooms.length,
       roomPositions: this.rooms.map((room) => ({ roomId: room.roomId, centerX: room.centerX, centerY: room.centerY })),
+      activeSurfaceSharedDebug: this.getSurfaceSharedDebugState(),
       gridStepMm: gridMetrics.gridStepMm,
       gridLevel: gridMetrics.gridLevel,
       cellsPerMeter: gridMetrics.cellsPerMeter,
@@ -550,6 +723,54 @@ export class CanvasEngine {
 
   getRoomGeometry(room: RoomModel): RoomWorldGeometry {
     return RoomGeometry.fromModel(room);
+  }
+
+  getRoomWallSurfaceWorldGeometry(roomId: string): RoomSurfaceWorldGeometry[] {
+    const room = this.rooms.find((candidate) => candidate.roomId === roomId);
+
+    if (!room) {
+      return [];
+    }
+
+    const geometry = this.getRoomGeometry(room);
+    const linksBySurfaceId = this.getSharedSurfaceLinksById();
+    const wallTypeByEdgeIndex: RoomSurfaceType[] = ['north', 'east', 'south', 'west'];
+    const wallHeight = this.getWallHeightMm(room);
+
+    return geometry.edges.map((edge, edgeIndex) => {
+      const surfaceType = wallTypeByEdgeIndex[edgeIndex];
+      const surfaceId = `${room.roomId}-${surfaceType}`;
+      const sharedSurfaceLink = linksBySurfaceId.get(surfaceId) ?? null;
+      const center = {
+        x: (edge.from.x + edge.to.x) / 2,
+        y: (edge.from.y + edge.to.y) / 2,
+      };
+      const angleDeg = (Math.atan2(edge.to.y - edge.from.y, edge.to.x - edge.from.x) * 180) / Math.PI;
+      const widthMm = distance(edge.from, edge.to);
+      const halfWidth = widthMm / 2;
+      const halfHeight = wallHeight / 2;
+
+      return {
+        surfaceId,
+        roomId: room.roomId,
+        type: surfaceType,
+        widthMm,
+        heightMm: wallHeight,
+        rotationDeg: angleDeg,
+        center,
+        surfaceType: sharedSurfaceLink ? 'internal' : 'external',
+        isSharedSurface: Boolean(sharedSurfaceLink),
+        sharedSurfaceLink,
+        bounds: {
+          minX: center.x - halfWidth,
+          maxX: center.x + halfWidth,
+          minY: center.y - halfHeight,
+          maxY: center.y + halfHeight,
+          width: widthMm,
+          height: wallHeight,
+        },
+      };
+    });
   }
 
   getRoomScreenGeometry(room: RoomModel): RoomScreenGeometry {
@@ -777,6 +998,8 @@ export class CanvasEngine {
       { type: 'ceiling', widthMm: ceiling.widthMm, heightMm: ceiling.heightMm, rotationDeg: ceilingRotationDeg, centerX: ceilingCenterX, centerY: ceilingCenterY },
     ];
 
+    const linksBySurfaceId = this.getSharedSurfaceLinksById();
+
     return surfaces.map((surface) => {
       const halfWidth = surface.widthMm / 2;
       const halfHeight = surface.heightMm / 2;
@@ -786,15 +1009,21 @@ export class CanvasEngine {
         minY: surface.centerY - halfHeight,
         maxY: surface.centerY + halfHeight,
       };
+      const surfaceId = `${room.roomId}-${surface.type}`;
+      const sharedSurfaceLink = linksBySurfaceId.get(surfaceId) ?? null;
+      const isWallSurface = WALL_SURFACE_TYPES.includes(surface.type);
 
       return {
-        surfaceId: `${room.roomId}-${surface.type}`,
+        surfaceId,
         roomId: room.roomId,
         type: surface.type,
         widthMm: surface.widthMm,
         heightMm: surface.heightMm,
         rotationDeg: surface.rotationDeg,
         center: { x: surface.centerX, y: surface.centerY },
+        surfaceType: isWallSurface && sharedSurfaceLink ? 'internal' : 'external',
+        isSharedSurface: Boolean(isWallSurface && sharedSurfaceLink),
+        sharedSurfaceLink: isWallSurface ? sharedSurfaceLink : null,
         bounds: {
           ...bounds,
           width: bounds.maxX - bounds.minX,

@@ -122,6 +122,12 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
     `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
     `activeRoomRotationDeg: ${debugState.activeRoomRotationDeg ?? 'null'}`,
+    `isSharedSurface: ${debugState.activeSurfaceSharedDebug?.isSharedSurface ? 'true' : 'false'}`,
+    `linkedSurfaceId: ${debugState.activeSurfaceSharedDebug?.linkedSurfaceId ?? 'null'}`,
+    `linkedRoomId: ${debugState.activeSurfaceSharedDebug?.linkedRoomId ?? 'null'}`,
+    `sharedMode: ${debugState.activeSurfaceSharedDebug?.sharedMode ?? 'null'}`,
+    `sharedLength: ${debugState.activeSurfaceSharedDebug?.sharedLength ?? 'null'}`,
+    `surfaceType: ${debugState.activeSurfaceSharedDebug?.surfaceType ?? 'external'}`,
     `gridStepMm: ${debugState.gridStepMm}`,
     `gridLevel: ${debugState.gridLevel}`,
     `cellsPerMeter: ${debugState.cellsPerMeter}`,
@@ -1346,6 +1352,12 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>activeResizeHandleId: {debugState.activeResizeHandleId ?? 'null'}</Text>
                   <Text style={styles.metaText}>activeRoomRotationDeg: {debugState.activeRoomRotationDeg ?? 'null'}</Text>
+                  <Text style={styles.metaText}>isSharedSurface: {debugState.activeSurfaceSharedDebug?.isSharedSurface ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>linkedSurfaceId: {debugState.activeSurfaceSharedDebug?.linkedSurfaceId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>linkedRoomId: {debugState.activeSurfaceSharedDebug?.linkedRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>sharedMode: {debugState.activeSurfaceSharedDebug?.sharedMode ?? 'null'}</Text>
+                  <Text style={styles.metaText}>sharedLength: {debugState.activeSurfaceSharedDebug?.sharedLength ?? 'null'}</Text>
+                  <Text style={styles.metaText}>surfaceType: {debugState.activeSurfaceSharedDebug?.surfaceType ?? 'external'}</Text>
                   <Text style={styles.metaText}>
                     lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
                   </Text>
