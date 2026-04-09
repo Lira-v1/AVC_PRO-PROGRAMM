@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
+import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, RoomSurfaceType, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
@@ -14,6 +14,7 @@ const ROOM_NAME_PRESETS = ['Кухня', 'Спальня', 'Зал', 'Прихо
 const ROOM_SETTINGS_POPUP_WIDTH = 260;
 const ROOM_SETTINGS_POPUP_MARGIN = 12;
 const ROOM_SETTINGS_POPUP_MIN_HEIGHT = 170;
+const SURFACE_FOCUS_TRANSITION_MS = 240;
 
 type DragMode = 'idle' | 'room' | 'resize' | 'pan';
 
@@ -164,11 +165,30 @@ const getRoomLabelMetrics = (roomGeometry: { bounds: { width: number; height: nu
 
 const formatMetersLabel = (valueMm: number) => `${(valueMm / 1000).toFixed(2)} м`;
 const formatAreaLabel = (widthMm: number, lengthMm: number) => `${((widthMm * lengthMm) / 1_000_000).toFixed(2)} м²`;
+const getSurfaceTitle = (type: RoomSurfaceType) => {
+  switch (type) {
+    case 'north':
+      return 'north wall';
+    case 'south':
+      return 'south wall';
+    case 'west':
+      return 'west wall';
+    case 'east':
+      return 'east wall';
+    case 'floor':
+      return 'floor';
+    case 'ceiling':
+      return 'ceiling';
+    default:
+      return type;
+  }
+};
 
 export const CanvasV3DevScreen = () => {
   const engineRef = useRef<CanvasEngine>(createEngine());
   const canvasRef = useRef<View | null>(null);
   const roomSettingsPopupRef = useRef<View | null>(null);
+  const focusAnimationFrameRef = useRef<number | null>(null);
   const dragSessionRef = useRef<DragSession>(IDLE_DRAG_SESSION);
   const { height: windowHeight } = useWindowDimensions();
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
@@ -188,6 +208,41 @@ export const CanvasV3DevScreen = () => {
     setSnapshot(engineRef.current.getSnapshot());
     setDebugState(engineRef.current.getDebugState());
   }, []);
+
+  const animateCameraToView = useCallback((target: { zoom: number; panX: number; panY: number }) => {
+    const animationHost = globalThis as { requestAnimationFrame?: (callback: (timestamp: number) => void) => number; cancelAnimationFrame?: (handle: number) => void };
+    const requestFrame = animationHost.requestAnimationFrame ?? ((callback: (timestamp: number) => void) => setTimeout(() => callback(Date.now()), 16) as unknown as number);
+    const cancelFrame = animationHost.cancelAnimationFrame ?? clearTimeout;
+
+    if (focusAnimationFrameRef.current !== null) {
+      cancelFrame(focusAnimationFrameRef.current as never);
+      focusAnimationFrameRef.current = null;
+    }
+
+    const startView = engineRef.current.getSnapshot().camera;
+    const startedAt = Date.now();
+
+    const tick = (now: number) => {
+      const elapsed = Math.max(0, now - startedAt);
+      const t = Math.min(1, elapsed / SURFACE_FOCUS_TRANSITION_MS);
+      const eased = 1 - (1 - t) ** 3;
+
+      engineRef.current.setCameraView({
+        zoom: startView.zoom + (target.zoom - startView.zoom) * eased,
+        panX: startView.panX + (target.panX - startView.panX) * eased,
+        panY: startView.panY + (target.panY - startView.panY) * eased,
+      });
+      refreshState();
+
+      if (t < 1) {
+        focusAnimationFrameRef.current = requestFrame(tick);
+      } else {
+        focusAnimationFrameRef.current = null;
+      }
+    };
+
+    focusAnimationFrameRef.current = requestFrame(tick);
+  }, [refreshState]);
 
   const resetDragSession = useCallback(() => {
     dragSessionRef.current = { ...IDLE_DRAG_SESSION };
@@ -309,6 +364,22 @@ export const CanvasV3DevScreen = () => {
     [refreshState],
   );
 
+  const handleSurfaceTap = useCallback((screenPoint: ScreenPoint) => {
+    const selectedSurfaceId = engineRef.current.selectSurfaceAtScreenPoint(screenPoint);
+
+    if (!selectedSurfaceId) {
+      return;
+    }
+
+    const targetView = engineRef.current.getSurfaceFocusCameraTarget(selectedSurfaceId);
+
+    if (!targetView) {
+      return;
+    }
+
+    animateCameraToView(targetView);
+  }, [animateCameraToView]);
+
   const endInteraction = useCallback(
     (screenPoint?: ScreenPoint, pointerId?: number) => {
       const session = dragSessionRef.current;
@@ -325,10 +396,16 @@ export const CanvasV3DevScreen = () => {
         engineRef.current.updateLastPointer(screenPoint);
       }
 
+      const isSurfaceSceneMode = engineRef.current.getCanvasMode() === 'room-surface-scene';
+
+      if (isSurfaceSceneMode && screenPoint && !session.moved) {
+        handleSurfaceTap(screenPoint);
+      }
+
       resetDragSession();
       refreshState();
     },
-    [refreshState, resetDragSession],
+    [handleSurfaceTap, refreshState, resetDragSession],
   );
 
   const onLayout = useCallback(
@@ -375,6 +452,19 @@ export const CanvasV3DevScreen = () => {
     return () => clearTimeout(timeoutId);
   }, [copyStatus]);
 
+  useEffect(() => () => {
+    const animationHost = globalThis as { cancelAnimationFrame?: (handle: number) => void };
+
+    if (focusAnimationFrameRef.current !== null) {
+      if (animationHost.cancelAnimationFrame) {
+        animationHost.cancelAnimationFrame(focusAnimationFrameRef.current);
+      } else {
+        clearTimeout(focusAnimationFrameRef.current as unknown as ReturnType<typeof setTimeout>);
+      }
+      focusAnimationFrameRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (Platform.OS !== 'web' || !isRoomSettingsMenuOpen) {
       return undefined;
@@ -419,6 +509,7 @@ export const CanvasV3DevScreen = () => {
   );
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
+  const surfaceWorldGeometries = engineRef.current.getRoomSurfaceSceneWorldGeometry();
   const surfaceGeometries = engineRef.current.getRoomSurfaceSceneScreenGeometry();
   const isSurfaceSceneMode = snapshot.mode === 'room-surface-scene';
   const visibleRoomGeometries = isSurfaceSceneMode ? [] : roomGeometries;
@@ -446,6 +537,11 @@ export const CanvasV3DevScreen = () => {
   const roomSettingsPopupLeftLimit = Math.max(ROOM_SETTINGS_POPUP_MARGIN, debugState.viewport.width - ROOM_SETTINGS_POPUP_WIDTH - ROOM_SETTINGS_POPUP_MARGIN);
   const roomSettingsPopupLeft = Math.min(Math.max(roomSettingsPopupLeftAnchor, ROOM_SETTINGS_POPUP_MARGIN), roomSettingsPopupLeftLimit);
   const surfaceSceneRoom = snapshot.surfaceSceneRoomId ? roomData.find((room) => room.roomId === snapshot.surfaceSceneRoomId) ?? null : null;
+  const activeSurface = snapshot.activeSurfaceId ? surfaceGeometries.find((surface) => surface.surfaceId === snapshot.activeSurfaceId) ?? null : null;
+  const activeSurfaceWorld = snapshot.activeSurfaceId ? surfaceWorldGeometries.find((surface) => surface.surfaceId === snapshot.activeSurfaceId) ?? null : null;
+  const isSurfaceFocusMode = snapshot.isSurfaceFocusMode;
+  const activeSurfaceDisplayName = activeSurface ? getSurfaceTitle(activeSurface.type) : '-';
+  const activeSurfaceWidthMm = activeSurfaceWorld?.widthMm ?? null;
   const miniMapWidth = 128;
   const miniMapHeight = 92;
   const miniMapPadding = 12;
@@ -556,7 +652,11 @@ export const CanvasV3DevScreen = () => {
   }, [activeRoom, refreshState]);
 
   const handleBackFromSurfaceScene = useCallback(() => {
-    engineRef.current.closeRoomSurfaceScene();
+    if (engineRef.current.isSurfaceFocusMode()) {
+      engineRef.current.clearSurfaceFocus();
+    } else {
+      engineRef.current.closeRoomSurfaceScene();
+    }
     setOpenRoomStatus(null);
     refreshState();
   }, [refreshState]);
@@ -793,20 +893,29 @@ export const CanvasV3DevScreen = () => {
 
             {isSurfaceSceneMode
               ? surfaceGeometries.map((surface) => (
+                  (() => {
+                    const isActiveSurface = snapshot.activeSurfaceId === surface.surfaceId;
+                    const isDimmedSurface = isSurfaceFocusMode && !isActiveSurface;
+
+                    return (
                   <View
                     key={surface.surfaceId}
                     pointerEvents="none"
                     style={[
                       styles.surfaceCard,
+                      isActiveSurface ? styles.surfaceCardActive : null,
+                      isDimmedSurface ? styles.surfaceCardDimmed : null,
                       {
                         width: surface.bounds.width,
                         height: surface.bounds.height,
                         left: surface.bounds.left,
                         top: surface.bounds.top,
-                        transform: [{ rotate: `${surface.rotationDeg}deg` }],
+                        transform: [{ rotate: `${surface.rotationDeg}deg` }, { scale: isActiveSurface ? 1.06 : 1 }],
                       },
                     ]}
                   />
+                    );
+                  })()
                 ))
               : null}
 
@@ -814,8 +923,13 @@ export const CanvasV3DevScreen = () => {
               <View style={styles.surfaceSceneOverlayLayer} pointerEvents="box-none">
                 <View style={styles.surfaceBackButtonWrap} pointerEvents="box-none">
                   <Pressable style={styles.surfaceBackButton} onPress={handleBackFromSurfaceScene}>
-                    <Text style={styles.surfaceBackButtonText}>Назад</Text>
+                    <Text style={styles.surfaceBackButtonText}>{isSurfaceFocusMode ? 'Назад к развёртке' : 'Назад'}</Text>
                   </Pressable>
+                  {isSurfaceFocusMode ? (
+                    <Pressable style={styles.surfaceAddOutletButton}>
+                      <Text style={styles.surfaceAddOutletButtonText}>+ Добавить розетку</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
 
                 <View style={styles.surfaceMiniMapWrap} pointerEvents="none">
@@ -826,7 +940,7 @@ export const CanvasV3DevScreen = () => {
                 </View>
 
                 <View style={styles.surfaceInfoWrap} pointerEvents="none">
-                  <Text style={styles.surfaceOverlayTitle}>Комната</Text>
+                  <Text style={styles.surfaceOverlayTitle}>{isSurfaceFocusMode ? 'РАБОЧАЯ ПОВЕРХНОСТЬ' : 'Комната'}</Text>
                   <View style={styles.surfaceInfoCard}>
                     <View style={styles.surfaceInfoRow}>
                       <Text style={styles.surfaceInfoLabel}>Комната</Text>
@@ -835,23 +949,25 @@ export const CanvasV3DevScreen = () => {
                       </Text>
                     </View>
                     <View style={styles.surfaceInfoRow}>
-                      <Text style={styles.surfaceInfoLabel}>Ширина</Text>
-                      <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.widthMm) : '-'}</Text>
+                      <Text style={styles.surfaceInfoLabel}>Поверхность</Text>
+                      <Text style={styles.surfaceInfoValue}>{isSurfaceFocusMode ? activeSurfaceDisplayName : '-'}</Text>
                     </View>
                     <View style={styles.surfaceInfoRow}>
-                      <Text style={styles.surfaceInfoLabel}>Длина</Text>
-                      <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.heightMm) : '-'}</Text>
+                      <Text style={styles.surfaceInfoLabel}>Ширина</Text>
+                      <Text style={styles.surfaceInfoValue}>{isSurfaceFocusMode && activeSurfaceWidthMm ? formatMetersLabel(activeSurfaceWidthMm) : '-'}</Text>
                     </View>
                     <View style={styles.surfaceInfoRow}>
                       <Text style={styles.surfaceInfoLabel}>Высота</Text>
                       <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.wallHeightMm ?? 2700) : '-'}</Text>
                     </View>
-                    <View style={styles.surfaceInfoRow}>
-                      <Text style={styles.surfaceInfoLabel}>Площадь</Text>
-                      <Text style={styles.surfaceInfoValue}>
-                        {surfaceSceneRoom ? formatAreaLabel(surfaceSceneRoom.widthMm, surfaceSceneRoom.heightMm) : '-'}
-                      </Text>
-                    </View>
+                    {!isSurfaceFocusMode ? (
+                      <View style={styles.surfaceInfoRow}>
+                        <Text style={styles.surfaceInfoLabel}>Площадь</Text>
+                        <Text style={styles.surfaceInfoValue}>
+                          {surfaceSceneRoom ? formatAreaLabel(surfaceSceneRoom.widthMm, surfaceSceneRoom.heightMm) : '-'}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 </View>
               </View>
@@ -1125,6 +1241,8 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
                   <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
                   <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>activeSurfaceId: {snapshot.activeSurfaceId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>isSurfaceFocusMode: {snapshot.isSurfaceFocusMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>activeRoomName: {activeRoom ? roomNameById[activeRoom.roomId] : 'null'}</Text>
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
@@ -1279,6 +1397,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: 'rgba(37, 99, 235, 0.08)',
   },
+  surfaceCardActive: {
+    borderColor: '#1D4ED8',
+    backgroundColor: 'rgba(37, 99, 235, 0.16)',
+    zIndex: 4,
+  },
+  surfaceCardDimmed: {
+    opacity: 0.5,
+  },
   surfaceSceneOverlayLayer: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -1286,6 +1412,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 12,
     left: 12,
+    gap: 8,
   },
   surfaceBackButton: {
     minHeight: 38,
@@ -1298,6 +1425,21 @@ const styles = StyleSheet.create({
   surfaceBackButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  surfaceAddOutletButton: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  surfaceAddOutletButtonText: {
+    color: '#1D4ED8',
+    fontWeight: '700',
+    fontSize: 13,
   },
   surfaceMiniMapWrap: {
     position: 'absolute',

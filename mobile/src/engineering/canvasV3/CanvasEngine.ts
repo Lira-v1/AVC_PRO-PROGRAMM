@@ -58,6 +58,9 @@ const ROOM_FALLBACK_PREFIX = 'Комната';
 const DEFAULT_WALL_HEIGHT_MM = 2700;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
+const SURFACE_FOCUS_WIDTH_RATIO = 0.33;
+const SURFACE_FOCUS_HEIGHT_RATIO = 0.7;
+const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east'];
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -105,6 +108,7 @@ export class CanvasEngine {
   private lastPointerWorldPoint: WorldPoint | null = null;
   private mode: CanvasMode = 'main';
   private surfaceSceneRoomId: string | null = null;
+  private activeSurfaceId: string | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -488,6 +492,14 @@ export class CanvasEngine {
     return this.surfaceSceneRoomId;
   }
 
+  getActiveSurfaceId(): string | null {
+    return this.activeSurfaceId;
+  }
+
+  isSurfaceFocusMode(): boolean {
+    return this.activeSurfaceId !== null;
+  }
+
   openRoomSurfaceScene(roomId: string): RoomSurfaceWorldGeometry[] | null {
     const room = this.rooms.find((candidate) => candidate.roomId === roomId);
 
@@ -497,6 +509,7 @@ export class CanvasEngine {
 
     this.mode = 'room-surface-scene';
     this.surfaceSceneRoomId = roomId;
+    this.activeSurfaceId = null;
     this.transform.endDrag();
     this.resize.endResize();
     this.fitSurfaceSceneToViewport();
@@ -507,6 +520,71 @@ export class CanvasEngine {
   closeRoomSurfaceScene() {
     this.mode = 'main';
     this.surfaceSceneRoomId = null;
+    this.activeSurfaceId = null;
+  }
+
+  setCameraView(next: { zoom: number; panX: number; panY: number }) {
+    this.camera.setView(next);
+  }
+
+  clearSurfaceFocus() {
+    this.activeSurfaceId = null;
+    this.fitSurfaceSceneToViewport();
+  }
+
+  private getRoomSurfaceById(surfaceId: string): RoomSurfaceWorldGeometry | null {
+    return this.getRoomSurfaceSceneWorldGeometry().find((surface) => surface.surfaceId === surfaceId) ?? null;
+  }
+
+  private getRoomSurfaceByScreenPoint(point: ScreenPoint): RoomSurfaceWorldGeometry | null {
+    const worldPoint = this.screenToWorld(point);
+    const surfaces = this.getRoomSurfaceSceneWorldGeometry();
+
+    return surfaces.find(
+      (surface) =>
+        worldPoint.x >= surface.bounds.minX &&
+        worldPoint.x <= surface.bounds.maxX &&
+        worldPoint.y >= surface.bounds.minY &&
+        worldPoint.y <= surface.bounds.maxY,
+    ) ?? null;
+  }
+
+  private isWallSurfaceType(type: RoomSurfaceType): boolean {
+    return WALL_SURFACE_TYPES.includes(type);
+  }
+
+  getSurfaceFocusCameraTarget(surfaceId: string): { zoom: number; panX: number; panY: number } | null {
+    const viewport = this.canvasState.viewport;
+    const surface = this.getRoomSurfaceById(surfaceId);
+
+    if (!surface || viewport.width <= 0 || viewport.height <= 0 || !this.isWallSurfaceType(surface.type)) {
+      return null;
+    }
+
+    const widthZoom = (viewport.width * SURFACE_FOCUS_WIDTH_RATIO) / Math.max(1, surface.bounds.width);
+    const heightZoom = (viewport.height * SURFACE_FOCUS_HEIGHT_RATIO) / Math.max(1, surface.bounds.height);
+    const zoom = Math.min(widthZoom, heightZoom);
+
+    return {
+      zoom,
+      panX: surface.center.x,
+      panY: surface.center.y,
+    };
+  }
+
+  selectSurfaceAtScreenPoint(point: ScreenPoint): string | null {
+    if (this.mode !== 'room-surface-scene') {
+      return null;
+    }
+
+    const hitSurface = this.getRoomSurfaceByScreenPoint(point);
+
+    if (!hitSurface || !this.isWallSurfaceType(hitSurface.type)) {
+      return this.activeSurfaceId;
+    }
+
+    this.activeSurfaceId = hitSurface.surfaceId;
+    return this.activeSurfaceId;
   }
 
   private fitSurfaceSceneToViewport() {
@@ -723,6 +801,8 @@ export class CanvasEngine {
       roomIds: this.rooms.map((room) => room.roomId),
       mode: this.mode,
       surfaceSceneRoomId: this.surfaceSceneRoomId,
+      activeSurfaceId: this.activeSurfaceId,
+      isSurfaceFocusMode: this.activeSurfaceId !== null,
     };
   }
 }
