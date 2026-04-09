@@ -7,6 +7,8 @@ import {
   CanvasSnapshot,
   CanvasState,
   CameraState,
+  ContourShapeScreenGeometry,
+  ContourShapeWorldGeometry,
   DimensionLineScreenGeometry,
   DimensionLineWorldGeometry,
   DimensionUnit,
@@ -62,6 +64,8 @@ const DEFAULT_WALL_HEIGHT_MM = 2700;
 const DEFAULT_ROOM_SIZE_MM = 1000;
 const NEW_ROOM_OFFSET_MM = 1200;
 const NEW_ROOM_COLUMNS = 3;
+const MIN_CONTOUR_POINTS_TO_CLOSE = 3;
+const CONTOUR_CLOSE_THRESHOLD_MM = 160;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
@@ -143,6 +147,12 @@ export class CanvasEngine {
   private activeSurfaceId: string | null = null;
   private savedMainCameraState: CameraState | null = null;
   private savedRoomSurfaceSceneCameraState: CameraState | null = null;
+  private isDrawingMode = false;
+  private currentContourPoints: WorldPoint[] = [];
+  private contourShapes: ContourShapeWorldGeometry[] = [];
+  private contourShapeCounter = 0;
+  private isContourClosed = false;
+  private lastCreatedShapeId: string | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -238,6 +248,137 @@ export class CanvasEngine {
     this.selectRoom(roomId);
 
     return normalizeRoomModel(nextRoom);
+  }
+
+  setDrawingMode(next: boolean): boolean {
+    if (this.mode !== 'main') {
+      return this.isDrawingMode;
+    }
+
+    this.isDrawingMode = next;
+    this.transform.endDrag();
+    this.resize.endResize();
+
+    if (!next) {
+      this.currentContourPoints = [];
+    }
+
+    return this.isDrawingMode;
+  }
+
+  getIsDrawingMode(): boolean {
+    return this.isDrawingMode;
+  }
+
+  private getContourCloseThresholdMm(): number {
+    const { gridStepMm } = this.grid.getGridMetrics();
+    return Math.max(CONTOUR_CLOSE_THRESHOLD_MM, gridStepMm * 1.5);
+  }
+
+  private isPointNearContourStart(point: WorldPoint): boolean {
+    if (this.currentContourPoints.length < MIN_CONTOUR_POINTS_TO_CLOSE) {
+      return false;
+    }
+
+    const start = this.currentContourPoints[0];
+    return distance(point, start) <= this.getContourCloseThresholdMm();
+  }
+
+  isContourSnapToStartActive(): boolean {
+    if (!this.isDrawingMode || !this.lastPointerWorldPoint) {
+      return false;
+    }
+
+    return this.isPointNearContourStart(this.lastPointerWorldPoint);
+  }
+
+  addContourPointAtScreenPoint(point: ScreenPoint): ContourShapeWorldGeometry | null {
+    if (!this.isDrawingMode || this.mode !== 'main') {
+      return null;
+    }
+
+    const worldPoint = this.snapToGrid(this.screenToWorld(point));
+    this.lastPointerWorldPoint = worldPoint;
+
+    if (this.currentContourPoints.length >= MIN_CONTOUR_POINTS_TO_CLOSE && this.isPointNearContourStart(worldPoint)) {
+      const closedPoints = [...this.currentContourPoints];
+      const shapeId = `shape-${++this.contourShapeCounter}`;
+      const room = this.createRoomFromContour(closedPoints);
+      const shape: ContourShapeWorldGeometry = {
+        shapeId,
+        points: closedPoints,
+        isClosed: true,
+        createdRoomId: room?.roomId ?? null,
+      };
+      this.contourShapes.push(shape);
+      this.currentContourPoints = [];
+      this.isContourClosed = true;
+      this.lastCreatedShapeId = shapeId;
+      return shape;
+    }
+
+    this.currentContourPoints.push(worldPoint);
+    this.isContourClosed = false;
+    return null;
+  }
+
+  private createRoomFromContour(points: WorldPoint[]): RoomModel | null {
+    if (points.length < MIN_CONTOUR_POINTS_TO_CLOSE) {
+      return null;
+    }
+
+    const bounds = points.reduce(
+      (acc, point) => ({
+        minX: Math.min(acc.minX, point.x),
+        maxX: Math.max(acc.maxX, point.x),
+        minY: Math.min(acc.minY, point.y),
+        maxY: Math.max(acc.maxY, point.y),
+      }),
+      {
+        minX: Number.POSITIVE_INFINITY,
+        maxX: Number.NEGATIVE_INFINITY,
+        minY: Number.POSITIVE_INFINITY,
+        maxY: Number.NEGATIVE_INFINITY,
+      },
+    );
+    const widthMm = Math.max(400, bounds.maxX - bounds.minX);
+    const heightMm = Math.max(400, bounds.maxY - bounds.minY);
+    const center = this.snapToGrid({
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+    });
+    const roomName = `${ROOM_FALLBACK_PREFIX} ${this.rooms.length + 1}`;
+    const room = normalizeRoomModel({
+      roomId: this.getNextRoomId(),
+      roomName,
+      roomLabelVisible: true,
+      centerX: center.x,
+      centerY: center.y,
+      widthMm,
+      heightMm,
+      wallHeightMm: DEFAULT_WALL_HEIGHT_MM,
+      rotationDeg: 0,
+      settings: {
+        ...DEFAULT_ROOM_SETTINGS,
+        name: roomName,
+      },
+    });
+
+    this.rooms.push(room);
+    this.setRooms(this.rooms);
+    this.selectRoom(room.roomId);
+    return room;
+  }
+
+  getCurrentContourPointsScreen(): ScreenPoint[] {
+    return this.currentContourPoints.map((point) => this.worldToScreen(point));
+  }
+
+  getContourShapesScreen(): ContourShapeScreenGeometry[] {
+    return this.contourShapes.map((shape) => ({
+      ...shape,
+      points: shape.points.map((point) => this.worldToScreen(point)),
+    }));
   }
 
   setViewport(viewport: Viewport) {
@@ -700,6 +841,10 @@ export class CanvasEngine {
       roomIds: this.rooms.map((room) => room.roomId),
       roomsCount: this.rooms.length,
       roomPositions: this.rooms.map((room) => ({ roomId: room.roomId, centerX: room.centerX, centerY: room.centerY })),
+      isDrawingMode: this.isDrawingMode,
+      currentContourPointsCount: this.currentContourPoints.length,
+      isContourClosed: this.isContourClosed,
+      lastCreatedShapeId: this.lastCreatedShapeId,
       activeSurfaceSharedDebug: this.getSurfaceSharedDebugState(),
       gridStepMm: gridMetrics.gridStepMm,
       gridLevel: gridMetrics.gridLevel,
@@ -1167,6 +1312,10 @@ export class CanvasEngine {
       surfaceSceneRoomId: this.surfaceSceneRoomId,
       activeSurfaceId: this.activeSurfaceId,
       isSurfaceSceneMode: this.mode === 'surface-scene',
+      isDrawingMode: this.isDrawingMode,
+      currentContourPointsCount: this.currentContourPoints.length,
+      isContourClosed: this.isContourClosed,
+      lastCreatedShapeId: this.lastCreatedShapeId,
     };
   }
 }

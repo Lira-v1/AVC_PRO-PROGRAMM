@@ -39,24 +39,6 @@ const IDLE_DRAG_SESSION: DragSession = {
   lastY: 0,
 };
 
-const DEV_ROOM: RoomModel = {
-  roomId: 'room-1',
-  roomName: 'Комната 1',
-  roomLabelVisible: true,
-  centerX: 0,
-  centerY: 0,
-  widthMm: 1000,
-  heightMm: 1000,
-  wallHeightMm: 2700,
-  rotationDeg: 0,
-  settings: {
-    name: 'Комната 1',
-    dimensionUnit: 'm',
-    isSizeLocked: false,
-    isDimensionsHidden: false,
-  },
-};
-
 const formatRoomSize = (valueMm: number, unit: DimensionUnit) => {
   if (unit === 'mm') {
     return Math.round(valueMm).toString();
@@ -90,7 +72,6 @@ const parseRoomSizeToMm = (rawValue: string, unit: DimensionUnit): number | null
 
 const createEngine = () => {
   const engine = new CanvasEngine(12000, 12000);
-  engine.setRooms([DEV_ROOM]);
   return engine;
 };
 
@@ -118,6 +99,10 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `snapPreviewKind: ${debugState.snapPreview?.kind ?? 'null'}`,
     `snapPreviewTargetRoomId: ${debugState.snapPreview?.targetRoomId ?? 'null'}`,
     `roomPositions: ${roomPositions}`,
+    `isDrawingMode: ${debugState.isDrawingMode ? 'true' : 'false'}`,
+    `currentContourPointsCount: ${debugState.currentContourPointsCount}`,
+    `isContourClosed: ${debugState.isContourClosed ? 'true' : 'false'}`,
+    `lastCreatedShapeId: ${debugState.lastCreatedShapeId ?? 'null'}`,
     `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
     `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
@@ -248,8 +233,27 @@ export const CanvasV3DevScreen = () => {
   const beginInteraction = useCallback(
     (screenPoint: ScreenPoint, pointerId?: number) => {
       const isSurfaceSceneMode = engineRef.current.getCanvasMode() !== 'main';
+      const isDrawingMode = engineRef.current.getIsDrawingMode();
 
       if (isSurfaceSceneMode) {
+        engineRef.current.updateLastPointer(screenPoint);
+        engineRef.current.endDrag();
+        engineRef.current.endResize();
+        dragSessionRef.current = {
+          mode: 'pan',
+          pointerId: pointerId ?? null,
+          started: true,
+          moved: false,
+          startX: screenPoint.x,
+          startY: screenPoint.y,
+          lastX: screenPoint.x,
+          lastY: screenPoint.y,
+        };
+        refreshState();
+        return;
+      }
+
+      if (isDrawingMode) {
         engineRef.current.updateLastPointer(screenPoint);
         engineRef.current.endDrag();
         engineRef.current.endResize();
@@ -365,9 +369,14 @@ export const CanvasV3DevScreen = () => {
       }
 
       const isRoomSurfaceSceneMode = engineRef.current.getCanvasMode() === 'room-surface-scene';
+      const isDrawingMode = engineRef.current.getIsDrawingMode();
 
       if (isRoomSurfaceSceneMode && screenPoint && !session.moved) {
         handleSurfaceTap(screenPoint);
+      }
+
+      if (isDrawingMode && screenPoint && !session.moved) {
+        engineRef.current.addContourPointAtScreenPoint(screenPoint);
       }
 
       resetDragSession();
@@ -464,6 +473,9 @@ export const CanvasV3DevScreen = () => {
   );
 
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
+  const contourShapes = engineRef.current.getContourShapesScreen();
+  const currentContourPoints = engineRef.current.getCurrentContourPointsScreen();
+  const isContourSnapToStart = engineRef.current.isContourSnapToStartActive();
   const surfaceWorldGeometries = engineRef.current.getRoomSurfaceSceneWorldGeometry();
   const surfaceGeometries = engineRef.current.getRoomSurfaceSceneScreenGeometry();
   const isRoomSurfaceSceneMode = snapshot.mode === 'room-surface-scene';
@@ -659,6 +671,17 @@ export const CanvasV3DevScreen = () => {
     refreshState();
   }, [refreshState, snapshot.mode]);
 
+  const handleToggleDrawingMode = useCallback(() => {
+    if (snapshot.mode !== 'main') {
+      return;
+    }
+
+    const nextDrawingState = !engineRef.current.getIsDrawingMode();
+    engineRef.current.setDrawingMode(nextDrawingState);
+    setToolsMenuOpen(false);
+    refreshState();
+  }, [refreshState, snapshot.mode]);
+
   useEffect(() => {
     if (!snapshot.activeRoomId) {
       setRoomSettingsMenuOpen(false);
@@ -738,6 +761,75 @@ export const CanvasV3DevScreen = () => {
                   />
                 ))
               : null}
+
+            {contourShapes.map((shape) => (
+              <React.Fragment key={shape.shapeId}>
+                {shape.points.map((point, index) => {
+                  const nextPoint = shape.points[(index + 1) % shape.points.length];
+                  const edgeLength = Math.hypot(nextPoint.x - point.x, nextPoint.y - point.y);
+                  const centerX = (point.x + nextPoint.x) / 2;
+                  const centerY = (point.y + nextPoint.y) / 2;
+                  const angleDeg = (Math.atan2(nextPoint.y - point.y, nextPoint.x - point.x) * 180) / Math.PI;
+
+                  return (
+                    <View
+                      key={`${shape.shapeId}-edge-${index}`}
+                      pointerEvents="none"
+                      style={[
+                        styles.contourEdgeClosed,
+                        {
+                          width: Math.max(edgeLength, 1),
+                          left: centerX - edgeLength / 2,
+                          top: centerY - 1.5,
+                          transform: [{ rotate: `${angleDeg}deg` }],
+                        },
+                      ]}
+                    />
+                  );
+                })}
+              </React.Fragment>
+            ))}
+
+            {currentContourPoints.length >= 2
+              ? currentContourPoints.slice(0, -1).map((point, index) => {
+                  const nextPoint = currentContourPoints[index + 1];
+                  const edgeLength = Math.hypot(nextPoint.x - point.x, nextPoint.y - point.y);
+                  const centerX = (point.x + nextPoint.x) / 2;
+                  const centerY = (point.y + nextPoint.y) / 2;
+                  const angleDeg = (Math.atan2(nextPoint.y - point.y, nextPoint.x - point.x) * 180) / Math.PI;
+
+                  return (
+                    <View
+                      key={`draft-contour-edge-${index}`}
+                      pointerEvents="none"
+                      style={[
+                        styles.contourEdgeDraft,
+                        {
+                          width: Math.max(edgeLength, 1),
+                          left: centerX - edgeLength / 2,
+                          top: centerY - 1,
+                          transform: [{ rotate: `${angleDeg}deg` }],
+                        },
+                      ]}
+                    />
+                  );
+                })
+              : null}
+
+            {currentContourPoints.map((point, index) => (
+              <View
+                key={`draft-contour-point-${index}`}
+                pointerEvents="none"
+                style={[
+                  styles.contourPoint,
+                  index === 0 && isContourSnapToStart ? styles.contourPointSnapTarget : null,
+                  {
+                    left: point.x - (index === 0 && isContourSnapToStart ? 6 : 4),
+                    top: point.y - (index === 0 && isContourSnapToStart ? 6 : 4),
+                  },
+                ]}
+              />
+            ))}
 
             {visibleRoomGeometries.map((roomGeometry) => (
               <React.Fragment key={roomGeometry.roomId}>
@@ -1291,11 +1383,8 @@ export const CanvasV3DevScreen = () => {
                       <Pressable style={styles.toolsMenuItem} onPress={handleAddRoom}>
                         <Text style={styles.toolsMenuItemText}>🧱 Добавить комнату</Text>
                       </Pressable>
-                      <Pressable
-                        style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}
-                        onPress={() => setToolsMenuOpen(false)}
-                      >
-                        <Text style={styles.toolsMenuItemTextMuted}>✏ Рисование</Text>
+                      <Pressable style={styles.toolsMenuItem} onPress={handleToggleDrawingMode}>
+                        <Text style={styles.toolsMenuItemText}>{snapshot.isDrawingMode ? '✏ Контур: выкл' : '✏ Контур: вкл'}</Text>
                       </Pressable>
                       <Pressable
                         style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}
@@ -1332,6 +1421,10 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})</Text>
                   <Text style={styles.metaText}>projectId: {snapshot.projectId}</Text>
                   <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
+                  <Text style={styles.metaText}>isDrawingMode: {debugState.isDrawingMode ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>currentContourPointsCount: {debugState.currentContourPointsCount}</Text>
+                  <Text style={styles.metaText}>isContourClosed: {debugState.isContourClosed ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>lastCreatedShapeId: {debugState.lastCreatedShapeId ?? 'null'}</Text>
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
                   <Text style={styles.metaText}>activeRoomId: {debugState.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>snappedRoomId: {debugState.snappedRoomId ?? 'null'}</Text>
@@ -1735,6 +1828,34 @@ const styles = StyleSheet.create({
     shadowColor: SELECTED_ROOM_COLOR,
     shadowOpacity: 0.18,
     shadowRadius: 4,
+  },
+  contourEdgeClosed: {
+    position: 'absolute',
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(16, 185, 129, 0.9)',
+  },
+  contourEdgeDraft: {
+    position: 'absolute',
+    height: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(14, 116, 144, 0.95)',
+  },
+  contourPoint: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#0E7490',
+  },
+  contourPointSnapTarget: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderColor: '#10B981',
+    backgroundColor: '#ECFDF5',
   },
   resizeHandle: {
     position: 'absolute',

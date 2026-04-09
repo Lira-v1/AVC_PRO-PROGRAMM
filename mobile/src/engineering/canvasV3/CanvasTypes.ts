@@ -28,6 +28,20 @@ export type WorldEdge = {
   to: WorldPoint;
 };
 
+export type ContourShapeWorldGeometry = {
+  shapeId: string;
+  points: WorldPoint[];
+  isClosed: boolean;
+  createdRoomId: string | null;
+};
+
+export type ContourShapeScreenGeometry = {
+  shapeId: string;
+  points: ScreenPoint[];
+  isClosed: boolean;
+  createdRoomId: string | null;
+};
+
 export type ScreenEdge = {
   id: string;
   from: ScreenPoint;
@@ -215,6 +229,10 @@ export type CanvasSnapshot = {
   surfaceSceneRoomId: string | null;
   activeSurfaceId: string | null;
   isSurfaceSceneMode: boolean;
+  isDrawingMode: boolean;
+  currentContourPointsCount: number;
+  isContourClosed: boolean;
+  lastCreatedShapeId: string | null;
 };
 
 export type RoomOpenEntryPoint = {
@@ -256,6 +274,10 @@ export type CanvasDebugState = {
   roomIds: string[];
   roomsCount: number;
   roomPositions: Array<{ roomId: string; centerX: number; centerY: number }>;
+  isDrawingMode: boolean;
+  currentContourPointsCount: number;
+  isContourClosed: boolean;
+  lastCreatedShapeId: string | null;
   activeSurfaceSharedDebug: {
     isSharedSurface: boolean;
     linkedSurfaceId: string | null;
