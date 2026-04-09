@@ -3,6 +3,7 @@ import { CoordinateSystem } from './CoordinateSystem';
 import { GridSystem } from './GridSystem';
 import {
   CanvasMode,
+  CanvasToolMode,
   CanvasDebugState,
   CanvasSnapshot,
   CanvasState,
@@ -26,6 +27,9 @@ import {
   ScreenPoint,
   SharedSurfaceMode,
   Viewport,
+  WallNode,
+  WallSegment,
+  ClosedRegion,
   WorldPoint,
 } from './CanvasTypes';
 import { RoomGeometry } from './RoomGeometry';
@@ -77,6 +81,9 @@ const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east',
 const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor', 'ceiling'];
 const SHARED_SURFACE_TOLERANCE_MM = 0.5;
 const SPLIT_INTERSECTION_EPSILON_MM = 0.01;
+const WALL_NODE_SNAP_THRESHOLD_MM = 160;
+const WALL_SEGMENT_SNAP_THRESHOLD_MM = 140;
+const WALL_REGION_MIN_AREA_MM2 = 2000;
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -219,6 +226,20 @@ type BoundaryIntersectionPoint = {
   contourDistance: number;
 };
 
+type SegmentPointProjection = {
+  point: WorldPoint;
+  t: number;
+  distance: number;
+};
+
+type DirectedWallEdge = {
+  edgeId: string;
+  segmentId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  angle: number;
+};
+
 export class CanvasEngine {
   worldWidth: number;
   worldHeight: number;
@@ -238,6 +259,7 @@ export class CanvasEngine {
   private savedMainCameraState: CameraState | null = null;
   private savedRoomSurfaceSceneCameraState: CameraState | null = null;
   private isDrawingMode = false;
+  private currentToolMode: CanvasToolMode = 'select';
   private currentContourPoints: WorldPoint[] = [];
   private contourShapes: ContourShapeWorldGeometry[] = [];
   private isContourClosed = false;
@@ -247,6 +269,16 @@ export class CanvasEngine {
   private isRoomSplitOperation = false;
   private splitSourceRoomId: string | null = null;
   private splitNewRoomIds: string[] = [];
+  private wallNodes: WallNode[] = [];
+  private wallSegments: WallSegment[] = [];
+  private closedRegions: ClosedRegion[] = [];
+  private wallChainStartNodeId: string | null = null;
+  private wallChainCurrentNodeId: string | null = null;
+  private lastCreatedWallId: string | null = null;
+  private lastCreatedNodeId: string | null = null;
+  private lastDetectedRoomId: string | null = null;
+  private wallGraphUpdated = false;
+  private autoRoomByRegionId = new Map<string, string>();
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -344,12 +376,356 @@ export class CanvasEngine {
     return normalizeRoomModel(nextRoom);
   }
 
+  private getNextWallId(): string {
+    const maxNumericId = this.wallSegments.reduce((maxValue, segment) => {
+      const match = segment.wallId.match(/^wall-(\d+)$/);
+
+      if (!match) {
+        return maxValue;
+      }
+
+      const parsed = Number.parseInt(match[1], 10);
+
+      if (Number.isNaN(parsed)) {
+        return maxValue;
+      }
+
+      return Math.max(maxValue, parsed);
+    }, 0);
+
+    return `wall-${maxNumericId + 1}`;
+  }
+
+  private getNextWallNodeId(): string {
+    const maxNumericId = this.wallNodes.reduce((maxValue, node) => {
+      const match = node.nodeId.match(/^node-(\d+)$/);
+
+      if (!match) {
+        return maxValue;
+      }
+
+      const parsed = Number.parseInt(match[1], 10);
+
+      if (Number.isNaN(parsed)) {
+        return maxValue;
+      }
+
+      return Math.max(maxValue, parsed);
+    }, 0);
+
+    return `node-${maxNumericId + 1}`;
+  }
+
+  private createWallNode(position: WorldPoint): WallNode {
+    const node: WallNode = {
+      nodeId: this.getNextWallNodeId(),
+      position: { ...position },
+      connectedWallIds: [],
+    };
+    this.wallNodes.push(node);
+    this.lastCreatedNodeId = node.nodeId;
+    return node;
+  }
+
+  private getNodeById(nodeId: string): WallNode | null {
+    return this.wallNodes.find((node) => node.nodeId === nodeId) ?? null;
+  }
+
+  private getSegmentById(wallId: string): WallSegment | null {
+    return this.wallSegments.find((segment) => segment.wallId === wallId) ?? null;
+  }
+
+  private connectWallToNode(nodeId: string, wallId: string) {
+    const node = this.getNodeById(nodeId);
+
+    if (!node) {
+      return;
+    }
+
+    if (!node.connectedWallIds.includes(wallId)) {
+      node.connectedWallIds.push(wallId);
+    }
+  }
+
+  private disconnectWallFromNode(nodeId: string, wallId: string) {
+    const node = this.getNodeById(nodeId);
+
+    if (!node) {
+      return;
+    }
+
+    node.connectedWallIds = node.connectedWallIds.filter((id) => id !== wallId);
+  }
+
+  private removeSegment(segmentId: string) {
+    const segment = this.getSegmentById(segmentId);
+
+    if (!segment) {
+      return;
+    }
+
+    this.disconnectWallFromNode(segment.startNodeId, segment.wallId);
+    this.disconnectWallFromNode(segment.endNodeId, segment.wallId);
+    this.wallSegments = this.wallSegments.filter((candidate) => candidate.wallId !== segment.wallId);
+  }
+
+  private createWallSegment(startNodeId: string, endNodeId: string): WallSegment | null {
+    if (startNodeId === endNodeId) {
+      return null;
+    }
+
+    const startNode = this.getNodeById(startNodeId);
+    const endNode = this.getNodeById(endNodeId);
+
+    if (!startNode || !endNode) {
+      return null;
+    }
+
+    const existing = this.wallSegments.find(
+      (segment) =>
+        (segment.startNodeId === startNodeId && segment.endNodeId === endNodeId) ||
+        (segment.startNodeId === endNodeId && segment.endNodeId === startNodeId),
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const segmentLength = distance(startNode.position, endNode.position);
+
+    if (segmentLength <= SPLIT_INTERSECTION_EPSILON_MM) {
+      return null;
+    }
+
+    const segmentAngle = (Math.atan2(endNode.position.y - startNode.position.y, endNode.position.x - startNode.position.x) * 180) / Math.PI;
+    const segment: WallSegment = {
+      wallId: this.getNextWallId(),
+      startNodeId,
+      endNodeId,
+      startPoint: { ...startNode.position },
+      endPoint: { ...endNode.position },
+      length: segmentLength,
+      angle: segmentAngle,
+      roomIds: [],
+      surfaceIds: [],
+      isExternal: true,
+      isInternal: false,
+    };
+    this.wallSegments.push(segment);
+    this.connectWallToNode(startNodeId, segment.wallId);
+    this.connectWallToNode(endNodeId, segment.wallId);
+    this.lastCreatedWallId = segment.wallId;
+    return segment;
+  }
+
+  private projectPointToSegment(point: WorldPoint, segment: WallSegment): SegmentPointProjection | null {
+    const from = segment.startPoint;
+    const to = segment.endPoint;
+    const direction = subtract(to, from);
+    const lengthSq = dot(direction, direction);
+
+    if (lengthSq <= Number.EPSILON) {
+      return null;
+    }
+
+    const relative = subtract(point, from);
+    const rawT = dot(relative, direction) / lengthSq;
+    const t = clamp01(rawT);
+    const projected = addScaled(from, direction, t);
+    return {
+      point: projected,
+      t,
+      distance: distance(projected, point),
+    };
+  }
+
+  private getNearestWallNode(point: WorldPoint, thresholdMm = WALL_NODE_SNAP_THRESHOLD_MM): WallNode | null {
+    let nearest: WallNode | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const node of this.wallNodes) {
+      const nodeDistance = distance(point, node.position);
+
+      if (nodeDistance < nearestDistance && nodeDistance <= thresholdMm) {
+        nearest = node;
+        nearestDistance = nodeDistance;
+      }
+    }
+
+    return nearest;
+  }
+
+  private splitSegmentAtNode(segmentId: string, nodeId: string): boolean {
+    const segment = this.getSegmentById(segmentId);
+    const node = this.getNodeById(nodeId);
+
+    if (!segment || !node) {
+      return false;
+    }
+
+    if (segment.startNodeId === nodeId || segment.endNodeId === nodeId) {
+      return false;
+    }
+
+    this.removeSegment(segment.wallId);
+    const first = this.createWallSegment(segment.startNodeId, nodeId);
+    const second = this.createWallSegment(nodeId, segment.endNodeId);
+
+    return Boolean(first || second);
+  }
+
+  private ensureNodeOnSegment(segment: WallSegment, point: WorldPoint): WallNode {
+    const nearestNode = this.getNearestWallNode(point, WALL_NODE_SNAP_THRESHOLD_MM / 2);
+
+    if (nearestNode) {
+      this.splitSegmentAtNode(segment.wallId, nearestNode.nodeId);
+      return nearestNode;
+    }
+
+    const node = this.createWallNode(point);
+    this.splitSegmentAtNode(segment.wallId, node.nodeId);
+    return node;
+  }
+
+  private resolveWallPointToNode(rawWorldPoint: WorldPoint): WallNode {
+    const snappedWorldPoint = this.snapToGrid(rawWorldPoint);
+    const nearestNode = this.getNearestWallNode(snappedWorldPoint);
+
+    if (nearestNode) {
+      return nearestNode;
+    }
+
+    let bestSegment: WallSegment | null = null;
+    let bestProjection: SegmentPointProjection | null = null;
+
+    for (const segment of this.wallSegments) {
+      const projection = this.projectPointToSegment(snappedWorldPoint, segment);
+
+      if (!projection) {
+        continue;
+      }
+
+      if (projection.t <= SPLIT_INTERSECTION_EPSILON_MM || projection.t >= 1 - SPLIT_INTERSECTION_EPSILON_MM) {
+        continue;
+      }
+
+      if (projection.distance > WALL_SEGMENT_SNAP_THRESHOLD_MM) {
+        continue;
+      }
+
+      if (!bestProjection || projection.distance < bestProjection.distance) {
+        bestProjection = projection;
+        bestSegment = segment;
+      }
+    }
+
+    if (bestSegment && bestProjection) {
+      return this.ensureNodeOnSegment(bestSegment, this.snapToGrid(bestProjection.point));
+    }
+
+    return this.createWallNode(snappedWorldPoint);
+  }
+
+  private snapWallPointToDirection(anchor: WorldPoint, rawPoint: WorldPoint): WorldPoint {
+    const deltaX = rawPoint.x - anchor.x;
+    const deltaY = rawPoint.y - anchor.y;
+
+    if (Math.abs(deltaX) <= Number.EPSILON && Math.abs(deltaY) <= Number.EPSILON) {
+      return { ...anchor };
+    }
+
+    const rawAngleDeg = ((Math.atan2(deltaY, deltaX) * 180) / Math.PI + 360) % 180;
+    const nearestAngle = ORTHOGONAL_SEGMENT_ANGLES_DEG.reduce((nearest, candidate) => {
+      const nearestDiff = Math.min(Math.abs(rawAngleDeg - nearest), 180 - Math.abs(rawAngleDeg - nearest));
+      const candidateDiff = Math.min(Math.abs(rawAngleDeg - candidate), 180 - Math.abs(rawAngleDeg - candidate));
+      return candidateDiff < nearestDiff ? candidate : nearest;
+    }, ORTHOGONAL_SEGMENT_ANGLES_DEG[0]);
+    const directionRad = (nearestAngle * Math.PI) / 180;
+    const direction = { x: Math.cos(directionRad), y: Math.sin(directionRad) };
+    const projection = deltaX * direction.x + deltaY * direction.y;
+
+    return this.snapToGrid(addScaled(anchor, direction, projection));
+  }
+
+  private splitSegmentByIntersections(segment: WallSegment): string[] {
+    const intersections: Array<{ point: WorldPoint; t: number }> = [];
+
+    for (const existing of this.wallSegments) {
+      if (existing.wallId === segment.wallId) {
+        continue;
+      }
+
+      const intersection = intersectSegments(segment.startPoint, segment.endPoint, existing.startPoint, existing.endPoint);
+
+      if (!intersection) {
+        continue;
+      }
+
+      if (intersection.tB > SPLIT_INTERSECTION_EPSILON_MM && intersection.tB < 1 - SPLIT_INTERSECTION_EPSILON_MM) {
+        const node = this.resolveWallPointToNode(intersection.point);
+        this.splitSegmentAtNode(existing.wallId, node.nodeId);
+      }
+
+      if (intersection.tA > SPLIT_INTERSECTION_EPSILON_MM && intersection.tA < 1 - SPLIT_INTERSECTION_EPSILON_MM) {
+        intersections.push({ point: this.snapToGrid(intersection.point), t: intersection.tA });
+      }
+    }
+
+    if (!intersections.length) {
+      return [segment.wallId];
+    }
+
+    intersections.sort((left, right) => left.t - right.t);
+    const splitNodes: string[] = [];
+
+    for (const intersection of intersections) {
+      const node = this.resolveWallPointToNode(intersection.point);
+      splitNodes.push(node.nodeId);
+    }
+
+    let currentSegmentIds = [segment.wallId];
+    for (const nodeId of splitNodes) {
+      const nextSegmentIds: string[] = [];
+
+      for (const segmentId of currentSegmentIds) {
+        const targetSegment = this.getSegmentById(segmentId);
+
+        if (!targetSegment) {
+          continue;
+        }
+
+        const didSplit = this.splitSegmentAtNode(targetSegment.wallId, nodeId);
+
+        if (!didSplit) {
+          nextSegmentIds.push(targetSegment.wallId);
+          continue;
+        }
+
+        const node = this.getNodeById(nodeId);
+        if (node) {
+          nextSegmentIds.push(...node.connectedWallIds.filter((candidateId) => {
+            const candidate = this.getSegmentById(candidateId);
+            return Boolean(
+              candidate &&
+                ((candidate.startNodeId === nodeId && candidate.endNodeId !== nodeId) || (candidate.endNodeId === nodeId && candidate.startNodeId !== nodeId)),
+            );
+          }));
+        }
+      }
+
+      currentSegmentIds = [...new Set(nextSegmentIds)];
+    }
+
+    return currentSegmentIds;
+  }
+
   setDrawingMode(next: boolean): boolean {
     if (this.mode !== 'main') {
       return this.isDrawingMode;
     }
 
     this.isDrawingMode = next;
+    this.currentToolMode = next ? 'wall' : 'select';
     this.transform.endDrag();
     this.resize.endResize();
 
@@ -365,11 +741,273 @@ export class CanvasEngine {
     return this.isDrawingMode;
   }
 
+  getCurrentToolMode(): CanvasToolMode {
+    return this.currentToolMode;
+  }
+
   private resetDrawingSession() {
     this.currentContourPoints = [];
     this.currentSegmentAngle = null;
     this.contourShapes = [];
     this.lastPointerWorldPoint = null;
+    this.wallChainStartNodeId = null;
+    this.wallChainCurrentNodeId = null;
+  }
+
+  private getNodePosition(nodeId: string): WorldPoint | null {
+    return this.getNodeById(nodeId)?.position ?? null;
+  }
+
+  private getDirectedEdgesByNode(): Map<string, DirectedWallEdge[]> {
+    const edgesByNode = new Map<string, DirectedWallEdge[]>();
+
+    const pushEdge = (edge: DirectedWallEdge) => {
+      const bucket = edgesByNode.get(edge.fromNodeId) ?? [];
+      bucket.push(edge);
+      edgesByNode.set(edge.fromNodeId, bucket);
+    };
+
+    for (const segment of this.wallSegments) {
+      const from = this.getNodePosition(segment.startNodeId);
+      const to = this.getNodePosition(segment.endNodeId);
+
+      if (!from || !to) {
+        continue;
+      }
+
+      pushEdge({
+        edgeId: `${segment.wallId}::forward`,
+        segmentId: segment.wallId,
+        fromNodeId: segment.startNodeId,
+        toNodeId: segment.endNodeId,
+        angle: Math.atan2(to.y - from.y, to.x - from.x),
+      });
+      pushEdge({
+        edgeId: `${segment.wallId}::backward`,
+        segmentId: segment.wallId,
+        fromNodeId: segment.endNodeId,
+        toNodeId: segment.startNodeId,
+        angle: Math.atan2(from.y - to.y, from.x - to.x),
+      });
+    }
+
+    for (const [nodeId, edges] of edgesByNode.entries()) {
+      edges.sort((left, right) => left.angle - right.angle);
+      edgesByNode.set(nodeId, edges);
+    }
+
+    return edgesByNode;
+  }
+
+  private getFaceArea(points: WorldPoint[]): number {
+    if (points.length < 3) {
+      return 0;
+    }
+
+    let area = 0;
+
+    for (let index = 0; index < points.length; index += 1) {
+      const nextIndex = (index + 1) % points.length;
+      area += points[index].x * points[nextIndex].y - points[nextIndex].x * points[index].y;
+    }
+
+    return area / 2;
+  }
+
+  private detectClosedRegions(): ClosedRegion[] {
+    const edgesByNode = this.getDirectedEdgesByNode();
+    const visited = new Set<string>();
+    const detected: ClosedRegion[] = [];
+
+    const getReverseEdgeId = (edge: DirectedWallEdge) => `${edge.segmentId}::${edge.edgeId.endsWith('forward') ? 'backward' : 'forward'}`;
+
+    for (const edgeList of edgesByNode.values()) {
+      for (const edge of edgeList) {
+        if (visited.has(edge.edgeId)) {
+          continue;
+        }
+
+        const pathEdges: DirectedWallEdge[] = [];
+        const pathNodeIds: string[] = [];
+        let currentEdge: DirectedWallEdge | null = edge;
+        let guard = 0;
+
+        while (currentEdge && guard < this.wallSegments.length * 4 + 8) {
+          guard += 1;
+          const activeEdge: DirectedWallEdge = currentEdge;
+
+          if (visited.has(activeEdge.edgeId)) {
+            break;
+          }
+
+          visited.add(activeEdge.edgeId);
+          pathEdges.push(activeEdge);
+          pathNodeIds.push(activeEdge.fromNodeId);
+          const outgoing: DirectedWallEdge[] = edgesByNode.get(activeEdge.toNodeId) ?? [];
+          const reverseEdgeId = getReverseEdgeId(activeEdge);
+          const reverseIndex = outgoing.findIndex((candidate: DirectedWallEdge) => candidate.edgeId === reverseEdgeId);
+
+          if (reverseIndex < 0 || outgoing.length === 0) {
+            currentEdge = null;
+            break;
+          }
+
+          const nextIndex = (reverseIndex - 1 + outgoing.length) % outgoing.length;
+          currentEdge = outgoing[nextIndex];
+
+          const candidateEdge = currentEdge;
+          if (candidateEdge && candidateEdge.edgeId === edge.edgeId) {
+            pathNodeIds.push(candidateEdge.fromNodeId);
+            break;
+          }
+        }
+
+        if (pathEdges.length < 3 || pathNodeIds.length < 4 || pathNodeIds[0] !== pathNodeIds[pathNodeIds.length - 1]) {
+          continue;
+        }
+
+        const polygon = pathNodeIds.slice(0, -1).map((nodeId) => this.getNodePosition(nodeId)).filter((point): point is WorldPoint => Boolean(point));
+
+        if (polygon.length < 3) {
+          continue;
+        }
+
+        const area = this.getFaceArea(polygon);
+        if (area <= WALL_REGION_MIN_AREA_MM2) {
+          continue;
+        }
+
+        const regionId = `region-${pathEdges.map((candidate) => candidate.segmentId).sort().join('-')}`;
+        detected.push({
+          regionId,
+          vertices: polygon,
+          wallSegmentIds: [...new Set(pathEdges.map((candidate) => candidate.segmentId))],
+          roomId: null,
+        });
+      }
+    }
+
+    return detected;
+  }
+
+  private syncAutoRoomsFromRegions() {
+    const autoRoomIds = new Set(this.autoRoomByRegionId.values());
+    this.rooms = this.rooms.filter((room) => !autoRoomIds.has(room.roomId));
+    const nextAutoRoomByRegionId = new Map<string, string>();
+
+    for (const region of this.closedRegions) {
+      if (region.vertices.length < 3) {
+        continue;
+      }
+
+      const bounds = region.vertices.reduce(
+        (acc, point) => ({
+          minX: Math.min(acc.minX, point.x),
+          maxX: Math.max(acc.maxX, point.x),
+          minY: Math.min(acc.minY, point.y),
+          maxY: Math.max(acc.maxY, point.y),
+        }),
+        { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY },
+      );
+      const center = this.snapToGrid({
+        x: (bounds.minX + bounds.maxX) / 2,
+        y: (bounds.minY + bounds.maxY) / 2,
+      });
+      const roomId = this.autoRoomByRegionId.get(region.regionId) ?? this.getNextRoomId();
+      const roomName = `${ROOM_FALLBACK_PREFIX} ${this.rooms.length + 1}`;
+      const room = normalizeRoomModel({
+        roomId,
+        roomName,
+        roomLabelVisible: true,
+        centerX: center.x,
+        centerY: center.y,
+        verticesMm: region.vertices.map((vertex) => ({ x: vertex.x - center.x, y: vertex.y - center.y })),
+        widthMm: Math.max(400, bounds.maxX - bounds.minX),
+        heightMm: Math.max(400, bounds.maxY - bounds.minY),
+        wallHeightMm: DEFAULT_WALL_HEIGHT_MM,
+        rotationDeg: 0,
+        settings: {
+          ...DEFAULT_ROOM_SETTINGS,
+          name: roomName,
+        },
+      });
+
+      region.roomId = roomId;
+      this.lastDetectedRoomId = roomId;
+      this.rooms.push(room);
+      nextAutoRoomByRegionId.set(region.regionId, roomId);
+    }
+
+    this.autoRoomByRegionId = nextAutoRoomByRegionId;
+    this.selection.setRooms(this.rooms);
+    this.transform.setRooms(this.rooms);
+    this.transform.setActiveRoomId(this.selection.getActiveRoomId());
+    this.resize.setRooms(this.rooms);
+    this.resize.setActiveRoomId(this.selection.getActiveRoomId());
+    this.rotate.setRooms(this.rooms);
+    this.rotate.setActiveRoomId(this.selection.getActiveRoomId());
+  }
+
+  private recomputeWallTopology() {
+    this.closedRegions = this.detectClosedRegions();
+
+    for (const segment of this.wallSegments) {
+      const linkedRoomIds = this.closedRegions
+        .filter((region) => region.wallSegmentIds.includes(segment.wallId))
+        .map((region) => region.roomId)
+        .filter((roomId): roomId is string => Boolean(roomId));
+
+      segment.roomIds = [...new Set(linkedRoomIds)];
+      segment.isInternal = segment.roomIds.length >= 2;
+      segment.isExternal = segment.roomIds.length <= 1;
+    }
+
+    this.syncAutoRoomsFromRegions();
+
+    for (const segment of this.wallSegments) {
+      const linkedRoomIds = this.closedRegions
+        .filter((region) => region.wallSegmentIds.includes(segment.wallId))
+        .map((region) => region.roomId)
+        .filter((roomId): roomId is string => Boolean(roomId));
+      segment.roomIds = [...new Set(linkedRoomIds)];
+      segment.isInternal = segment.roomIds.length >= 2;
+      segment.isExternal = segment.roomIds.length <= 1;
+    }
+
+    this.wallGraphUpdated = true;
+  }
+
+  addWallPointAtScreenPoint(point: ScreenPoint): WallSegment[] {
+    if (!this.isDrawingMode || this.mode !== 'main') {
+      return [];
+    }
+
+    const worldPoint = this.screenToWorld(point);
+    const chainNode = this.wallChainCurrentNodeId ? this.getNodeById(this.wallChainCurrentNodeId) : null;
+    const snappedPoint = chainNode ? this.snapWallPointToDirection(chainNode.position, worldPoint) : this.snapToGrid(worldPoint);
+    const targetNode = this.resolveWallPointToNode(snappedPoint);
+
+    if (!this.wallChainCurrentNodeId) {
+      this.wallChainStartNodeId = targetNode.nodeId;
+      this.wallChainCurrentNodeId = targetNode.nodeId;
+      this.lastPointerWorldPoint = { ...targetNode.position };
+      return [];
+    }
+
+    const created = this.createWallSegment(this.wallChainCurrentNodeId, targetNode.nodeId);
+
+    if (!created) {
+      return [];
+    }
+
+    const previousNodeId = this.wallChainCurrentNodeId;
+    this.splitSegmentByIntersections(created);
+    this.wallChainCurrentNodeId = targetNode.nodeId;
+    this.lastPointerWorldPoint = { ...targetNode.position };
+    const targetConnections = this.getNodeById(targetNode.nodeId)?.connectedWallIds.length ?? 0;
+    this.isContourClosed = Boolean(this.wallChainStartNodeId && (targetNode.nodeId === this.wallChainStartNodeId || (targetConnections > 1 && previousNodeId !== targetNode.nodeId)));
+    this.recomputeWallTopology();
+    return [created];
   }
 
   private registerSplitDebugState(sourceRoomId: string, newRoomIds: string[]) {
@@ -663,6 +1301,11 @@ export class CanvasEngine {
       return null;
     }
 
+    if (this.currentToolMode === 'wall') {
+      this.addWallPointAtScreenPoint(point);
+      return null;
+    }
+
     const worldPoint = this.snapToGrid(this.screenToWorld(point));
     const snappedSegment = this.snapContourPointToOrthogonalDirection(worldPoint);
     const contourPoint = this.currentContourPoints.length === 0 ? worldPoint : this.snapToGrid(snappedSegment.point);
@@ -762,6 +1405,32 @@ export class CanvasEngine {
     }));
   }
 
+  getWallGraphNodes(): WallNode[] {
+    return this.wallNodes.map((node) => ({
+      ...node,
+      position: { ...node.position },
+      connectedWallIds: [...node.connectedWallIds],
+    }));
+  }
+
+  getWallGraphSegments(): WallSegment[] {
+    return this.wallSegments.map((segment) => ({
+      ...segment,
+      startPoint: { ...segment.startPoint },
+      endPoint: { ...segment.endPoint },
+      roomIds: [...segment.roomIds],
+      surfaceIds: [...segment.surfaceIds],
+    }));
+  }
+
+  getWallClosedRegions(): ClosedRegion[] {
+    return this.closedRegions.map((region) => ({
+      ...region,
+      vertices: region.vertices.map((vertex) => ({ ...vertex })),
+      wallSegmentIds: [...region.wallSegmentIds],
+    }));
+  }
+
   setViewport(viewport: Viewport) {
     this.canvasState = {
       ...this.canvasState,
@@ -792,6 +1461,9 @@ export class CanvasEngine {
     this.resize.setActiveRoomId(this.selection.getActiveRoomId());
     this.rotate.setRooms(this.rooms);
     this.rotate.setActiveRoomId(this.selection.getActiveRoomId());
+    if (this.wallSegments.length > 0) {
+      this.recomputeWallTopology();
+    }
   }
 
   getRooms(): RoomModel[] {
@@ -940,10 +1612,17 @@ export class CanvasEngine {
   updateLastPointer(screenPoint: ScreenPoint): WorldPoint {
     const worldPoint = this.screenToWorld(screenPoint);
 
-    if (this.isDrawingMode && this.currentContourPoints.length > 0) {
-      const snappedSegment = this.snapContourPointToOrthogonalDirection(this.snapToGrid(worldPoint));
-      this.currentSegmentAngle = snappedSegment.angleDeg;
-      this.lastPointerWorldPoint = this.snapToGrid(snappedSegment.point);
+    if (this.isDrawingMode && (this.currentContourPoints.length > 0 || this.wallChainCurrentNodeId !== null)) {
+      if (this.currentToolMode === 'wall' && this.wallChainCurrentNodeId) {
+        const anchor = this.getNodeById(this.wallChainCurrentNodeId)?.position ?? this.snapToGrid(worldPoint);
+        const snappedPoint = this.snapWallPointToDirection(anchor, this.snapToGrid(worldPoint));
+        this.currentSegmentAngle = (Math.atan2(snappedPoint.y - anchor.y, snappedPoint.x - anchor.x) * 180) / Math.PI;
+        this.lastPointerWorldPoint = snappedPoint;
+      } else {
+        const snappedSegment = this.snapContourPointToOrthogonalDirection(this.snapToGrid(worldPoint));
+        this.currentSegmentAngle = snappedSegment.angleDeg;
+        this.lastPointerWorldPoint = this.snapToGrid(snappedSegment.point);
+      }
       return this.lastPointerWorldPoint;
     }
 
@@ -1245,6 +1924,8 @@ export class CanvasEngine {
       roomsCount: this.rooms.length,
       roomPositions: this.rooms.map((room) => ({ roomId: room.roomId, centerX: room.centerX, centerY: room.centerY })),
       isDrawingMode: this.isDrawingMode,
+      currentToolMode: this.currentToolMode,
+      wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
       isOrthogonalDrawingMode: this.isDrawingMode,
       currentSegmentAngle: this.currentSegmentAngle,
       currentContourPointsCount: this.currentContourPoints.length,
@@ -1263,6 +1944,13 @@ export class CanvasEngine {
       isRoomSplitOperation: this.isRoomSplitOperation,
       splitSourceRoomId: this.splitSourceRoomId,
       newRoomIds: [...this.splitNewRoomIds],
+      wallSegmentsCount: this.wallSegments.length,
+      wallNodesCount: this.wallNodes.length,
+      closedRegionsCount: this.closedRegions.length,
+      lastCreatedWallId: this.lastCreatedWallId,
+      lastCreatedNodeId: this.lastCreatedNodeId,
+      lastDetectedRoomId: this.lastDetectedRoomId,
+      wallGraphUpdated: this.wallGraphUpdated,
     };
   }
 
@@ -1707,6 +2395,8 @@ export class CanvasEngine {
       activeSurfaceId: this.activeSurfaceId,
       isSurfaceSceneMode: this.mode === 'surface-scene',
       isDrawingMode: this.isDrawingMode,
+      currentToolMode: this.currentToolMode,
+      wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
       currentContourPointsCount: this.currentContourPoints.length,
       isContourClosed: this.isContourClosed,
       lastCreatedShapeId: this.lastCreatedShapeId,

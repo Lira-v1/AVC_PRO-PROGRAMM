@@ -100,6 +100,8 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `snapPreviewTargetRoomId: ${debugState.snapPreview?.targetRoomId ?? 'null'}`,
     `roomPositions: ${roomPositions}`,
     `isDrawingMode: ${debugState.isDrawingMode ? 'true' : 'false'}`,
+    `currentToolMode: ${debugState.currentToolMode}`,
+    `wallDrawingMode: ${debugState.wallDrawingMode ? 'true' : 'false'}`,
     `isOrthogonalDrawingMode: ${debugState.isOrthogonalDrawingMode ? 'true' : 'false'}`,
     `currentSegmentAngle: ${debugState.currentSegmentAngle ?? 'null'}`,
     `currentContourPointsCount: ${debugState.currentContourPointsCount}`,
@@ -109,6 +111,13 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `isRoomSplitOperation: ${debugState.isRoomSplitOperation ? 'true' : 'false'}`,
     `splitSourceRoomId: ${debugState.splitSourceRoomId ?? 'null'}`,
     `newRoomIds: ${debugState.newRoomIds.length ? debugState.newRoomIds.join(', ') : 'none'}`,
+    `wallSegmentsCount: ${debugState.wallSegmentsCount}`,
+    `wallNodesCount: ${debugState.wallNodesCount}`,
+    `closedRegionsCount: ${debugState.closedRegionsCount}`,
+    `lastCreatedWallId: ${debugState.lastCreatedWallId ?? 'null'}`,
+    `lastCreatedNodeId: ${debugState.lastCreatedNodeId ?? 'null'}`,
+    `lastDetectedRoomId: ${debugState.lastDetectedRoomId ?? 'null'}`,
+    `wallGraphUpdated: ${debugState.wallGraphUpdated ? 'true' : 'false'}`,
     `roomVerticesCount: ${debugState.roomVerticesCount ?? 'null'}`,
     `roomIsPolygon: ${debugState.roomIsPolygon ? 'true' : 'false'}`,
     `roomEdgesCount: ${debugState.roomEdgesCount ?? 'null'}`,
@@ -1393,7 +1402,7 @@ export const CanvasV3DevScreen = () => {
                         <Text style={styles.toolsMenuItemText}>🧱 Добавить комнату</Text>
                       </Pressable>
                       <Pressable style={styles.toolsMenuItem} onPress={handleToggleDrawingMode}>
-                        <Text style={styles.toolsMenuItemText}>{snapshot.isDrawingMode ? '✏ Контур: выкл' : '✏ Контур: вкл'}</Text>
+                        <Text style={styles.toolsMenuItemText}>{snapshot.wallDrawingMode ? '🧱 Стена: выкл' : '🧱 Стена: вкл'}</Text>
                       </Pressable>
                       <Pressable
                         style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}
@@ -1431,6 +1440,8 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>projectId: {snapshot.projectId}</Text>
                   <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
                   <Text style={styles.metaText}>isDrawingMode: {debugState.isDrawingMode ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>currentToolMode: {debugState.currentToolMode}</Text>
+                  <Text style={styles.metaText}>wallDrawingMode: {debugState.wallDrawingMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isOrthogonalDrawingMode: {debugState.isOrthogonalDrawingMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>currentSegmentAngle: {debugState.currentSegmentAngle ?? 'null'}</Text>
                   <Text style={styles.metaText}>currentContourPointsCount: {debugState.currentContourPointsCount}</Text>
@@ -1463,6 +1474,13 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>sharedMode: {debugState.activeSurfaceSharedDebug?.sharedMode ?? 'null'}</Text>
                   <Text style={styles.metaText}>sharedLength: {debugState.activeSurfaceSharedDebug?.sharedLength ?? 'null'}</Text>
                   <Text style={styles.metaText}>surfaceType: {debugState.activeSurfaceSharedDebug?.surfaceType ?? 'external'}</Text>
+                  <Text style={styles.metaText}>wallSegmentsCount: {debugState.wallSegmentsCount}</Text>
+                  <Text style={styles.metaText}>wallNodesCount: {debugState.wallNodesCount}</Text>
+                  <Text style={styles.metaText}>closedRegionsCount: {debugState.closedRegionsCount}</Text>
+                  <Text style={styles.metaText}>lastCreatedWallId: {debugState.lastCreatedWallId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>lastCreatedNodeId: {debugState.lastCreatedNodeId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>lastDetectedRoomId: {debugState.lastDetectedRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>wallGraphUpdated: {debugState.wallGraphUpdated ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>
                     lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
                   </Text>

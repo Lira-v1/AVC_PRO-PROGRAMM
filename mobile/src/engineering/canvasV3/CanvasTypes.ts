@@ -80,9 +80,37 @@ export type RoomModel = {
 };
 
 export type CanvasMode = 'main' | 'room-surface-scene' | 'surface-scene';
+export type CanvasToolMode = 'select' | 'wall';
 export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'wall' | 'floor' | 'ceiling';
 export type SharedSurfaceMode = 'full' | 'partial';
 export type SurfaceWallType = 'internal' | 'external';
+
+export type WallNode = {
+  nodeId: string;
+  position: WorldPoint;
+  connectedWallIds: string[];
+};
+
+export type WallSegment = {
+  wallId: string;
+  startNodeId: string;
+  endNodeId: string;
+  startPoint: WorldPoint;
+  endPoint: WorldPoint;
+  length: number;
+  angle: number;
+  roomIds: string[];
+  surfaceIds: string[];
+  isExternal: boolean;
+  isInternal: boolean;
+};
+
+export type ClosedRegion = {
+  regionId: string;
+  vertices: WorldPoint[];
+  wallSegmentIds: string[];
+  roomId: string | null;
+};
 
 export type SharedSurfaceLink = {
   linkedSurfaceId: string;
@@ -236,6 +264,8 @@ export type CanvasSnapshot = {
   activeSurfaceId: string | null;
   isSurfaceSceneMode: boolean;
   isDrawingMode: boolean;
+  currentToolMode: CanvasToolMode;
+  wallDrawingMode: boolean;
   currentContourPointsCount: number;
   isContourClosed: boolean;
   lastCreatedShapeId: string | null;
@@ -281,6 +311,8 @@ export type CanvasDebugState = {
   roomsCount: number;
   roomPositions: Array<{ roomId: string; centerX: number; centerY: number }>;
   isDrawingMode: boolean;
+  currentToolMode: CanvasToolMode;
+  wallDrawingMode: boolean;
   isOrthogonalDrawingMode: boolean;
   currentSegmentAngle: number | null;
   currentContourPointsCount: number;
@@ -306,4 +338,11 @@ export type CanvasDebugState = {
   isRoomSplitOperation: boolean;
   splitSourceRoomId: string | null;
   newRoomIds: string[];
+  wallSegmentsCount: number;
+  wallNodesCount: number;
+  closedRegionsCount: number;
+  lastCreatedWallId: string | null;
+  lastCreatedNodeId: string | null;
+  lastDetectedRoomId: string | null;
+  wallGraphUpdated: boolean;
 };
