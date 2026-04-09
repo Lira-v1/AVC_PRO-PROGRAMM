@@ -30,6 +30,17 @@ export class CameraSystem {
     this.setZoom(this.state.zoom * factor);
   }
 
+  setPan(panX: number, panY: number) {
+    this.state.panX = panX;
+    this.state.panY = panY;
+  }
+
+  setView(next: { zoom: number; panX: number; panY: number }) {
+    this.state.zoom = clamp(next.zoom, this.state.minZoom, this.state.maxZoom);
+    this.state.panX = next.panX;
+    this.state.panY = next.panY;
+  }
+
   resetView() {
     this.state = { ...this.initialState };
   }
