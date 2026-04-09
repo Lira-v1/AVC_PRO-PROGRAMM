@@ -197,6 +197,7 @@ export const CanvasV3DevScreen = () => {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isGridVisible, setGridVisible] = useState(true);
   const [isFullscreenMode, setFullscreenMode] = useState(false);
+  const [isToolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [isRoomSettingsMenuOpen, setRoomSettingsMenuOpen] = useState(false);
   const [roomMenuSection, setRoomMenuSection] = useState<'root' | 'settings'>('root');
   const [roomSettingsEditField, setRoomSettingsEditField] = useState<'width' | 'height' | 'wallHeight' | 'name' | null>(null);
@@ -620,6 +621,7 @@ export const CanvasV3DevScreen = () => {
     }
 
     engineRef.current.addRoom();
+    setToolsMenuOpen(false);
     setOpenRoomStatus(null);
     refreshState();
   }, [refreshState, snapshot.mode]);
@@ -634,6 +636,12 @@ export const CanvasV3DevScreen = () => {
       setOpenRoomStatus(null);
     }
   }, [snapshot.activeRoomId]);
+
+  useEffect(() => {
+    if (snapshot.mode !== 'main' && isToolsMenuOpen) {
+      setToolsMenuOpen(false);
+    }
+  }, [isToolsMenuOpen, snapshot.mode]);
 
   return (
     <View style={styles.root}>
@@ -1181,14 +1189,35 @@ export const CanvasV3DevScreen = () => {
             ) : null}
 
             {snapshot.mode === 'main' ? (
-              <View style={styles.taskPanelLayer} pointerEvents="box-none">
-                <View style={styles.taskPanelCard} pointerEvents="auto">
-                  <Text style={styles.taskPanelTitle}>Task Panel</Text>
-                  <Text style={styles.taskPanelMeta}>projectId: {snapshot.projectId}</Text>
-                  <Text style={styles.taskPanelMeta}>rooms: {snapshot.roomsCount}</Text>
-                  <Pressable style={styles.taskPanelActionButton} onPress={handleAddRoom}>
-                    <Text style={styles.taskPanelActionText}>Добавить комнату</Text>
+              <View style={styles.toolsLayer} pointerEvents="box-none">
+                {isToolsMenuOpen ? <Pressable style={styles.toolsBackdrop} onPress={() => setToolsMenuOpen(false)} /> : null}
+                <View style={styles.toolsPanelWrap} pointerEvents="box-none">
+                  <Pressable
+                    style={[styles.toolsButton, isToolsMenuOpen ? styles.toolsButtonActive : null]}
+                    onPress={() => setToolsMenuOpen((current) => !current)}
+                  >
+                    <Text style={styles.toolsButtonText}>🧰 Инструменты</Text>
                   </Pressable>
+
+                  {isToolsMenuOpen ? (
+                    <View style={styles.toolsDropdown} pointerEvents="auto">
+                      <Pressable style={styles.toolsMenuItem} onPress={handleAddRoom}>
+                        <Text style={styles.toolsMenuItemText}>🧱 Добавить комнату</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}
+                        onPress={() => setToolsMenuOpen(false)}
+                      >
+                        <Text style={styles.toolsMenuItemTextMuted}>✏ Рисование</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}
+                        onPress={() => setToolsMenuOpen(false)}
+                      >
+                        <Text style={styles.toolsMenuItemTextMuted}>▭ Фигуры</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             ) : null}
@@ -1217,10 +1246,10 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>projectId: {snapshot.projectId}</Text>
                   <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
+                  <Text style={styles.metaText}>activeRoomId: {debugState.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>gridStepMm: {debugState.gridStepMm}</Text>
                   <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
                   <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
-                  <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>activeSurfaceId: {snapshot.activeSurfaceId ?? 'null'}</Text>
                   <Text style={styles.metaText}>isSurfaceSceneMode: {snapshot.isSurfaceSceneMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isSurfaceSelected: {isSurfaceSelected ? 'true' : 'false'}</Text>
@@ -1651,50 +1680,76 @@ const styles = StyleSheet.create({
     zIndex: 20,
     elevation: 20,
   },
-  taskPanelLayer: {
+  toolsLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 18,
     elevation: 18,
-    alignItems: 'flex-end',
-    justifyContent: 'flex-start',
-    paddingTop: 12,
-    paddingRight: 12,
   },
-  taskPanelCard: {
-    width: 190,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderWidth: 1,
-    borderColor: '#D7E2F4',
-    padding: 10,
+  toolsBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  toolsPanelWrap: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 210,
     gap: 6,
+    alignItems: 'stretch',
+  },
+  toolsButton: {
+    minHeight: 40,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  toolsButtonActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  toolsButtonText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  toolsDropdown: {
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    padding: 6,
+    gap: 4,
     shadowColor: '#0F172A',
     shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
-  taskPanelTitle: {
+  toolsMenuItem: {
+    minHeight: 38,
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  toolsMenuItemPlaceholder: {
+    backgroundColor: '#F1F5F9',
+  },
+  toolsMenuItemText: {
     color: '#1E293B',
     fontSize: 13,
     fontWeight: '700',
   },
-  taskPanelMeta: {
-    color: '#475569',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  taskPanelActionButton: {
-    marginTop: 4,
-    borderRadius: 10,
-    backgroundColor: '#2563EB',
-    paddingVertical: 9,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-  },
-  taskPanelActionText: {
-    color: '#FFFFFF',
+  toolsMenuItemTextMuted: {
+    color: '#64748B',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   overlayControlButton: {
     position: 'absolute',
