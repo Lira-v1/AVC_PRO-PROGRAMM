@@ -303,4 +303,7 @@ export type CanvasDebugState = {
   cellsPerMeter: number;
   lastPointerWorldX: number | null;
   lastPointerWorldY: number | null;
+  isRoomSplitOperation: boolean;
+  splitSourceRoomId: string | null;
+  newRoomIds: string[];
 };
