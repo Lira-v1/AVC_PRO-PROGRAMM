@@ -21,8 +21,8 @@ const createScreenEdge = (id: string, from: ScreenPoint, to: ScreenPoint): Scree
 export class RoomRenderer {
   static toScreenGeometry(engine: CanvasEngine, roomGeometry: RoomWorldGeometry): RoomScreenGeometry {
     const isActive = engine.getActiveRoomId() === roomGeometry.roomId;
-    const corners = roomGeometry.corners.map((corner) => engine.worldToScreen(corner)) as [ScreenPoint, ScreenPoint, ScreenPoint, ScreenPoint];
-    const edges = roomGeometry.edges.map((edge) => createScreenEdge(edge.id, engine.worldToScreen(edge.from), engine.worldToScreen(edge.to))) as [ScreenEdge, ScreenEdge, ScreenEdge, ScreenEdge];
+    const corners = roomGeometry.corners.map((corner) => engine.worldToScreen(corner));
+    const edges = roomGeometry.edges.map((edge) => createScreenEdge(edge.id, engine.worldToScreen(edge.from), engine.worldToScreen(edge.to)));
     const topLeft = engine.worldToScreen({ x: roomGeometry.bounds.minX, y: roomGeometry.bounds.minY });
     const bottomRight = engine.worldToScreen({ x: roomGeometry.bounds.maxX, y: roomGeometry.bounds.maxY });
 

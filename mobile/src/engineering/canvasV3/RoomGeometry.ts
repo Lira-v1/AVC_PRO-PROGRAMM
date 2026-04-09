@@ -57,7 +57,24 @@ const createEdge = (roomId: string, index: number, from: WorldPoint, to: WorldPo
   to,
 });
 
+const createRectangleVertices = (room: RoomModel): WorldPoint[] => {
+  const center = { x: room.centerX, y: room.centerY };
+  const halfWidth = room.widthMm / 2;
+  const halfHeight = room.heightMm / 2;
+
+  return [
+    { x: center.x - halfWidth, y: center.y - halfHeight },
+    { x: center.x + halfWidth, y: center.y - halfHeight },
+    { x: center.x + halfWidth, y: center.y + halfHeight },
+    { x: center.x - halfWidth, y: center.y + halfHeight },
+  ];
+};
+
 export class RoomGeometry {
+  static hasPolygonGeometry(room: RoomModel): boolean {
+    return Array.isArray(room.verticesMm) && room.verticesMm.length >= 4;
+  }
+
   static containsPoint(room: RoomModel, point: WorldPoint): boolean {
     const geometry = RoomGeometry.fromModel(room);
     const polygon = geometry.corners;
@@ -83,24 +100,15 @@ export class RoomGeometry {
 
   static fromModel(room: RoomModel): RoomWorldGeometry {
     const center = { x: room.centerX, y: room.centerY };
-    const halfWidth = room.widthMm / 2;
-    const halfHeight = room.heightMm / 2;
     const rotationRad = toRadians(room.rotationDeg);
-
-    const baseCorners: [WorldPoint, WorldPoint, WorldPoint, WorldPoint] = [
-      { x: center.x - halfWidth, y: center.y - halfHeight },
-      { x: center.x + halfWidth, y: center.y - halfHeight },
-      { x: center.x + halfWidth, y: center.y + halfHeight },
-      { x: center.x - halfWidth, y: center.y + halfHeight },
-    ];
-
-    const corners = baseCorners.map((corner) => rotatePoint(corner, center, rotationRad)) as [WorldPoint, WorldPoint, WorldPoint, WorldPoint];
-    const edges: [WorldEdge, WorldEdge, WorldEdge, WorldEdge] = [
-      createEdge(room.roomId, 0, corners[0], corners[1]),
-      createEdge(room.roomId, 1, corners[1], corners[2]),
-      createEdge(room.roomId, 2, corners[2], corners[3]),
-      createEdge(room.roomId, 3, corners[3], corners[0]),
-    ];
+    const baseCorners = RoomGeometry.hasPolygonGeometry(room)
+      ? room.verticesMm!.map((vertex) => ({
+          x: center.x + vertex.x,
+          y: center.y + vertex.y,
+        }))
+      : createRectangleVertices(room);
+    const corners = baseCorners.map((corner) => rotatePoint(corner, center, rotationRad));
+    const edges = corners.map((corner, index) => createEdge(room.roomId, index, corner, corners[(index + 1) % corners.length]));
 
     return {
       roomId: room.roomId,
