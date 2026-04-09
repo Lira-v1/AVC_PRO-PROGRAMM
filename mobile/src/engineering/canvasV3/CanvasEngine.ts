@@ -57,6 +57,7 @@ const DEFAULT_GRID_STEP_MM = 100;
 const ROOM_FALLBACK_PREFIX = 'Комната';
 const DEFAULT_WALL_HEIGHT_MM = 2700;
 const SURFACE_SCENE_GAP_MM = 280;
+const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -148,6 +149,10 @@ export class CanvasEngine {
       isReady: viewport.width > 0 && viewport.height > 0,
       viewport,
     };
+
+    if (this.mode === 'room-surface-scene') {
+      this.fitSurfaceSceneToViewport();
+    }
   }
 
   setRooms(rooms: RoomModel[]) {
@@ -494,6 +499,7 @@ export class CanvasEngine {
     this.surfaceSceneRoomId = roomId;
     this.transform.endDrag();
     this.resize.endResize();
+    this.fitSurfaceSceneToViewport();
 
     return this.getRoomSurfaceSceneWorldGeometry();
   }
@@ -501,6 +507,44 @@ export class CanvasEngine {
   closeRoomSurfaceScene() {
     this.mode = 'main';
     this.surfaceSceneRoomId = null;
+  }
+
+  private fitSurfaceSceneToViewport() {
+    const surfaceGeometry = this.getRoomSurfaceSceneWorldGeometry();
+    const viewport = this.canvasState.viewport;
+
+    if (!surfaceGeometry.length || viewport.width <= 0 || viewport.height <= 0) {
+      return;
+    }
+
+    const sceneBounds = surfaceGeometry.reduce(
+      (acc, surface) => ({
+        minX: Math.min(acc.minX, surface.bounds.minX),
+        minY: Math.min(acc.minY, surface.bounds.minY),
+        maxX: Math.max(acc.maxX, surface.bounds.maxX),
+        maxY: Math.max(acc.maxY, surface.bounds.maxY),
+      }),
+      {
+        minX: Number.POSITIVE_INFINITY,
+        minY: Number.POSITIVE_INFINITY,
+        maxX: Number.NEGATIVE_INFINITY,
+        maxY: Number.NEGATIVE_INFINITY,
+      },
+    );
+
+    const boundsWidth = Math.max(1, sceneBounds.maxX - sceneBounds.minX);
+    const boundsHeight = Math.max(1, sceneBounds.maxY - sceneBounds.minY);
+    const availableWidth = Math.max(1, viewport.width - SURFACE_SCENE_VIEWPORT_PADDING_PX * 2);
+    const availableHeight = Math.max(1, viewport.height - SURFACE_SCENE_VIEWPORT_PADDING_PX * 2);
+    const fitZoom = Math.min(availableWidth / boundsWidth, availableHeight / boundsHeight);
+    const sceneCenterX = (sceneBounds.minX + sceneBounds.maxX) / 2;
+    const sceneCenterY = (sceneBounds.minY + sceneBounds.maxY) / 2;
+
+    this.camera.setView({
+      zoom: fitZoom,
+      panX: sceneCenterX,
+      panY: sceneCenterY,
+    });
   }
 
   private getWallHeightMm(room: RoomModel): number {
