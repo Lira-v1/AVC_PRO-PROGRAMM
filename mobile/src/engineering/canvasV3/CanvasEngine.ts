@@ -520,6 +520,7 @@ export class CanvasEngine {
       activeRoomId: this.getActiveRoomId(),
       snappedRoomId: this.transform.getSnappedRoomId(),
       snapTargetRoomId: this.transform.getSnapTargetRoomId(),
+      snapPreview: this.transform.getSnapPreview(),
       isDraggingRoom: this.transform.isDragActive(),
       isResizingRoom: this.resize.isResizeActive(),
       activeResizeHandleId: this.resize.getActiveHandleId(),

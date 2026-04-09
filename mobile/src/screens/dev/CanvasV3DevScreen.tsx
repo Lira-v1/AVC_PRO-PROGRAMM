@@ -115,6 +115,8 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
     `snappedRoomId: ${debugState.snappedRoomId ?? 'null'}`,
     `snapTargetRoomId: ${debugState.snapTargetRoomId ?? 'null'}`,
+    `snapPreviewKind: ${debugState.snapPreview?.kind ?? 'null'}`,
+    `snapPreviewTargetRoomId: ${debugState.snapPreview?.targetRoomId ?? 'null'}`,
     `roomPositions: ${roomPositions}`,
     `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
@@ -473,6 +475,25 @@ export const CanvasV3DevScreen = () => {
     [roomData],
   );
   const activeRoomGeometry = visibleRoomGeometries.find((roomGeometry) => roomGeometry.isActive) ?? null;
+  const snapPreviewOverlay = useMemo(() => {
+    const preview = debugState.snapPreview;
+
+    if (!preview || snapshot.mode !== 'main' || !debugState.isDraggingRoom || !activeRoomGeometry) {
+      return null;
+    }
+
+    const from = engineRef.current.worldToScreen(preview.fromPoint);
+    const to = engineRef.current.worldToScreen(preview.toPoint);
+    const previewCenter = engineRef.current.worldToScreen({ x: preview.centerX, y: preview.centerY });
+
+    return {
+      kind: preview.kind,
+      targetRoomId: preview.targetRoomId,
+      from,
+      to,
+      previewCenter,
+    };
+  }, [activeRoomGeometry, debugState.isDraggingRoom, debugState.snapPreview, snapshot.mode]);
   const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
@@ -868,6 +889,60 @@ export const CanvasV3DevScreen = () => {
               />
             ))}
 
+            {snapPreviewOverlay ? (
+              <>
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.snapPreviewGhost,
+                    {
+                      width: activeRoomGeometry?.edges[0]?.length ?? activeRoomGeometry?.bounds.width ?? 0,
+                      height: activeRoomGeometry?.edges[1]?.length ?? activeRoomGeometry?.bounds.height ?? 0,
+                      left:
+                        snapPreviewOverlay.previewCenter.x -
+                        (activeRoomGeometry?.edges[0]?.length ?? activeRoomGeometry?.bounds.width ?? 0) / 2,
+                      top:
+                        snapPreviewOverlay.previewCenter.y -
+                        (activeRoomGeometry?.edges[1]?.length ?? activeRoomGeometry?.bounds.height ?? 0) / 2,
+                      transform: [{ rotate: `${activeRoomGeometry?.rotationDeg ?? 0}deg` }],
+                    },
+                  ]}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.snapPreviewGuideLine,
+                    {
+                      width: Math.max(Math.hypot(snapPreviewOverlay.to.x - snapPreviewOverlay.from.x, snapPreviewOverlay.to.y - snapPreviewOverlay.from.y), 1),
+                      left: (snapPreviewOverlay.to.x + snapPreviewOverlay.from.x) / 2 - Math.hypot(snapPreviewOverlay.to.x - snapPreviewOverlay.from.x, snapPreviewOverlay.to.y - snapPreviewOverlay.from.y) / 2,
+                      top: (snapPreviewOverlay.to.y + snapPreviewOverlay.from.y) / 2 - 1,
+                      transform: [{ rotate: `${Math.atan2(snapPreviewOverlay.to.y - snapPreviewOverlay.from.y, snapPreviewOverlay.to.x - snapPreviewOverlay.from.x)}rad` }],
+                    },
+                  ]}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.snapPreviewDotFrom,
+                    {
+                      left: snapPreviewOverlay.from.x - 4,
+                      top: snapPreviewOverlay.from.y - 4,
+                    },
+                  ]}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.snapPreviewDotTo,
+                    {
+                      left: snapPreviewOverlay.to.x - 5,
+                      top: snapPreviewOverlay.to.y - 5,
+                    },
+                  ]}
+                />
+              </>
+            ) : null}
+
             {snapshot.mode !== 'main'
               ? surfaceGeometries.map((surface) => (
                   (() => {
@@ -1255,6 +1330,8 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>activeRoomId: {debugState.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>snappedRoomId: {debugState.snappedRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>snapTargetRoomId: {debugState.snapTargetRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>snapPreviewKind: {debugState.snapPreview?.kind ?? 'null'}</Text>
+                  <Text style={styles.metaText}>snapPreviewTargetRoomId: {debugState.snapPreview?.targetRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>
                     roomPositions: {debugState.roomPositions.length ? debugState.roomPositions.map((room) => `${room.roomId}:(${room.centerX.toFixed(0)}, ${room.centerY.toFixed(0)})`).join(', ') : 'none'}
                   </Text>
@@ -1667,6 +1744,36 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(58, 123, 255, 0.08)',
     borderColor: SELECTED_ROOM_COLOR,
     borderWidth: 2,
+  },
+  snapPreviewGhost: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderRadius: 6,
+    borderColor: 'rgba(58, 123, 255, 0.42)',
+    backgroundColor: 'rgba(58, 123, 255, 0.03)',
+    borderStyle: 'dashed',
+  },
+  snapPreviewGuideLine: {
+    position: 'absolute',
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: 'rgba(58, 123, 255, 0.35)',
+  },
+  snapPreviewDotFrom: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(58, 123, 255, 0.45)',
+  },
+  snapPreviewDotTo: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: 'rgba(58, 123, 255, 0.7)',
+    backgroundColor: '#FFFFFF',
   },
   dimensionLine: {
     position: 'absolute',

@@ -2,10 +2,17 @@ import { RoomModel, WorldBounds, WorldPoint } from './CanvasTypes';
 import { RoomGeometry } from './RoomGeometry';
 
 const DEFAULT_GRID_STEP_MM = 100;
-const DEFAULT_ROOM_SNAP_ENTER_THRESHOLD_MM = 20;
-const DEFAULT_ROOM_SNAP_RELEASE_THRESHOLD_MM = 30;
-const DEFAULT_GRID_SNAP_ENTER_THRESHOLD_MM = 10;
-const DEFAULT_GRID_SNAP_RELEASE_THRESHOLD_MM = 16;
+const DEFAULT_ROOM_SNAP_ENTER_THRESHOLD_MM = 14;
+const DEFAULT_ROOM_SNAP_RELEASE_THRESHOLD_MM = 20;
+const DEFAULT_GRID_SNAP_ENTER_THRESHOLD_MM = 6;
+const DEFAULT_GRID_SNAP_RELEASE_THRESHOLD_MM = 10;
+const DEFAULT_CORNER_SNAP_ENTER_THRESHOLD_MM = 16;
+const DEFAULT_CORNER_SNAP_RELEASE_THRESHOLD_MM = 22;
+const DEFAULT_CORNER_SNAP_PRIORITY_BONUS_MM = 2;
+const SNAP_SOFT_INFLUENCE_MIN = 0.2;
+const SNAP_SOFT_INFLUENCE_MAX = 0.62;
+const SNAP_HARD_LOCK_DISTANCE_MM = 1.4;
+const SNAP_PREVIEW_MULTIPLIER = 1.6;
 const OVERLAP_EPSILON_MM = 0.001;
 
 type SnapResult = {
@@ -15,13 +22,27 @@ type SnapResult = {
   snapTargetRoomId: string | null;
 };
 
+type SnapKind = 'side' | 'corner-room' | 'corner-grid';
+
 type SnapCandidate = {
   centerX: number;
   centerY: number;
   sourceRoomId: string;
-  targetRoomId: string;
+  targetRoomId: string | null;
   distance: number;
+  kind: SnapKind;
+  fromPoint: WorldPoint;
+  toPoint: WorldPoint;
 };
+
+export type RoomSnapPreview = {
+  kind: SnapKind;
+  centerX: number;
+  centerY: number;
+  fromPoint: WorldPoint;
+  toPoint: WorldPoint;
+  targetRoomId: string | null;
+} | null;
 
 const snapToStep = (value: number, stepMm: number) => Math.round(value / stepMm) * stepMm;
 const rangesOverlap = (minA: number, maxA: number, minB: number, maxB: number) => Math.min(maxA, maxB) - Math.max(minA, minB) > OVERLAP_EPSILON_MM;
@@ -40,23 +61,30 @@ export class RoomTransformSystem {
   private readonly gridStepMm: number;
   private readonly roomSnapEnterThresholdMm: number;
   private readonly roomSnapReleaseThresholdMm: number;
+  private readonly cornerSnapEnterThresholdMm: number;
+  private readonly cornerSnapReleaseThresholdMm: number;
   private readonly gridSnapEnterThresholdMm: number;
   private readonly gridSnapReleaseThresholdMm: number;
   private snappedRoomId: string | null = null;
   private snapTargetRoomId: string | null = null;
   private isGridSnappedX = false;
   private isGridSnappedY = false;
+  private snapPreview: RoomSnapPreview = null;
 
   constructor(
     gridStepMm = DEFAULT_GRID_STEP_MM,
     roomSnapEnterThresholdMm = DEFAULT_ROOM_SNAP_ENTER_THRESHOLD_MM,
     roomSnapReleaseThresholdMm = DEFAULT_ROOM_SNAP_RELEASE_THRESHOLD_MM,
+    cornerSnapEnterThresholdMm = DEFAULT_CORNER_SNAP_ENTER_THRESHOLD_MM,
+    cornerSnapReleaseThresholdMm = DEFAULT_CORNER_SNAP_RELEASE_THRESHOLD_MM,
     gridSnapEnterThresholdMm = DEFAULT_GRID_SNAP_ENTER_THRESHOLD_MM,
     gridSnapReleaseThresholdMm = DEFAULT_GRID_SNAP_RELEASE_THRESHOLD_MM,
   ) {
     this.gridStepMm = gridStepMm;
     this.roomSnapEnterThresholdMm = roomSnapEnterThresholdMm;
     this.roomSnapReleaseThresholdMm = Math.max(roomSnapEnterThresholdMm, roomSnapReleaseThresholdMm);
+    this.cornerSnapEnterThresholdMm = cornerSnapEnterThresholdMm;
+    this.cornerSnapReleaseThresholdMm = Math.max(cornerSnapEnterThresholdMm, cornerSnapReleaseThresholdMm);
     this.gridSnapEnterThresholdMm = gridSnapEnterThresholdMm;
     this.gridSnapReleaseThresholdMm = Math.max(gridSnapEnterThresholdMm, gridSnapReleaseThresholdMm);
   }
@@ -69,6 +97,7 @@ export class RoomTransformSystem {
       this.isDragging = false;
       this.isGridSnappedX = false;
       this.isGridSnappedY = false;
+      this.snapPreview = null;
     }
 
     if (this.snapTargetRoomId && !this.rooms.some((room) => room.roomId === this.snapTargetRoomId)) {
@@ -76,6 +105,7 @@ export class RoomTransformSystem {
       this.snappedRoomId = null;
       this.isGridSnappedX = false;
       this.isGridSnappedY = false;
+      this.snapPreview = null;
     }
   }
 
@@ -88,6 +118,7 @@ export class RoomTransformSystem {
       this.snapTargetRoomId = null;
       this.isGridSnappedX = false;
       this.isGridSnappedY = false;
+      this.snapPreview = null;
     }
   }
 
@@ -100,6 +131,7 @@ export class RoomTransformSystem {
       this.snapTargetRoomId = null;
       this.isGridSnappedX = false;
       this.isGridSnappedY = false;
+      this.snapPreview = null;
     }
 
     return canDrag;
@@ -129,7 +161,7 @@ export class RoomTransformSystem {
     return true;
   }
 
-  private getSnapCandidate(
+  private getSideSnapCandidate(
     movedRoom: RoomModel,
     centerX: number,
     centerY: number,
@@ -159,12 +191,17 @@ export class RoomTransformSystem {
           const candidateCenterX = centerX + leftToRightDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, candidateCenterX, centerY)) {
+            const overlapYFrom = Math.max(movedBounds.minY, targetBounds.minY);
+            const overlapYTo = Math.min(movedBounds.maxY, targetBounds.maxY);
             const candidate: SnapCandidate = {
               centerX: candidateCenterX,
               centerY,
               sourceRoomId: movedRoom.roomId,
               targetRoomId: targetRoom.roomId,
               distance: Math.abs(leftToRightDistance),
+              kind: 'side',
+              fromPoint: { x: movedBounds.minX, y: (overlapYFrom + overlapYTo) / 2 },
+              toPoint: { x: targetBounds.maxX, y: (overlapYFrom + overlapYTo) / 2 },
             };
 
             if (!bestCandidate || candidate.distance < bestCandidate.distance) {
@@ -179,12 +216,17 @@ export class RoomTransformSystem {
           const candidateCenterX = centerX + rightToLeftDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, candidateCenterX, centerY)) {
+            const overlapYFrom = Math.max(movedBounds.minY, targetBounds.minY);
+            const overlapYTo = Math.min(movedBounds.maxY, targetBounds.maxY);
             const candidate: SnapCandidate = {
               centerX: candidateCenterX,
               centerY,
               sourceRoomId: movedRoom.roomId,
               targetRoomId: targetRoom.roomId,
               distance: Math.abs(rightToLeftDistance),
+              kind: 'side',
+              fromPoint: { x: movedBounds.maxX, y: (overlapYFrom + overlapYTo) / 2 },
+              toPoint: { x: targetBounds.minX, y: (overlapYFrom + overlapYTo) / 2 },
             };
 
             if (!bestCandidate || candidate.distance < bestCandidate.distance) {
@@ -201,12 +243,17 @@ export class RoomTransformSystem {
           const candidateCenterY = centerY + topToBottomDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, centerX, candidateCenterY)) {
+            const overlapXFrom = Math.max(movedBounds.minX, targetBounds.minX);
+            const overlapXTo = Math.min(movedBounds.maxX, targetBounds.maxX);
             const candidate: SnapCandidate = {
               centerX,
               centerY: candidateCenterY,
               sourceRoomId: movedRoom.roomId,
               targetRoomId: targetRoom.roomId,
               distance: Math.abs(topToBottomDistance),
+              kind: 'side',
+              fromPoint: { x: (overlapXFrom + overlapXTo) / 2, y: movedBounds.minY },
+              toPoint: { x: (overlapXFrom + overlapXTo) / 2, y: targetBounds.maxY },
             };
 
             if (!bestCandidate || candidate.distance < bestCandidate.distance) {
@@ -221,12 +268,17 @@ export class RoomTransformSystem {
           const candidateCenterY = centerY + bottomToTopDistance;
 
           if (this.canPlaceWithoutOverlap(movedRoom, centerX, candidateCenterY)) {
+            const overlapXFrom = Math.max(movedBounds.minX, targetBounds.minX);
+            const overlapXTo = Math.min(movedBounds.maxX, targetBounds.maxX);
             const candidate: SnapCandidate = {
               centerX,
               centerY: candidateCenterY,
               sourceRoomId: movedRoom.roomId,
               targetRoomId: targetRoom.roomId,
               distance: Math.abs(bottomToTopDistance),
+              kind: 'side',
+              fromPoint: { x: (overlapXFrom + overlapXTo) / 2, y: movedBounds.maxY },
+              toPoint: { x: (overlapXFrom + overlapXTo) / 2, y: targetBounds.minY },
             };
 
             if (!bestCandidate || candidate.distance < bestCandidate.distance) {
@@ -234,6 +286,105 @@ export class RoomTransformSystem {
             }
           }
         }
+      }
+    }
+
+    return bestCandidate;
+  }
+
+  private getRoomCornerSnapCandidate(
+    movedRoom: RoomModel,
+    centerX: number,
+    centerY: number,
+    thresholdMm: number,
+    onlyTargetRoomId?: string,
+  ): SnapCandidate | null {
+    const movedGeometry = RoomGeometry.fromModel({ ...movedRoom, centerX, centerY });
+    let bestCandidate: SnapCandidate | null = null;
+
+    for (const targetRoom of this.rooms) {
+      if (targetRoom.roomId === movedRoom.roomId) {
+        continue;
+      }
+      if (onlyTargetRoomId && targetRoom.roomId !== onlyTargetRoomId) {
+        continue;
+      }
+
+      const targetGeometry = RoomGeometry.fromModel(targetRoom);
+
+      for (const movedCorner of movedGeometry.corners) {
+        for (const targetCorner of targetGeometry.corners) {
+          const dx = targetCorner.x - movedCorner.x;
+          const dy = targetCorner.y - movedCorner.y;
+          const distance = Math.hypot(dx, dy);
+
+          if (distance > thresholdMm) {
+            continue;
+          }
+
+          const candidateCenterX = centerX + dx;
+          const candidateCenterY = centerY + dy;
+
+          if (!this.canPlaceWithoutOverlap(movedRoom, candidateCenterX, candidateCenterY)) {
+            continue;
+          }
+
+          const candidate: SnapCandidate = {
+            centerX: candidateCenterX,
+            centerY: candidateCenterY,
+            sourceRoomId: movedRoom.roomId,
+            targetRoomId: targetRoom.roomId,
+            distance,
+            kind: 'corner-room',
+            fromPoint: movedCorner,
+            toPoint: targetCorner,
+          };
+
+          if (!bestCandidate || candidate.distance < bestCandidate.distance) {
+            bestCandidate = candidate;
+          }
+        }
+      }
+    }
+
+    return bestCandidate;
+  }
+
+  private getGridCornerSnapCandidate(movedRoom: RoomModel, centerX: number, centerY: number, thresholdMm: number): SnapCandidate | null {
+    const movedGeometry = RoomGeometry.fromModel({ ...movedRoom, centerX, centerY });
+    let bestCandidate: SnapCandidate | null = null;
+
+    for (const movedCorner of movedGeometry.corners) {
+      const snappedX = snapToStep(movedCorner.x, this.gridStepMm);
+      const snappedY = snapToStep(movedCorner.y, this.gridStepMm);
+      const dx = snappedX - movedCorner.x;
+      const dy = snappedY - movedCorner.y;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance > thresholdMm) {
+        continue;
+      }
+
+      const candidateCenterX = centerX + dx;
+      const candidateCenterY = centerY + dy;
+
+      if (!this.canPlaceWithoutOverlap(movedRoom, candidateCenterX, candidateCenterY)) {
+        continue;
+      }
+
+      const candidate: SnapCandidate = {
+        centerX: candidateCenterX,
+        centerY: candidateCenterY,
+        sourceRoomId: movedRoom.roomId,
+        targetRoomId: null,
+        distance,
+        kind: 'corner-grid',
+        fromPoint: movedCorner,
+        toPoint: { x: snappedX, y: snappedY },
+      };
+
+      if (!bestCandidate || candidate.distance < bestCandidate.distance) {
+        bestCandidate = candidate;
       }
     }
 
@@ -252,18 +403,69 @@ export class RoomTransformSystem {
     return { value, isSnapped: false };
   }
 
+  private applySoftSnap(rawValue: number, snappedValue: number, distance: number, threshold: number): number {
+    if (distance <= SNAP_HARD_LOCK_DISTANCE_MM) {
+      return snappedValue;
+    }
+
+    const normalized = Math.max(0, Math.min(1, 1 - distance / Math.max(threshold, OVERLAP_EPSILON_MM)));
+    const influence = SNAP_SOFT_INFLUENCE_MIN + (SNAP_SOFT_INFLUENCE_MAX - SNAP_SOFT_INFLUENCE_MIN) * normalized;
+
+    return rawValue + (snappedValue - rawValue) * influence;
+  }
+
   private resolveDragPosition(room: RoomModel, centerX: number, centerY: number): SnapResult {
-    const snapCandidate =
-      (this.snapTargetRoomId
-        ? this.getSnapCandidate(room, centerX, centerY, this.roomSnapReleaseThresholdMm, this.snapTargetRoomId)
-        : null) ?? this.getSnapCandidate(room, centerX, centerY, this.roomSnapEnterThresholdMm);
+    const isHoldingRoomSnap = Boolean(this.snapTargetRoomId);
+    const cornerThreshold = isHoldingRoomSnap ? this.cornerSnapReleaseThresholdMm : this.cornerSnapEnterThresholdMm;
+    const sideThreshold = isHoldingRoomSnap ? this.roomSnapReleaseThresholdMm : this.roomSnapEnterThresholdMm;
+    const roomTargetScope = this.snapTargetRoomId ?? undefined;
+
+    const roomCornerCandidate = this.getRoomCornerSnapCandidate(room, centerX, centerY, cornerThreshold, roomTargetScope);
+    const gridCornerCandidate = this.getGridCornerSnapCandidate(room, centerX, centerY, cornerThreshold);
+    const sideCandidate = this.getSideSnapCandidate(room, centerX, centerY, sideThreshold, roomTargetScope);
+
+    const bestCornerCandidate =
+      roomCornerCandidate && gridCornerCandidate
+        ? roomCornerCandidate.distance <= gridCornerCandidate.distance
+          ? roomCornerCandidate
+          : gridCornerCandidate
+        : roomCornerCandidate ?? gridCornerCandidate;
+
+    const shouldPreferCorner =
+      Boolean(bestCornerCandidate) &&
+      (!sideCandidate || bestCornerCandidate!.distance <= sideCandidate.distance + DEFAULT_CORNER_SNAP_PRIORITY_BONUS_MM);
+
+    const snapCandidate = shouldPreferCorner ? bestCornerCandidate : sideCandidate;
+
+    const previewSideThreshold = sideThreshold * SNAP_PREVIEW_MULTIPLIER;
+    const previewCornerThreshold = cornerThreshold * SNAP_PREVIEW_MULTIPLIER;
+    const previewCandidate =
+      snapCandidate ??
+      this.getRoomCornerSnapCandidate(room, centerX, centerY, previewCornerThreshold) ??
+      this.getGridCornerSnapCandidate(room, centerX, centerY, previewCornerThreshold) ??
+      this.getSideSnapCandidate(room, centerX, centerY, previewSideThreshold);
+
+    this.snapPreview = previewCandidate
+      ? {
+          kind: previewCandidate.kind,
+          centerX: previewCandidate.centerX,
+          centerY: previewCandidate.centerY,
+          fromPoint: previewCandidate.fromPoint,
+          toPoint: previewCandidate.toPoint,
+          targetRoomId: previewCandidate.targetRoomId,
+        }
+      : null;
 
     if (snapCandidate) {
+      const threshold = snapCandidate.kind === 'side' ? sideThreshold : cornerThreshold;
+      const softenedCenterX = this.applySoftSnap(centerX, snapCandidate.centerX, snapCandidate.distance, threshold);
+      const softenedCenterY = this.applySoftSnap(centerY, snapCandidate.centerY, snapCandidate.distance, threshold);
+
       this.isGridSnappedX = false;
       this.isGridSnappedY = false;
       return {
-        centerX: snapCandidate.centerX,
-        centerY: snapCandidate.centerY,
+        centerX: softenedCenterX,
+        centerY: softenedCenterY,
         snappedRoomId: snapCandidate.sourceRoomId,
         snapTargetRoomId: snapCandidate.targetRoomId,
       };
@@ -295,6 +497,7 @@ export class RoomTransformSystem {
       this.snapTargetRoomId = null;
       this.isGridSnappedX = false;
       this.isGridSnappedY = false;
+      this.snapPreview = null;
       return null;
     }
 
@@ -316,6 +519,7 @@ export class RoomTransformSystem {
     this.snapTargetRoomId = null;
     this.isGridSnappedX = false;
     this.isGridSnappedY = false;
+    this.snapPreview = null;
   }
 
   isDragActive(): boolean {
@@ -328,5 +532,9 @@ export class RoomTransformSystem {
 
   getSnapTargetRoomId(): string | null {
     return this.snapTargetRoomId;
+  }
+
+  getSnapPreview(): RoomSnapPreview {
+    return this.snapPreview;
   }
 }

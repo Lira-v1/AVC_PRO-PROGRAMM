@@ -227,6 +227,14 @@ export type CanvasDebugState = {
   activeRoomId: string | null;
   snappedRoomId: string | null;
   snapTargetRoomId: string | null;
+  snapPreview: {
+    kind: 'side' | 'corner-room' | 'corner-grid';
+    centerX: number;
+    centerY: number;
+    fromPoint: WorldPoint;
+    toPoint: WorldPoint;
+    targetRoomId: string | null;
+  } | null;
   isDraggingRoom: boolean;
   isResizingRoom: boolean;
   activeResizeHandleId: RoomResizeHandleId | null;
