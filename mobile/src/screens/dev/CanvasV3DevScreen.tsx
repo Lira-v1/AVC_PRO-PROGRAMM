@@ -230,7 +230,7 @@ export const CanvasV3DevScreen = () => {
 
   const beginInteraction = useCallback(
     (screenPoint: ScreenPoint, pointerId?: number) => {
-      const isSurfaceSceneMode = engineRef.current.getCanvasMode() === 'room-surface-scene';
+      const isSurfaceSceneMode = engineRef.current.getCanvasMode() !== 'main';
 
       if (isSurfaceSceneMode) {
         engineRef.current.updateLastPointer(screenPoint);
@@ -347,9 +347,9 @@ export const CanvasV3DevScreen = () => {
         engineRef.current.updateLastPointer(screenPoint);
       }
 
-      const isSurfaceSceneMode = engineRef.current.getCanvasMode() === 'room-surface-scene';
+      const isRoomSurfaceSceneMode = engineRef.current.getCanvasMode() === 'room-surface-scene';
 
-      if (isSurfaceSceneMode && screenPoint && !session.moved) {
+      if (isRoomSurfaceSceneMode && screenPoint && !session.moved) {
         handleSurfaceTap(screenPoint);
       }
 
@@ -449,8 +449,9 @@ export const CanvasV3DevScreen = () => {
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
   const surfaceWorldGeometries = engineRef.current.getRoomSurfaceSceneWorldGeometry();
   const surfaceGeometries = engineRef.current.getRoomSurfaceSceneScreenGeometry();
-  const isSurfaceSceneMode = snapshot.mode === 'room-surface-scene';
-  const visibleRoomGeometries = isSurfaceSceneMode ? [] : roomGeometries;
+  const isRoomSurfaceSceneMode = snapshot.mode === 'room-surface-scene';
+  const isSurfaceSceneMode = snapshot.mode === 'surface-scene';
+  const visibleRoomGeometries = snapshot.mode === 'main' ? roomGeometries : [];
   const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
   const dimensionLabels = engineRef.current.getActiveRoomDimensionLabels();
   const roomData = engineRef.current.getRooms();
@@ -481,6 +482,7 @@ export const CanvasV3DevScreen = () => {
   const activeSurfaceDisplayName = activeSurface ? getSurfaceTitle(activeSurface.type) : '-';
   const activeSurfaceWidthMm = activeSurfaceWorld?.widthMm ?? null;
   const activeSurfaceHeightMm = activeSurfaceWorld?.heightMm ?? null;
+  const canOpenSurface = isRoomSurfaceSceneMode && activeSurface !== null;
   const miniMapWidth = 128;
   const miniMapHeight = 92;
   const miniMapPadding = 12;
@@ -591,8 +593,22 @@ export const CanvasV3DevScreen = () => {
   }, [activeRoom, refreshState]);
 
   const handleBackFromSurfaceScene = useCallback(() => {
-    engineRef.current.closeRoomSurfaceScene();
-    setOpenRoomStatus(null);
+    if (engineRef.current.getCanvasMode() === 'surface-scene') {
+      engineRef.current.closeActiveSurfaceScene();
+    } else {
+      engineRef.current.closeRoomSurfaceScene();
+      setOpenRoomStatus(null);
+    }
+    refreshState();
+  }, [refreshState]);
+
+  const handleOpenSurfaceScene = useCallback(() => {
+    const opened = engineRef.current.openActiveSurfaceScene();
+
+    if (!opened) {
+      return;
+    }
+
     refreshState();
   }, [refreshState]);
 
@@ -826,7 +842,7 @@ export const CanvasV3DevScreen = () => {
               />
             ))}
 
-            {isSurfaceSceneMode
+            {snapshot.mode !== 'main'
               ? surfaceGeometries.map((surface) => (
                   (() => {
                     const isActiveSurface = snapshot.activeSurfaceId === surface.surfaceId;
@@ -854,24 +870,17 @@ export const CanvasV3DevScreen = () => {
                 ))
               : null}
 
-            {isSurfaceSceneMode ? (
+            {snapshot.mode !== 'main' ? (
               <View style={styles.surfaceSceneOverlayLayer} pointerEvents="box-none">
                 <View style={styles.surfaceBackButtonWrap} pointerEvents="box-none">
                   <Pressable style={styles.surfaceBackButton} onPress={handleBackFromSurfaceScene}>
-                    <Text style={styles.surfaceBackButtonText}>{'Назад к развёртке'}</Text>
+                    <Text style={styles.surfaceBackButtonText}>{isSurfaceSceneMode ? 'Назад' : 'Назад к комнате'}</Text>
                   </Pressable>
                 </View>
 
-                <View style={styles.surfaceMiniMapWrap} pointerEvents="none">
-                  <Text style={styles.surfaceOverlayTitle}>Вид сверху</Text>
-                  <View style={styles.surfaceMiniMapCard}>
-                    <View style={[styles.surfaceMiniMapRoomShape, { width: miniMapRectWidth, height: miniMapRectHeight }]} />
-                  </View>
-                </View>
-
-                <View style={styles.surfaceInfoWrap} pointerEvents="none">
-                  <Text style={styles.surfaceOverlayTitle}>{isSurfaceSelected ? 'РАБОЧАЯ ПОВЕРХНОСТЬ' : 'Комната'}</Text>
-                  <View style={styles.surfaceInfoCard}>
+                <View style={styles.surfaceInfoWrap} pointerEvents="box-none">
+                  <Text style={styles.surfaceOverlayTitle}>{isSurfaceSceneMode ? 'ПОВЕРХНОСТЬ' : isSurfaceSelected ? 'РАБОЧАЯ ПОВЕРХНОСТЬ' : 'Комната'}</Text>
+                  <View style={styles.surfaceInfoCard} pointerEvents="auto">
                     <View style={styles.surfaceInfoRow}>
                       <Text style={styles.surfaceInfoLabel}>Комната</Text>
                       <Text style={styles.surfaceInfoValue} numberOfLines={1}>
@@ -890,7 +899,7 @@ export const CanvasV3DevScreen = () => {
                       <Text style={styles.surfaceInfoLabel}>Высота</Text>
                       <Text style={styles.surfaceInfoValue}>{isSurfaceSelected && activeSurfaceHeightMm ? formatMetersLabel(activeSurfaceHeightMm) : surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.wallHeightMm ?? 2700) : '-'}</Text>
                     </View>
-                    {!isSurfaceSelected ? (
+                    {!isSurfaceSelected && !isSurfaceSceneMode ? (
                       <View style={styles.surfaceInfoRow}>
                         <Text style={styles.surfaceInfoLabel}>Площадь</Text>
                         <Text style={styles.surfaceInfoValue}>
@@ -898,8 +907,22 @@ export const CanvasV3DevScreen = () => {
                         </Text>
                       </View>
                     ) : null}
+                    {canOpenSurface ? (
+                      <Pressable style={styles.surfaceOpenButton} pointerEvents="auto" onPress={handleOpenSurfaceScene}>
+                        <Text style={styles.surfaceOpenButtonText}>Открыть поверхность</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 </View>
+
+                {!isSurfaceSceneMode ? (
+                  <View style={styles.surfaceMiniMapWrap} pointerEvents="none">
+                    <Text style={styles.surfaceOverlayTitle}>Вид сверху</Text>
+                    <View style={styles.surfaceMiniMapCard}>
+                      <View style={[styles.surfaceMiniMapRoomShape, { width: miniMapRectWidth, height: miniMapRectHeight }]} />
+                    </View>
+                  </View>
+                ) : null}
               </View>
             ) : null}
 
@@ -1172,6 +1195,7 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
                   <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>activeSurfaceId: {snapshot.activeSurfaceId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>isSurfaceSceneMode: {snapshot.isSurfaceSceneMode ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isSurfaceSelected: {isSurfaceSelected ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>activeRoomName: {activeRoom ? roomNameById[activeRoom.roomId] : 'null'}</Text>
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
@@ -1418,6 +1442,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
     textAlign: 'right',
+  },
+  surfaceOpenButton: {
+    marginTop: 4,
+    minHeight: 36,
+    borderRadius: 10,
+    backgroundColor: '#1D4ED8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  surfaceOpenButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   gridLine: {
     position: 'absolute',
