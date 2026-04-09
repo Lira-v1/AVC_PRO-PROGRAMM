@@ -59,8 +59,9 @@ const ROOM_FALLBACK_PREFIX = 'Комната';
 const DEFAULT_WALL_HEIGHT_MM = 2700;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
+const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
 const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east'];
-const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor'];
+const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor', 'ceiling'];
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -110,6 +111,7 @@ export class CanvasEngine {
   private surfaceSceneRoomId: string | null = null;
   private activeSurfaceId: string | null = null;
   private savedMainCameraState: CameraState | null = null;
+  private savedRoomSurfaceSceneCameraState: CameraState | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -155,7 +157,7 @@ export class CanvasEngine {
       viewport,
     };
 
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       this.fitSurfaceSceneToViewport();
     }
   }
@@ -185,7 +187,7 @@ export class CanvasEngine {
   }
 
   getActiveRoomId(): string | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return this.surfaceSceneRoomId;
     }
 
@@ -290,7 +292,7 @@ export class CanvasEngine {
   }
 
   selectRoom(roomId: string): string | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return this.surfaceSceneRoomId;
     }
 
@@ -302,7 +304,7 @@ export class CanvasEngine {
   }
 
   clearActiveRoom(): string | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return this.surfaceSceneRoomId;
     }
 
@@ -328,7 +330,7 @@ export class CanvasEngine {
   }
 
   handleTap(point: ScreenPoint): string | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       this.updateLastPointer(point);
       return this.surfaceSceneRoomId;
     }
@@ -342,7 +344,7 @@ export class CanvasEngine {
   }
 
   startDrag(): boolean {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return false;
     }
 
@@ -351,7 +353,7 @@ export class CanvasEngine {
   }
 
   startResize(handleId: RoomResizeHandleId): boolean {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return false;
     }
 
@@ -360,7 +362,7 @@ export class CanvasEngine {
   }
 
   dragBy(screenDelta: ScreenPoint): RoomModel | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return null;
     }
 
@@ -375,7 +377,7 @@ export class CanvasEngine {
   }
 
   resizeBy(screenDelta: ScreenPoint): RoomModel | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return null;
     }
 
@@ -390,7 +392,7 @@ export class CanvasEngine {
   }
 
   rotateActiveRoom(stepDeg = 90): RoomModel | null {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return null;
     }
 
@@ -508,6 +510,7 @@ export class CanvasEngine {
     this.mode = 'room-surface-scene';
     this.surfaceSceneRoomId = roomId;
     this.activeSurfaceId = null;
+    this.savedRoomSurfaceSceneCameraState = null;
     this.transform.endDrag();
     this.resize.endResize();
     this.fitSurfaceSceneToViewport();
@@ -526,6 +529,42 @@ export class CanvasEngine {
     this.surfaceSceneRoomId = null;
     this.activeSurfaceId = null;
     this.savedMainCameraState = null;
+    this.savedRoomSurfaceSceneCameraState = null;
+  }
+
+  openActiveSurfaceScene(): RoomSurfaceWorldGeometry | null {
+    if (this.mode !== 'room-surface-scene' || !this.activeSurfaceId) {
+      return null;
+    }
+
+    const activeSurface = this.getRoomSurfaceSceneWorldGeometry().find((surface) => surface.surfaceId === this.activeSurfaceId) ?? null;
+
+    if (!activeSurface) {
+      return null;
+    }
+
+    this.savedRoomSurfaceSceneCameraState = this.camera.getState();
+    this.mode = 'surface-scene';
+    this.fitSurfaceSceneToViewport();
+
+    return this.getActiveSurfaceSceneWorldGeometry()[0] ?? null;
+  }
+
+  closeActiveSurfaceScene() {
+    if (this.mode !== 'surface-scene') {
+      return;
+    }
+
+    const restoreState = this.savedRoomSurfaceSceneCameraState;
+
+    this.mode = 'room-surface-scene';
+    this.savedRoomSurfaceSceneCameraState = null;
+
+    if (restoreState) {
+      this.camera.setView(restoreState);
+    } else {
+      this.fitSurfaceSceneToViewport();
+    }
   }
 
   setCameraView(next: { zoom: number; panX: number; panY: number }) {
@@ -565,7 +604,7 @@ export class CanvasEngine {
   }
 
   private fitSurfaceSceneToViewport() {
-    const surfaceGeometry = this.getRoomSurfaceSceneWorldGeometry();
+    const surfaceGeometry = this.mode === 'surface-scene' ? this.getActiveSurfaceSceneWorldGeometry() : this.getRoomSurfaceSceneWorldGeometry();
     const viewport = this.canvasState.viewport;
 
     if (!surfaceGeometry.length || viewport.width <= 0 || viewport.height <= 0) {
@@ -591,7 +630,8 @@ export class CanvasEngine {
     const boundsHeight = Math.max(1, sceneBounds.maxY - sceneBounds.minY);
     const availableWidth = Math.max(1, viewport.width - SURFACE_SCENE_VIEWPORT_PADDING_PX * 2);
     const availableHeight = Math.max(1, viewport.height - SURFACE_SCENE_VIEWPORT_PADDING_PX * 2);
-    const fitZoom = Math.min(availableWidth / boundsWidth, availableHeight / boundsHeight);
+    const fillRatio = this.mode === 'surface-scene' ? SINGLE_SURFACE_VIEWPORT_FILL_RATIO : 1;
+    const fitZoom = Math.min(availableWidth / boundsWidth, availableHeight / boundsHeight) * fillRatio;
     const sceneCenterX = (sceneBounds.minX + sceneBounds.maxX) / 2;
     const sceneCenterY = (sceneBounds.minY + sceneBounds.maxY) / 2;
 
@@ -606,8 +646,8 @@ export class CanvasEngine {
     return Math.max(400, room.wallHeightMm ?? DEFAULT_WALL_HEIGHT_MM);
   }
 
-  getRoomSurfaceSceneWorldGeometry(): RoomSurfaceWorldGeometry[] {
-    if (this.mode !== 'room-surface-scene' || !this.surfaceSceneRoomId) {
+  private getSurfaceSceneBaseWorldGeometry(): RoomSurfaceWorldGeometry[] {
+    if (!this.surfaceSceneRoomId) {
       return [];
     }
 
@@ -695,8 +735,47 @@ export class CanvasEngine {
     });
   }
 
+  private getActiveSurfaceSceneWorldGeometry(): RoomSurfaceWorldGeometry[] {
+    if (this.mode !== 'surface-scene' || !this.activeSurfaceId) {
+      return [];
+    }
+
+    const surface = this.getSurfaceSceneBaseWorldGeometry().find((candidate) => candidate.surfaceId === this.activeSurfaceId);
+
+    if (!surface) {
+      return [];
+    }
+
+    const halfWidth = surface.widthMm / 2;
+    const halfHeight = surface.heightMm / 2;
+
+    return [
+      {
+        ...surface,
+        center: { x: 0, y: 0 },
+        bounds: {
+          minX: -halfWidth,
+          maxX: halfWidth,
+          minY: -halfHeight,
+          maxY: halfHeight,
+          width: surface.widthMm,
+          height: surface.heightMm,
+        },
+      },
+    ];
+  }
+
+  getRoomSurfaceSceneWorldGeometry(): RoomSurfaceWorldGeometry[] {
+    if (this.mode !== 'room-surface-scene' && this.mode !== 'surface-scene') {
+      return [];
+    }
+    return this.getSurfaceSceneBaseWorldGeometry();
+  }
+
   getRoomSurfaceSceneScreenGeometry(): RoomSurfaceScreenGeometry[] {
-    return this.getRoomSurfaceSceneWorldGeometry().map((surface) => {
+    const surfaceWorldGeometry = this.mode === 'surface-scene' ? this.getActiveSurfaceSceneWorldGeometry() : this.getRoomSurfaceSceneWorldGeometry();
+
+    return surfaceWorldGeometry.map((surface) => {
       const topLeft = this.worldToScreen({ x: surface.bounds.minX, y: surface.bounds.minY });
       const bottomRight = this.worldToScreen({ x: surface.bounds.maxX, y: surface.bounds.maxY });
       const width = Math.abs(bottomRight.x - topLeft.x);
@@ -723,7 +802,7 @@ export class CanvasEngine {
   }
 
   getActiveRoomDimensionLabels(): DimensionLineScreenGeometry[] {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return [];
     }
 
@@ -740,7 +819,7 @@ export class CanvasEngine {
   }
 
   getActiveRoomResizeHandles(): RoomResizeHandleScreenGeometry[] {
-    if (this.mode === 'room-surface-scene') {
+    if (this.mode === 'room-surface-scene' || this.mode === 'surface-scene') {
       return [];
     }
 
@@ -768,17 +847,26 @@ export class CanvasEngine {
   }
 
   getSnapshot(): CanvasSnapshot {
+    const activeSurfaceGeometry = this.mode === 'surface-scene' ? this.getActiveSurfaceSceneWorldGeometry()[0] ?? null : null;
+    const surfaceGridState = activeSurfaceGeometry
+      ? this.grid.getGridState(this.camera, this.canvasState.viewport, {
+          localBounds: activeSurfaceGeometry.bounds,
+          localStepMm: DEFAULT_GRID_STEP_MM,
+        })
+      : this.grid.getGridState(this.camera, this.canvasState.viewport);
+
     return {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       camera: this.camera.getState(),
-      grid: this.grid.getGridState(this.camera, this.canvasState.viewport),
+      grid: surfaceGridState,
       canvasState: this.canvasState,
       activeRoomId: this.getActiveRoomId(),
       roomIds: this.rooms.map((room) => room.roomId),
       mode: this.mode,
       surfaceSceneRoomId: this.surfaceSceneRoomId,
       activeSurfaceId: this.activeSurfaceId,
+      isSurfaceSceneMode: this.mode === 'surface-scene',
     };
   }
 }

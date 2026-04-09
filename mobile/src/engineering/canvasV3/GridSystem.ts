@@ -26,20 +26,45 @@ export class GridSystem {
     };
   }
 
-  getGridState(camera: CameraSystem, viewport: Viewport): GridState {
-    const { gridStepMm, gridLevel, cellsPerMeter } = this.getGridMetrics();
+  getGridState(
+    camera: CameraSystem,
+    viewport: Viewport,
+    options?: { localBounds?: { minX: number; maxX: number; minY: number; maxY: number }; localStepMm?: number },
+  ): GridState {
+    const { gridStepMm: baseGridStepMm, gridLevel, cellsPerMeter } = this.getGridMetrics();
+    const gridStepMm = options?.localStepMm ?? baseGridStepMm;
     const topLeftWorld = CoordinateSystem.screenToWorld(camera, { x: 0, y: 0 }, viewport);
     const bottomRightWorld = CoordinateSystem.screenToWorld(camera, { x: viewport.width, y: viewport.height }, viewport);
-    const startXIndex = getGridOriginIndex(topLeftWorld.x, gridStepMm, 'start');
-    const endXIndex = getGridOriginIndex(bottomRightWorld.x, gridStepMm, 'end');
-    const startYIndex = getGridOriginIndex(topLeftWorld.y, gridStepMm, 'start');
-    const endYIndex = getGridOriginIndex(bottomRightWorld.y, gridStepMm, 'end');
-    const startX = normalizeWorldValue(startXIndex * gridStepMm);
-    const endX = normalizeWorldValue(endXIndex * gridStepMm);
-    const startY = normalizeWorldValue(startYIndex * gridStepMm);
-    const endY = normalizeWorldValue(endYIndex * gridStepMm);
+    const worldMinX = Math.min(topLeftWorld.x, bottomRightWorld.x);
+    const worldMaxX = Math.max(topLeftWorld.x, bottomRightWorld.x);
+    const worldMinY = Math.min(topLeftWorld.y, bottomRightWorld.y);
+    const worldMaxY = Math.max(topLeftWorld.y, bottomRightWorld.y);
+    const constrainedMinX = options?.localBounds ? Math.max(worldMinX, options.localBounds.minX) : worldMinX;
+    const constrainedMaxX = options?.localBounds ? Math.min(worldMaxX, options.localBounds.maxX) : worldMaxX;
+    const constrainedMinY = options?.localBounds ? Math.max(worldMinY, options.localBounds.minY) : worldMinY;
+    const constrainedMaxY = options?.localBounds ? Math.min(worldMaxY, options.localBounds.maxY) : worldMaxY;
+
+    const startXIndex = getGridOriginIndex(constrainedMinX, gridStepMm, 'start');
+    const endXIndex = getGridOriginIndex(constrainedMaxX, gridStepMm, 'end');
+    const startYIndex = getGridOriginIndex(constrainedMinY, gridStepMm, 'start');
+    const endYIndex = getGridOriginIndex(constrainedMaxY, gridStepMm, 'end');
+    const startX = normalizeWorldValue(constrainedMinX);
+    const endX = normalizeWorldValue(constrainedMaxX);
+    const startY = normalizeWorldValue(constrainedMinY);
+    const endY = normalizeWorldValue(constrainedMaxY);
 
     const lines: GridLine[] = [];
+
+    if (constrainedMinX > constrainedMaxX || constrainedMinY > constrainedMaxY) {
+      return {
+        baseStep: this.baseStep,
+        snapStep: gridStepMm,
+        gridStepMm,
+        gridLevel,
+        cellsPerMeter: getCellsPerMeter(gridStepMm),
+        lines,
+      };
+    }
 
     for (let xIndex = startXIndex; xIndex <= endXIndex; xIndex += 1) {
       const normalizedX = normalizeWorldValue(xIndex * gridStepMm);
@@ -60,7 +85,7 @@ export class GridSystem {
       snapStep: gridStepMm,
       gridStepMm,
       gridLevel,
-      cellsPerMeter,
+      cellsPerMeter: options?.localStepMm ? getCellsPerMeter(gridStepMm) : cellsPerMeter,
       lines,
     };
   }

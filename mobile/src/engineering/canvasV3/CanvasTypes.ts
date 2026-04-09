@@ -60,7 +60,7 @@ export type RoomModel = {
   settings?: RoomSettings;
 };
 
-export type CanvasMode = 'main' | 'room-surface-scene';
+export type CanvasMode = 'main' | 'room-surface-scene' | 'surface-scene';
 export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'floor' | 'ceiling';
 
 export type RoomSurfaceWorldGeometry = {
@@ -198,6 +198,7 @@ export type CanvasSnapshot = {
   mode: CanvasMode;
   surfaceSceneRoomId: string | null;
   activeSurfaceId: string | null;
+  isSurfaceSceneMode: boolean;
 };
 
 export type RoomOpenEntryPoint = {
