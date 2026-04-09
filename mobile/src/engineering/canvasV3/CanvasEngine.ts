@@ -74,6 +74,7 @@ const NEW_ROOM_COLUMNS = 3;
 const MIN_CONTOUR_POINTS_TO_CLOSE = 4;
 const CONTOUR_CLOSE_THRESHOLD_MM = 160;
 const ORTHOGONAL_SEGMENT_ANGLES_DEG = [0, 45, 90, 135] as const;
+const WALL_LITE_SNAP_ANGLES_DEG = [0, 45, 90, 135, 180] as const;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
@@ -272,8 +273,6 @@ export class CanvasEngine {
   private wallNodes: WallNode[] = [];
   private wallSegments: WallSegment[] = [];
   private closedRegions: ClosedRegion[] = [];
-  private wallChainStartNodeId: string | null = null;
-  private wallChainCurrentNodeId: string | null = null;
   private lastCreatedWallId: string | null = null;
   private lastCreatedNodeId: string | null = null;
   private lastDetectedRoomId: string | null = null;
@@ -634,12 +633,12 @@ export class CanvasEngine {
       return { ...anchor };
     }
 
-    const rawAngleDeg = ((Math.atan2(deltaY, deltaX) * 180) / Math.PI + 360) % 180;
-    const nearestAngle = ORTHOGONAL_SEGMENT_ANGLES_DEG.reduce((nearest, candidate) => {
-      const nearestDiff = Math.min(Math.abs(rawAngleDeg - nearest), 180 - Math.abs(rawAngleDeg - nearest));
-      const candidateDiff = Math.min(Math.abs(rawAngleDeg - candidate), 180 - Math.abs(rawAngleDeg - candidate));
+    const rawAngleDeg = ((Math.atan2(deltaY, deltaX) * 180) / Math.PI + 360) % 360;
+    const nearestAngle = WALL_LITE_SNAP_ANGLES_DEG.reduce((nearest, candidate) => {
+      const nearestDiff = Math.min(Math.abs(rawAngleDeg - nearest), 360 - Math.abs(rawAngleDeg - nearest));
+      const candidateDiff = Math.min(Math.abs(rawAngleDeg - candidate), 360 - Math.abs(rawAngleDeg - candidate));
       return candidateDiff < nearestDiff ? candidate : nearest;
-    }, ORTHOGONAL_SEGMENT_ANGLES_DEG[0]);
+    }, WALL_LITE_SNAP_ANGLES_DEG[0]);
     const directionRad = (nearestAngle * Math.PI) / 180;
     const direction = { x: Math.cos(directionRad), y: Math.sin(directionRad) };
     const projection = deltaX * direction.x + deltaY * direction.y;
@@ -750,8 +749,6 @@ export class CanvasEngine {
     this.currentSegmentAngle = null;
     this.contourShapes = [];
     this.lastPointerWorldPoint = null;
-    this.wallChainStartNodeId = null;
-    this.wallChainCurrentNodeId = null;
   }
 
   private getNodePosition(nodeId: string): WorldPoint | null {
@@ -982,31 +979,46 @@ export class CanvasEngine {
       return [];
     }
 
-    const worldPoint = this.screenToWorld(point);
-    const chainNode = this.wallChainCurrentNodeId ? this.getNodeById(this.wallChainCurrentNodeId) : null;
-    const snappedPoint = chainNode ? this.snapWallPointToDirection(chainNode.position, worldPoint) : this.snapToGrid(worldPoint);
-    const targetNode = this.resolveWallPointToNode(snappedPoint);
+    const worldPoint = this.snapToGrid(this.screenToWorld(point));
+    const startPoint = this.currentContourPoints[0];
 
-    if (!this.wallChainCurrentNodeId) {
-      this.wallChainStartNodeId = targetNode.nodeId;
-      this.wallChainCurrentNodeId = targetNode.nodeId;
-      this.lastPointerWorldPoint = { ...targetNode.position };
+    if (!startPoint) {
+      this.currentContourPoints = [worldPoint];
+      this.lastPointerWorldPoint = { ...worldPoint };
+      this.currentSegmentAngle = null;
       return [];
     }
 
-    const created = this.createWallSegment(this.wallChainCurrentNodeId, targetNode.nodeId);
+    const snappedEndPoint = this.snapWallPointToDirection(startPoint, worldPoint);
+    const segmentLength = distance(startPoint, snappedEndPoint);
 
-    if (!created) {
+    if (segmentLength <= SPLIT_INTERSECTION_EPSILON_MM) {
       return [];
     }
 
-    const previousNodeId = this.wallChainCurrentNodeId;
-    this.splitSegmentByIntersections(created);
-    this.wallChainCurrentNodeId = targetNode.nodeId;
-    this.lastPointerWorldPoint = { ...targetNode.position };
-    const targetConnections = this.getNodeById(targetNode.nodeId)?.connectedWallIds.length ?? 0;
-    this.isContourClosed = Boolean(this.wallChainStartNodeId && (targetNode.nodeId === this.wallChainStartNodeId || (targetConnections > 1 && previousNodeId !== targetNode.nodeId)));
-    this.recomputeWallTopology();
+    const segmentAngle = (Math.atan2(snappedEndPoint.y - startPoint.y, snappedEndPoint.x - startPoint.x) * 180) / Math.PI;
+    const created: WallSegment = {
+      wallId: this.getNextWallId(),
+      startNodeId: '',
+      endNodeId: '',
+      startPoint: { ...startPoint },
+      endPoint: { ...snappedEndPoint },
+      length: segmentLength,
+      angle: segmentAngle,
+      roomIds: [],
+      surfaceIds: [],
+      isExternal: true,
+      isInternal: false,
+    };
+
+    this.wallSegments.push(created);
+    this.lastCreatedWallId = created.wallId;
+    this.currentContourPoints = [];
+    this.lastPointerWorldPoint = { ...snappedEndPoint };
+    this.currentSegmentAngle = segmentAngle;
+    this.isContourClosed = false;
+    this.wallGraphUpdated = false;
+
     return [created];
   }
 
@@ -1461,9 +1473,6 @@ export class CanvasEngine {
     this.resize.setActiveRoomId(this.selection.getActiveRoomId());
     this.rotate.setRooms(this.rooms);
     this.rotate.setActiveRoomId(this.selection.getActiveRoomId());
-    if (this.wallSegments.length > 0) {
-      this.recomputeWallTopology();
-    }
   }
 
   getRooms(): RoomModel[] {
@@ -1612,9 +1621,9 @@ export class CanvasEngine {
   updateLastPointer(screenPoint: ScreenPoint): WorldPoint {
     const worldPoint = this.screenToWorld(screenPoint);
 
-    if (this.isDrawingMode && (this.currentContourPoints.length > 0 || this.wallChainCurrentNodeId !== null)) {
-      if (this.currentToolMode === 'wall' && this.wallChainCurrentNodeId) {
-        const anchor = this.getNodeById(this.wallChainCurrentNodeId)?.position ?? this.snapToGrid(worldPoint);
+    if (this.isDrawingMode && this.currentContourPoints.length > 0) {
+      if (this.currentToolMode === 'wall') {
+        const anchor = this.currentContourPoints[0] ?? this.snapToGrid(worldPoint);
         const snappedPoint = this.snapWallPointToDirection(anchor, this.snapToGrid(worldPoint));
         this.currentSegmentAngle = (Math.atan2(snappedPoint.y - anchor.y, snappedPoint.x - anchor.x) * 180) / Math.PI;
         this.lastPointerWorldPoint = snappedPoint;
@@ -1926,6 +1935,7 @@ export class CanvasEngine {
       isDrawingMode: this.isDrawingMode,
       currentToolMode: this.currentToolMode,
       wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
+      isWallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
       isOrthogonalDrawingMode: this.isDrawingMode,
       currentSegmentAngle: this.currentSegmentAngle,
       currentContourPointsCount: this.currentContourPoints.length,
