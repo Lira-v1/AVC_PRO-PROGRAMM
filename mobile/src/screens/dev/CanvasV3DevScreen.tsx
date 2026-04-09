@@ -75,67 +75,95 @@ const createEngine = () => {
   return engine;
 };
 
-const formatDebugText = (debugState: CanvasDebugState) => {
-  const viewport = `${debugState.viewport.width.toFixed(0)} × ${debugState.viewport.height.toFixed(0)}`;
-  const roomIds = debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none';
-  const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
-  const roomPositions = debugState.roomPositions.length
-    ? debugState.roomPositions.map((room) => `${room.roomId}:(${room.centerX.toFixed(0)}, ${room.centerY.toFixed(0)})`).join(', ')
-    : 'none';
-
-  return [
-    `projectId: ${debugState.projectId}`,
-    `roomsCount: ${debugState.roomsCount}`,
-    `cameraZoom: ${debugState.cameraZoom.toFixed(3)}`,
-    `displayZoom: ${displayZoomLabel}`,
-    `zoomPercent: ${debugState.zoomPercent}%`,
-    `panX: ${debugState.panX.toFixed(1)}`,
-    `panY: ${debugState.panY.toFixed(1)}`,
-    `viewport: ${viewport}`,
-    `roomIds: ${roomIds}`,
-    `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
-    `snappedRoomId: ${debugState.snappedRoomId ?? 'null'}`,
-    `snapTargetRoomId: ${debugState.snapTargetRoomId ?? 'null'}`,
-    `snapPreviewKind: ${debugState.snapPreview?.kind ?? 'null'}`,
-    `snapPreviewTargetRoomId: ${debugState.snapPreview?.targetRoomId ?? 'null'}`,
-    `roomPositions: ${roomPositions}`,
-    `isDrawingMode: ${debugState.isDrawingMode ? 'true' : 'false'}`,
-    `currentToolMode: ${debugState.currentToolMode}`,
-    `isWallDrawingMode: ${debugState.isWallDrawingMode ? 'true' : 'false'}`,
-    `isOrthogonalDrawingMode: ${debugState.isOrthogonalDrawingMode ? 'true' : 'false'}`,
-    `currentSegmentAngle: ${debugState.currentSegmentAngle ?? 'null'}`,
-    `currentContourPointsCount: ${debugState.currentContourPointsCount}`,
-    `isContourClosed: ${debugState.isContourClosed ? 'true' : 'false'}`,
-    `isContourConvertedToRoom: ${debugState.isContourConvertedToRoom ? 'true' : 'false'}`,
-    `lastCreatedShapeId: ${debugState.lastCreatedShapeId ?? 'null'}`,
-    `isRoomSplitOperation: ${debugState.isRoomSplitOperation ? 'true' : 'false'}`,
-    `splitSourceRoomId: ${debugState.splitSourceRoomId ?? 'null'}`,
-    `newRoomIds: ${debugState.newRoomIds.length ? debugState.newRoomIds.join(', ') : 'none'}`,
-    `wallSegmentsCount: ${debugState.wallSegmentsCount}`,
-    `wallNodesCount: ${debugState.wallNodesCount}`,
-    `closedRegionsCount: ${debugState.closedRegionsCount}`,
-    `lastCreatedWallId: ${debugState.lastCreatedWallId ?? 'null'}`,
-    `lastCreatedNodeId: ${debugState.lastCreatedNodeId ?? 'null'}`,
-    `lastDetectedRoomId: ${debugState.lastDetectedRoomId ?? 'null'}`,
-    `wallGraphUpdated: ${debugState.wallGraphUpdated ? 'true' : 'false'}`,
-    `roomVerticesCount: ${debugState.roomVerticesCount ?? 'null'}`,
-    `roomIsPolygon: ${debugState.roomIsPolygon ? 'true' : 'false'}`,
-    `roomEdgesCount: ${debugState.roomEdgesCount ?? 'null'}`,
-    `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
-    `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
-    `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
-    `activeRoomRotationDeg: ${debugState.activeRoomRotationDeg ?? 'null'}`,
-    `isSharedSurface: ${debugState.activeSurfaceSharedDebug?.isSharedSurface ? 'true' : 'false'}`,
-    `linkedSurfaceId: ${debugState.activeSurfaceSharedDebug?.linkedSurfaceId ?? 'null'}`,
-    `linkedRoomId: ${debugState.activeSurfaceSharedDebug?.linkedRoomId ?? 'null'}`,
-    `sharedMode: ${debugState.activeSurfaceSharedDebug?.sharedMode ?? 'null'}`,
-    `sharedLength: ${debugState.activeSurfaceSharedDebug?.sharedLength ?? 'null'}`,
-    `surfaceType: ${debugState.activeSurfaceSharedDebug?.surfaceType ?? 'external'}`,
-    `gridStepMm: ${debugState.gridStepMm}`,
-    `gridLevel: ${debugState.gridLevel}`,
-    `cellsPerMeter: ${debugState.cellsPerMeter}`,
-  ].join('\n');
+type ActionHistoryEntry = {
+  timestamp: string;
+  actionType: string;
+  entityId: string | null;
+  toolMode: string;
+  cameraZoom: number;
 };
+
+type InspectorStateSections = {
+  canvasRuntimeState: string[];
+  cameraState: string[];
+  gridState: string[];
+  snapState: string[];
+  sceneState: string[];
+};
+
+const ACTION_HISTORY_LIMIT = 50;
+
+const formatHistoryLine = (entry: ActionHistoryEntry) =>
+  `[${entry.timestamp}] ${entry.actionType}${entry.entityId ? ` ${entry.entityId}` : ''} tool=${entry.toolMode} zoom=${entry.cameraZoom.toFixed(2)}`;
+
+const getInspectorStateSections = (debugState: CanvasDebugState, surfaceCount: number): InspectorStateSections => {
+  const snapDistance = debugState.snapPreview ? Math.hypot(
+    debugState.snapPreview.toPoint.x - debugState.snapPreview.fromPoint.x,
+    debugState.snapPreview.toPoint.y - debugState.snapPreview.fromPoint.y,
+  ) : null;
+
+  return {
+    canvasRuntimeState: [
+      `currentToolMode: ${debugState.currentToolMode}`,
+      `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
+      `activeSurfaceId: ${debugState.activeSurfaceId ?? 'null'}`,
+      `activeWallId: ${debugState.activeWallId ?? 'null'}`,
+      `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
+      `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
+      `isWallDrawingMode: ${debugState.isWallDrawingMode ? 'true' : 'false'}`,
+      `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
+      `activeRoomRotationDeg: ${debugState.activeRoomRotationDeg ?? 'null'}`,
+    ],
+    cameraState: [
+      `cameraZoom: ${debugState.cameraZoom.toFixed(3)}`,
+      `displayZoom: ${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`,
+      `pan: (${debugState.panX.toFixed(1)}, ${debugState.panY.toFixed(1)})`,
+      `viewport size: ${debugState.viewport.width.toFixed(0)} × ${debugState.viewport.height.toFixed(0)}`,
+      `world origin: (${debugState.worldCenter.x.toFixed(1)}, ${debugState.worldCenter.y.toFixed(1)})`,
+      `screen center: (${debugState.screenCenter.x.toFixed(1)}, ${debugState.screenCenter.y.toFixed(1)})`,
+      `world@screen center: (${debugState.worldAtScreenCenter.x.toFixed(1)}, ${debugState.worldAtScreenCenter.y.toFixed(1)})`,
+    ],
+    gridState: [
+      `gridStepMm: ${debugState.gridStepMm}`,
+      `gridLevel: ${debugState.gridLevel}`,
+      `cellsPerMeter: ${debugState.cellsPerMeter}`,
+    ],
+    snapState: debugState.snapPreview
+      ? [
+        'snapActive: true',
+        `snapTargetType: ${debugState.snapPreview.targetRoomId ? 'room' : 'grid'}`,
+        `snapTargetId: ${debugState.snapPreview.targetRoomId ?? 'null'}`,
+        `snapDistance: ${snapDistance?.toFixed(2) ?? 'null'}`,
+      ]
+      : ['snapActive: false', 'snapTargetType: null', 'snapTargetId: null', 'snapDistance: null'],
+    sceneState: [
+      `roomIds: ${debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}`,
+      `wallSegmentsCount: ${debugState.wallSegmentsCount}`,
+      `surfaceCount: ${surfaceCount}`,
+      'objectCount: null',
+    ],
+  };
+};
+
+const formatDebugText = (sections: InspectorStateSections, actionHistory: ActionHistoryEntry[]) => [
+  'Canvas Runtime State:',
+  ...sections.canvasRuntimeState,
+  '',
+  'Camera State:',
+  ...sections.cameraState,
+  '',
+  'Grid State:',
+  ...sections.gridState,
+  '',
+  'Snap State:',
+  ...sections.snapState,
+  '',
+  'Scene State:',
+  ...sections.sceneState,
+  '',
+  'Action History:',
+  ...(actionHistory.length ? actionHistory.map(formatHistoryLine) : ['(empty)']),
+].join('\n');
 
 const copyTextToClipboard = async (text: string) => {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -210,8 +238,10 @@ export const CanvasV3DevScreen = () => {
   const { height: windowHeight } = useWindowDimensions();
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(engineRef.current.getSnapshot());
   const [debugState, setDebugState] = useState<CanvasDebugState>(engineRef.current.getDebugState());
+  const debugStateRef = useRef<CanvasDebugState>(debugState);
   const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [actionHistory, setActionHistory] = useState<ActionHistoryEntry[]>([]);
   const [isGridVisible, setGridVisible] = useState(true);
   const [isFullscreenMode, setFullscreenMode] = useState(false);
   const [isToolsMenuOpen, setToolsMenuOpen] = useState(false);
@@ -222,10 +252,33 @@ export const CanvasV3DevScreen = () => {
   const [isRoomNamePresetsOpen, setRoomNamePresetsOpen] = useState(false);
   const [openRoomStatus, setOpenRoomStatus] = useState<string | null>(null);
 
-  const refreshState = useCallback(() => {
-    setSnapshot(engineRef.current.getSnapshot());
-    setDebugState(engineRef.current.getDebugState());
+  const pushActionHistory = useCallback((actionType: string, entityId?: string | null, overrideDebugState?: CanvasDebugState) => {
+    const stateForLog = overrideDebugState ?? debugStateRef.current;
+    const timestamp = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const entry: ActionHistoryEntry = {
+      timestamp,
+      actionType,
+      entityId: entityId ?? null,
+      toolMode: stateForLog.currentToolMode,
+      cameraZoom: stateForLog.cameraZoom,
+    };
+
+    setActionHistory((previous) => [...previous.slice(-(ACTION_HISTORY_LIMIT - 1)), entry]);
   }, []);
+
+  const refreshState = useCallback(() => {
+    const nextSnapshot = engineRef.current.getSnapshot();
+    const nextDebugState = engineRef.current.getDebugState();
+    const previousDebugState = debugStateRef.current;
+
+    if (nextDebugState.lastCreatedWallId && nextDebugState.lastCreatedWallId !== previousDebugState.lastCreatedWallId) {
+      pushActionHistory('CREATE_WALL', nextDebugState.lastCreatedWallId, nextDebugState);
+    }
+
+    debugStateRef.current = nextDebugState;
+    setSnapshot(nextSnapshot);
+    setDebugState(nextDebugState);
+  }, [pushActionHistory]);
 
   const resetDragSession = useCallback(() => {
     dragSessionRef.current = { ...IDLE_DRAG_SESSION };
@@ -244,8 +297,10 @@ export const CanvasV3DevScreen = () => {
     (factor: number) => {
       engineRef.current.zoomBy(factor);
       refreshState();
+      const nextDebugState = engineRef.current.getDebugState();
+      pushActionHistory('ZOOM_CHANGE', null, nextDebugState);
     },
-    [refreshState],
+    [pushActionHistory, refreshState],
   );
 
   const beginInteraction = useCallback(
@@ -308,17 +363,26 @@ export const CanvasV3DevScreen = () => {
       };
 
       if (shouldResizeRoom && resizeHandleId) {
-        engineRef.current.startResize(resizeHandleId);
+        const didStartResize = engineRef.current.startResize(resizeHandleId);
+        if (didStartResize) {
+          pushActionHistory('START_RESIZE', activeRoomIdBeforePress);
+        }
       } else if (shouldDragRoom) {
-        engineRef.current.startDrag();
+        const didStartDrag = engineRef.current.startDrag();
+        if (didStartDrag) {
+          pushActionHistory('START_DRAG_ROOM', hitRoomId);
+        }
       } else {
+        if (activeRoomId && activeRoomId !== activeRoomIdBeforePress) {
+          pushActionHistory('SELECT_ROOM', activeRoomId);
+        }
         engineRef.current.endDrag();
         engineRef.current.endResize();
       }
 
       refreshState();
     },
-    [refreshState],
+    [pushActionHistory, refreshState],
   );
 
   const moveInteraction = useCallback(
@@ -359,16 +423,20 @@ export const CanvasV3DevScreen = () => {
         engineRef.current.resizeBy({ x: deltaX, y: deltaY });
       } else {
         engineRef.current.panBy(deltaX, deltaY);
+        pushActionHistory('PAN_CHANGE');
       }
 
       refreshState();
     },
-    [refreshState],
+    [pushActionHistory, refreshState],
   );
 
   const handleSurfaceTap = useCallback((screenPoint: ScreenPoint) => {
-    engineRef.current.selectSurfaceAtScreenPoint(screenPoint);
-  }, []);
+    const selectedSurfaceId = engineRef.current.selectSurfaceAtScreenPoint(screenPoint);
+    if (selectedSurfaceId) {
+      pushActionHistory('SELECT_SURFACE', selectedSurfaceId);
+    }
+  }, [pushActionHistory]);
 
   const endInteraction = useCallback(
     (screenPoint?: ScreenPoint, pointerId?: number) => {
@@ -397,10 +465,18 @@ export const CanvasV3DevScreen = () => {
         engineRef.current.addContourPointAtScreenPoint(screenPoint);
       }
 
+      if (session.mode === 'room' && session.moved) {
+        pushActionHistory('END_DRAG_ROOM', engineRef.current.getActiveRoomId());
+      }
+
+      if (session.mode === 'resize' && session.moved) {
+        pushActionHistory('END_RESIZE', engineRef.current.getActiveRoomId());
+      }
+
       resetDragSession();
       refreshState();
     },
-    [handleSurfaceTap, refreshState, resetDragSession],
+    [handleSurfaceTap, pushActionHistory, refreshState, resetDragSession],
   );
 
   const onLayout = useCallback(
@@ -446,6 +522,10 @@ export const CanvasV3DevScreen = () => {
 
     return () => clearTimeout(timeoutId);
   }, [copyStatus]);
+
+  useEffect(() => {
+    debugStateRef.current = debugState;
+  }, [debugState]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || !isRoomSettingsMenuOpen) {
@@ -503,6 +583,10 @@ export const CanvasV3DevScreen = () => {
   const resizeHandles = engineRef.current.getActiveRoomResizeHandles();
   const dimensionLabels = engineRef.current.getActiveRoomDimensionLabels();
   const roomData = engineRef.current.getRooms();
+  const sceneSurfaceCount = useMemo(
+    () => roomData.reduce((total, room) => total + engineRef.current.getRoomWallSurfaceWorldGeometry(room.roomId).length + 2, 0),
+    [roomData],
+  );
   const roomNameById = useMemo(
     () =>
       roomData.reduce<Record<string, string>>((acc, room, index) => {
@@ -531,7 +615,11 @@ export const CanvasV3DevScreen = () => {
       previewCenter,
     };
   }, [activeRoomGeometry, debugState.isDraggingRoom, debugState.snapPreview, snapshot.mode]);
-  const debugInspectorText = useMemo(() => formatDebugText(debugState), [debugState]);
+  const inspectorSections = useMemo(
+    () => getInspectorStateSections(debugState, sceneSurfaceCount),
+    [debugState, sceneSurfaceCount],
+  );
+  const debugInspectorText = useMemo(() => formatDebugText(inspectorSections, actionHistory), [actionHistory, inspectorSections]);
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
   const zoomStateLabel = formatZoomState(debugState.displayZoom);
   const canvasHeight = isFullscreenMode ? Math.max(windowHeight - 180, 520) : Math.max(Math.min(windowHeight * 0.62, 720), 420);
@@ -644,11 +732,12 @@ export const CanvasV3DevScreen = () => {
     }
 
     engineRef.current.openRoomSurfaceScene(activeRoom.roomId);
+    pushActionHistory('OPEN_ROOM', activeRoom.roomId);
     setOpenRoomStatus(`Открыта развёртка комнаты: ${entryPoint.roomName} (${entryPoint.roomId}).`);
     setRoomSettingsMenuOpen(false);
     setRoomMenuSection('root');
     refreshState();
-  }, [activeRoom, refreshState]);
+  }, [activeRoom, pushActionHistory, refreshState]);
 
   const handleToggleRoomLabel = useCallback(() => {
     if (!activeRoom) {
@@ -666,8 +755,9 @@ export const CanvasV3DevScreen = () => {
       engineRef.current.closeRoomSurfaceScene();
       setOpenRoomStatus(null);
     }
+    pushActionHistory('BACK_TO_SCENE');
     refreshState();
-  }, [refreshState]);
+  }, [pushActionHistory, refreshState]);
 
   const handleOpenSurfaceScene = useCallback(() => {
     const opened = engineRef.current.openActiveSurfaceScene();
@@ -684,11 +774,14 @@ export const CanvasV3DevScreen = () => {
       return;
     }
 
-    engineRef.current.addRoom();
+    const createdRoom = engineRef.current.addRoom();
+    if (createdRoom) {
+      pushActionHistory('CREATE_ROOM', createdRoom.roomId);
+    }
     setToolsMenuOpen(false);
     setOpenRoomStatus(null);
     refreshState();
-  }, [refreshState, snapshot.mode]);
+  }, [pushActionHistory, refreshState, snapshot.mode]);
 
   const handleToggleDrawingMode = useCallback(() => {
     if (snapshot.mode !== 'main') {
@@ -697,9 +790,11 @@ export const CanvasV3DevScreen = () => {
 
     const nextDrawingState = !engineRef.current.getIsDrawingMode();
     engineRef.current.setDrawingMode(nextDrawingState);
+    pushActionHistory(nextDrawingState ? 'START_WALL_DRAW' : 'END_WALL_DRAW');
+    pushActionHistory('TOOL_CHANGE');
     setToolsMenuOpen(false);
     refreshState();
-  }, [refreshState, snapshot.mode]);
+  }, [pushActionHistory, refreshState, snapshot.mode]);
 
   useEffect(() => {
     if (!snapshot.activeRoomId) {
@@ -1455,65 +1550,36 @@ export const CanvasV3DevScreen = () => {
                     </Pressable>
                   </View>
 
-                  <Text style={styles.metaText}>cameraZoom: {debugState.cameraZoom.toFixed(3)}</Text>
-                  <Text style={styles.metaText}>displayZoom: {displayZoomLabel}</Text>
-                  <Text style={styles.metaText}>camera zoom range: {debugState.minZoom.toFixed(3)}–{debugState.maxZoom.toFixed(2)}</Text>
-                  <Text style={styles.metaText}>pan: ({debugState.panX.toFixed(1)}, {debugState.panY.toFixed(1)})</Text>
-                  <Text style={styles.metaText}>viewport: {debugState.viewport.width.toFixed(0)} × {debugState.viewport.height.toFixed(0)}</Text>
-                  <Text style={styles.metaText}>world origin: ({debugState.worldCenter.x.toFixed(1)}, {debugState.worldCenter.y.toFixed(1)})</Text>
-                  <Text style={styles.metaText}>screen center: ({debugState.screenCenter.x.toFixed(1)}, {debugState.screenCenter.y.toFixed(1)})</Text>
-                  <Text style={styles.metaText}>world@screen center: ({debugState.worldAtScreenCenter.x.toFixed(1)}, {debugState.worldAtScreenCenter.y.toFixed(1)})</Text>
-                  <Text style={styles.metaText}>projectId: {snapshot.projectId}</Text>
-                  <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
-                  <Text style={styles.metaText}>isDrawingMode: {debugState.isDrawingMode ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>currentToolMode: {debugState.currentToolMode}</Text>
-                  <Text style={styles.metaText}>isWallDrawingMode: {debugState.isWallDrawingMode ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>isOrthogonalDrawingMode: {debugState.isOrthogonalDrawingMode ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>currentSegmentAngle: {debugState.currentSegmentAngle ?? 'null'}</Text>
-                  <Text style={styles.metaText}>currentContourPointsCount: {debugState.currentContourPointsCount}</Text>
-                  <Text style={styles.metaText}>isContourClosed: {debugState.isContourClosed ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>isContourConvertedToRoom: {debugState.isContourConvertedToRoom ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>lastCreatedShapeId: {debugState.lastCreatedShapeId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
-                  <Text style={styles.metaText}>activeRoomId: {debugState.activeRoomId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>snappedRoomId: {debugState.snappedRoomId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>snapTargetRoomId: {debugState.snapTargetRoomId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>snapPreviewKind: {debugState.snapPreview?.kind ?? 'null'}</Text>
-                  <Text style={styles.metaText}>snapPreviewTargetRoomId: {debugState.snapPreview?.targetRoomId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>
-                    roomPositions: {debugState.roomPositions.length ? debugState.roomPositions.map((room) => `${room.roomId}:(${room.centerX.toFixed(0)}, ${room.centerY.toFixed(0)})`).join(', ') : 'none'}
-                  </Text>
-                  <Text style={styles.metaText}>gridStepMm: {debugState.gridStepMm}</Text>
-                  <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
-                  <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
-                  <Text style={styles.metaText}>activeSurfaceId: {snapshot.activeSurfaceId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>isSurfaceSceneMode: {snapshot.isSurfaceSceneMode ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>isSurfaceSelected: {isSurfaceSelected ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>activeRoomName: {activeRoom ? roomNameById[activeRoom.roomId] : 'null'}</Text>
-                  <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>activeResizeHandleId: {debugState.activeResizeHandleId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>activeRoomRotationDeg: {debugState.activeRoomRotationDeg ?? 'null'}</Text>
-                  <Text style={styles.metaText}>isSharedSurface: {debugState.activeSurfaceSharedDebug?.isSharedSurface ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>linkedSurfaceId: {debugState.activeSurfaceSharedDebug?.linkedSurfaceId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>linkedRoomId: {debugState.activeSurfaceSharedDebug?.linkedRoomId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>sharedMode: {debugState.activeSurfaceSharedDebug?.sharedMode ?? 'null'}</Text>
-                  <Text style={styles.metaText}>sharedLength: {debugState.activeSurfaceSharedDebug?.sharedLength ?? 'null'}</Text>
-                  <Text style={styles.metaText}>surfaceType: {debugState.activeSurfaceSharedDebug?.surfaceType ?? 'external'}</Text>
-                  <Text style={styles.metaText}>wallSegmentsCount: {debugState.wallSegmentsCount}</Text>
-                  <Text style={styles.metaText}>wallNodesCount: {debugState.wallNodesCount}</Text>
-                  <Text style={styles.metaText}>closedRegionsCount: {debugState.closedRegionsCount}</Text>
-                  <Text style={styles.metaText}>lastCreatedWallId: {debugState.lastCreatedWallId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>lastCreatedNodeId: {debugState.lastCreatedNodeId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>lastDetectedRoomId: {debugState.lastDetectedRoomId ?? 'null'}</Text>
-                  <Text style={styles.metaText}>wallGraphUpdated: {debugState.wallGraphUpdated ? 'true' : 'false'}</Text>
-                  <Text style={styles.metaText}>
-                    lastPointerWorld: {debugState.lastPointerWorldX === null || debugState.lastPointerWorldY === null ? 'null' : `(${debugState.lastPointerWorldX.toFixed(1)}, ${debugState.lastPointerWorldY.toFixed(1)})`}
-                  </Text>
+                  <Text style={styles.inspectorSectionTitle}>Canvas Runtime State</Text>
+                  {inspectorSections.canvasRuntimeState.map((line) => <Text key={`runtime-${line}`} style={styles.metaText}>{line}</Text>)}
+
+                  <Text style={styles.inspectorSectionTitle}>Camera State</Text>
+                  {inspectorSections.cameraState.map((line) => <Text key={`camera-${line}`} style={styles.metaText}>{line}</Text>)}
+
+                  <Text style={styles.inspectorSectionTitle}>Grid State</Text>
+                  {inspectorSections.gridState.map((line) => <Text key={`grid-${line}`} style={styles.metaText}>{line}</Text>)}
+
+                  <Text style={styles.inspectorSectionTitle}>Snap State</Text>
+                  {inspectorSections.snapState.map((line) => <Text key={`snap-${line}`} style={styles.metaText}>{line}</Text>)}
+
+                  <Text style={styles.inspectorSectionTitle}>Scene State</Text>
+                  {inspectorSections.sceneState.map((line) => <Text key={`scene-${line}`} style={styles.metaText}>{line}</Text>)}
+
+                  <Text style={styles.inspectorSectionTitle}>Action History</Text>
+                  <View style={styles.historyList}>
+                    {actionHistory.length ? actionHistory.map((entry, index) => (
+                      <Text key={`${entry.timestamp}-${entry.actionType}-${index}`} style={styles.historyText}>
+                        {formatHistoryLine(entry)}
+                      </Text>
+                    )) : <Text style={styles.metaText}>История пуста</Text>}
+                  </View>
 
                   <View style={styles.inspectorActions}>
                     <Pressable style={styles.copyButton} onPress={handleCopyInspector}>
-                      <Text style={styles.copyButtonText}>Copy</Text>
+                      <Text style={styles.copyButtonText}>Copy Debug Log</Text>
+                    </Pressable>
+                    <Pressable style={styles.clearButton} onPress={() => setActionHistory([])}>
+                      <Text style={styles.clearButtonText}>Clear Log</Text>
                     </Pressable>
                     {copyStatus === 'success' ? <Text style={styles.copyStatusSuccess}>Copied</Text> : null}
                     {copyStatus === 'error' ? <Text style={styles.copyStatusError}>Copy unavailable</Text> : null}
@@ -1823,9 +1889,29 @@ const styles = StyleSheet.create({
     color: '#24324A',
     fontSize: 13,
   },
+  inspectorSectionTitle: {
+    marginTop: 8,
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  historyList: {
+    maxHeight: 160,
+    borderWidth: 1,
+    borderColor: '#D6E2F5',
+    borderRadius: 8,
+    padding: 8,
+    gap: 4,
+    backgroundColor: '#F8FAFF',
+  },
+  historyText: {
+    color: '#24324A',
+    fontSize: 12,
+  },
   inspectorActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 10,
     marginTop: 8,
   },
@@ -1839,6 +1925,19 @@ const styles = StyleSheet.create({
   },
   copyButtonText: {
     color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  clearButton: {
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  clearButtonText: {
+    color: '#1E293B',
     fontSize: 12,
     fontWeight: '700',
   },

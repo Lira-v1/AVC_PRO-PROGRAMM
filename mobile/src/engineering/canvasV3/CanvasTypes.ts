@@ -292,6 +292,8 @@ export type CanvasDebugState = {
   worldCenter: WorldPoint;
   screenCenter: ScreenPoint;
   worldAtScreenCenter: WorldPoint;
+  activeSurfaceId: string | null;
+  activeWallId: string | null;
   activeRoomId: string | null;
   snappedRoomId: string | null;
   snapTargetRoomId: string | null;
