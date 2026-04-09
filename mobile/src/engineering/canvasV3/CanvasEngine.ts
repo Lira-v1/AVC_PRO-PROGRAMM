@@ -76,6 +76,7 @@ const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
 const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east', 'wall'];
 const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor', 'ceiling'];
 const SHARED_SURFACE_TOLERANCE_MM = 0.5;
+const SPLIT_INTERSECTION_EPSILON_MM = 0.01;
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -126,12 +127,96 @@ const addScaled = (point: WorldPoint, direction: WorldPoint, scalar: number): Wo
   x: point.x + direction.x * scalar,
   y: point.y + direction.y * scalar,
 });
+const isSamePoint = (left: WorldPoint, right: WorldPoint, epsilon = SPLIT_INTERSECTION_EPSILON_MM) =>
+  Math.hypot(left.x - right.x, left.y - right.y) <= epsilon;
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const intersectSegments = (a1: WorldPoint, a2: WorldPoint, b1: WorldPoint, b2: WorldPoint, epsilon = SPLIT_INTERSECTION_EPSILON_MM): SegmentIntersection | null => {
+  const a = subtract(a2, a1);
+  const b = subtract(b2, b1);
+  const denominator = cross(a, b);
+  const diff = subtract(b1, a1);
+
+  if (Math.abs(denominator) <= epsilon) {
+    return null;
+  }
+
+  const tA = cross(diff, b) / denominator;
+  const tB = cross(diff, a) / denominator;
+
+  if (tA < -epsilon || tA > 1 + epsilon || tB < -epsilon || tB > 1 + epsilon) {
+    return null;
+  }
+
+  return {
+    point: {
+      x: a1.x + a.x * tA,
+      y: a1.y + a.y * tA,
+    },
+    tA: clamp01(tA),
+    tB: clamp01(tB),
+  };
+};
+
+const dedupePath = (points: WorldPoint[], epsilon = SPLIT_INTERSECTION_EPSILON_MM): WorldPoint[] =>
+  points.reduce<WorldPoint[]>((acc, point) => {
+    const last = acc[acc.length - 1];
+    if (!last || !isSamePoint(last, point, epsilon)) {
+      acc.push(point);
+    }
+    return acc;
+  }, []);
+
+const simplifyCollinear = (points: WorldPoint[], epsilon = SPLIT_INTERSECTION_EPSILON_MM): WorldPoint[] => {
+  if (points.length < 4) {
+    return points;
+  }
+
+  const simplified: WorldPoint[] = [];
+
+  for (let index = 0; index < points.length; index += 1) {
+    const prev = points[(index - 1 + points.length) % points.length];
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    const v1 = subtract(current, prev);
+    const v2 = subtract(next, current);
+    const lengthProduct = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y);
+
+    if (lengthProduct <= epsilon) {
+      continue;
+    }
+
+    const area = Math.abs(cross(v1, v2));
+    if (area <= epsilon * lengthProduct) {
+      continue;
+    }
+
+    simplified.push(current);
+  }
+
+  return simplified.length >= 3 ? simplified : points;
+};
 
 type SharedSegmentDetection = {
   start: WorldPoint;
   end: WorldPoint;
   length: number;
   mode: SharedSurfaceMode;
+};
+
+type SegmentIntersection = {
+  point: WorldPoint;
+  tA: number;
+  tB: number;
+};
+
+type BoundaryIntersectionPoint = {
+  point: WorldPoint;
+  contourSegmentIndex: number;
+  contourSegmentT: number;
+  edgeIndex: number;
+  edgeT: number;
+  contourDistance: number;
 };
 
 export class CanvasEngine {
@@ -159,6 +244,9 @@ export class CanvasEngine {
   private isContourConvertedToRoom = false;
   private currentSegmentAngle: number | null = null;
   private lastCreatedShapeId: string | null = null;
+  private isRoomSplitOperation = false;
+  private splitSourceRoomId: string | null = null;
+  private splitNewRoomIds: string[] = [];
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -266,9 +354,7 @@ export class CanvasEngine {
     this.resize.endResize();
 
     if (!next) {
-      this.currentContourPoints = [];
-      this.currentSegmentAngle = null;
-      this.contourShapes = [];
+      this.resetDrawingSession();
     }
     this.isContourConvertedToRoom = false;
 
@@ -277,6 +363,25 @@ export class CanvasEngine {
 
   getIsDrawingMode(): boolean {
     return this.isDrawingMode;
+  }
+
+  private resetDrawingSession() {
+    this.currentContourPoints = [];
+    this.currentSegmentAngle = null;
+    this.contourShapes = [];
+    this.lastPointerWorldPoint = null;
+  }
+
+  private registerSplitDebugState(sourceRoomId: string, newRoomIds: string[]) {
+    this.isRoomSplitOperation = true;
+    this.splitSourceRoomId = sourceRoomId;
+    this.splitNewRoomIds = [...newRoomIds];
+  }
+
+  private clearSplitDebugState() {
+    this.isRoomSplitOperation = false;
+    this.splitSourceRoomId = null;
+    this.splitNewRoomIds = [];
   }
 
   private getContourCloseThresholdMm(): number {
@@ -357,6 +462,202 @@ export class CanvasEngine {
     return this.isPointNearContourStart(this.lastPointerWorldPoint);
   }
 
+  private getContourBoundaryIntersections(room: RoomModel, contourPoints: WorldPoint[]): BoundaryIntersectionPoint[] {
+    if (contourPoints.length < 2) {
+      return [];
+    }
+
+    const geometry = this.getRoomGeometry(room);
+    const intersections: BoundaryIntersectionPoint[] = [];
+    let contourDistance = 0;
+
+    for (let contourIndex = 0; contourIndex < contourPoints.length - 1; contourIndex += 1) {
+      const from = contourPoints[contourIndex];
+      const to = contourPoints[contourIndex + 1];
+      const segmentLength = distance(from, to);
+
+      if (segmentLength <= SPLIT_INTERSECTION_EPSILON_MM) {
+        contourDistance += segmentLength;
+        continue;
+      }
+
+      for (let edgeIndex = 0; edgeIndex < geometry.edges.length; edgeIndex += 1) {
+        const edge = geometry.edges[edgeIndex];
+        const intersection = intersectSegments(from, to, edge.from, edge.to);
+
+        if (!intersection) {
+          continue;
+        }
+
+        intersections.push({
+          point: intersection.point,
+          contourSegmentIndex: contourIndex,
+          contourSegmentT: intersection.tA,
+          edgeIndex,
+          edgeT: intersection.tB,
+          contourDistance: contourDistance + segmentLength * intersection.tA,
+        });
+      }
+
+      contourDistance += segmentLength;
+    }
+
+    intersections.sort((left, right) => left.contourDistance - right.contourDistance);
+
+    return intersections.filter((candidate, index, list) => {
+      const duplicate = list.findIndex((entry) =>
+        Math.abs(entry.contourDistance - candidate.contourDistance) <= SPLIT_INTERSECTION_EPSILON_MM &&
+        isSamePoint(entry.point, candidate.point),
+      );
+      return duplicate === index;
+    });
+  }
+
+  private getBoundaryPath(
+    corners: WorldPoint[],
+    startIntersection: BoundaryIntersectionPoint,
+    endIntersection: BoundaryIntersectionPoint,
+    direction: 1 | -1,
+  ): WorldPoint[] {
+    const vertexCount = corners.length;
+    const path: WorldPoint[] = [{ ...startIntersection.point }];
+
+    if (startIntersection.edgeIndex === endIntersection.edgeIndex) {
+      const isForwardOnSameEdge = endIntersection.edgeT >= startIntersection.edgeT;
+      if ((direction === 1 && isForwardOnSameEdge) || (direction === -1 && !isForwardOnSameEdge)) {
+        path.push({ ...endIntersection.point });
+        return dedupePath(path);
+      }
+    }
+
+    let edgeIndex = startIntersection.edgeIndex;
+    let guard = 0;
+
+    while (guard < vertexCount + 2) {
+      const nextVertexIndex = direction === 1 ? (edgeIndex + 1) % vertexCount : edgeIndex;
+      path.push({ ...corners[nextVertexIndex] });
+
+      if ((direction === 1 ? nextVertexIndex : (edgeIndex - 1 + vertexCount) % vertexCount) === endIntersection.edgeIndex) {
+        path.push({ ...endIntersection.point });
+        break;
+      }
+
+      edgeIndex = direction === 1 ? (edgeIndex + 1) % vertexCount : (edgeIndex - 1 + vertexCount) % vertexCount;
+      guard += 1;
+    }
+
+    return dedupePath(path);
+  }
+
+  private splitRoomByContour(sourceRoom: RoomModel, contourPoints: WorldPoint[]): { sourceRoomId: string; newRoomIds: string[] } | null {
+    if (!RoomGeometry.hasPolygonGeometry(sourceRoom) || contourPoints.length < 2) {
+      return null;
+    }
+
+    const geometry = this.getRoomGeometry(sourceRoom);
+    const intersections = this.getContourBoundaryIntersections(sourceRoom, contourPoints);
+
+    if (intersections.length < 2) {
+      return null;
+    }
+
+    const firstIntersection = intersections[0];
+    const secondIntersection = intersections[1];
+    const splitterPath: WorldPoint[] = [{ ...firstIntersection.point }];
+
+    for (let index = firstIntersection.contourSegmentIndex + 1; index <= secondIntersection.contourSegmentIndex; index += 1) {
+      splitterPath.push({ ...contourPoints[index] });
+    }
+
+    splitterPath.push({ ...secondIntersection.point });
+    const forwardBoundary = this.getBoundaryPath(geometry.corners, firstIntersection, secondIntersection, 1);
+    const backwardBoundary = this.getBoundaryPath(geometry.corners, secondIntersection, firstIntersection, 1);
+    const reversedSplitterPath = [...splitterPath].reverse();
+    const polygonA = simplifyCollinear(dedupePath([...splitterPath, ...backwardBoundary.slice(1)]));
+    const polygonB = simplifyCollinear(dedupePath([...reversedSplitterPath, ...forwardBoundary.slice(1)]));
+
+    if (polygonA.length < 3 || polygonB.length < 3) {
+      return null;
+    }
+
+    const createDerivedRoom = (polygon: WorldPoint[], nameSuffix: string): RoomModel => {
+      const bounds = polygon.reduce(
+        (acc, point) => ({
+          minX: Math.min(acc.minX, point.x),
+          maxX: Math.max(acc.maxX, point.x),
+          minY: Math.min(acc.minY, point.y),
+          maxY: Math.max(acc.maxY, point.y),
+        }),
+        {
+          minX: Number.POSITIVE_INFINITY,
+          maxX: Number.NEGATIVE_INFINITY,
+          minY: Number.POSITIVE_INFINITY,
+          maxY: Number.NEGATIVE_INFINITY,
+        },
+      );
+      const center = this.snapToGrid({
+        x: (bounds.minX + bounds.maxX) / 2,
+        y: (bounds.minY + bounds.maxY) / 2,
+      });
+      const widthMm = Math.max(400, bounds.maxX - bounds.minX);
+      const heightMm = Math.max(400, bounds.maxY - bounds.minY);
+
+      return normalizeRoomModel({
+        ...sourceRoom,
+        roomId: this.getNextRoomId(),
+        roomName: `${this.resolveRoomName(sourceRoom)} ${nameSuffix}`,
+        centerX: center.x,
+        centerY: center.y,
+        widthMm,
+        heightMm,
+        rotationDeg: 0,
+        verticesMm: polygon.map((point) => ({
+          x: point.x - center.x,
+          y: point.y - center.y,
+        })),
+      });
+    };
+
+    this.rooms = this.rooms.filter((room) => room.roomId !== sourceRoom.roomId);
+    const firstRoom = createDerivedRoom(polygonA, 'A');
+    this.rooms.push(firstRoom);
+    const secondRoom = createDerivedRoom(polygonB, 'B');
+    this.rooms.push(secondRoom);
+    this.setRooms(this.rooms);
+    this.selectRoom(firstRoom.roomId);
+
+    return {
+      sourceRoomId: sourceRoom.roomId,
+      newRoomIds: [firstRoom.roomId, secondRoom.roomId],
+    };
+  }
+
+  private trySplitRoomByContour(contourPoints: WorldPoint[]): boolean {
+    if (contourPoints.length < 2) {
+      return false;
+    }
+
+    const sourceRoom = this.rooms.find((room) => RoomGeometry.hasPolygonGeometry(room) && RoomGeometry.containsPoint(room, contourPoints[0]));
+
+    if (!sourceRoom) {
+      return false;
+    }
+
+    const splitResult = this.splitRoomByContour(sourceRoom, contourPoints);
+
+    if (!splitResult) {
+      return false;
+    }
+
+    this.registerSplitDebugState(splitResult.sourceRoomId, splitResult.newRoomIds);
+    this.resetDrawingSession();
+    this.isContourClosed = false;
+    this.isContourConvertedToRoom = true;
+    this.lastCreatedShapeId = splitResult.newRoomIds[0] ?? null;
+    this.isDrawingMode = false;
+    return true;
+  }
+
   addContourPointAtScreenPoint(point: ScreenPoint): ContourShapeWorldGeometry | null {
     if (!this.isDrawingMode || this.mode !== 'main') {
       return null;
@@ -371,12 +672,12 @@ export class CanvasEngine {
     if (this.currentContourPoints.length >= MIN_CONTOUR_POINTS_TO_CLOSE && this.isPointNearContourStart(contourPoint)) {
       const closedPoints = [...this.currentContourPoints];
       const room = this.createRoomFromContour(closedPoints);
-      this.currentContourPoints = [];
-      this.contourShapes = [];
+      this.resetDrawingSession();
       this.isContourClosed = true;
       this.isContourConvertedToRoom = room !== null;
-      this.currentSegmentAngle = null;
       this.lastCreatedShapeId = room?.roomId ?? null;
+      this.clearSplitDebugState();
+      this.isDrawingMode = false;
       return null;
     }
 
@@ -387,6 +688,11 @@ export class CanvasEngine {
     }
 
     this.currentContourPoints.push(contourPoint);
+    if (this.trySplitRoomByContour(this.currentContourPoints)) {
+      return null;
+    }
+
+    this.clearSplitDebugState();
     this.isContourClosed = false;
     this.isContourConvertedToRoom = false;
     return null;
@@ -954,6 +1260,9 @@ export class CanvasEngine {
       cellsPerMeter: gridMetrics.cellsPerMeter,
       lastPointerWorldX: this.lastPointerWorldPoint?.x ?? null,
       lastPointerWorldY: this.lastPointerWorldPoint?.y ?? null,
+      isRoomSplitOperation: this.isRoomSplitOperation,
+      splitSourceRoomId: this.splitSourceRoomId,
+      newRoomIds: [...this.splitNewRoomIds],
     };
   }
 
