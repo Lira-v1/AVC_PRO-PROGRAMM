@@ -98,6 +98,9 @@ const formatDebugText = (debugState: CanvasDebugState) => {
   const viewport = `${debugState.viewport.width.toFixed(0)} × ${debugState.viewport.height.toFixed(0)}`;
   const roomIds = debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none';
   const displayZoomLabel = `${debugState.displayZoom > 0 ? '+' : ''}${debugState.displayZoom.toFixed(2)}`;
+  const roomPositions = debugState.roomPositions.length
+    ? debugState.roomPositions.map((room) => `${room.roomId}:(${room.centerX.toFixed(0)}, ${room.centerY.toFixed(0)})`).join(', ')
+    : 'none';
 
   return [
     `projectId: ${debugState.projectId}`,
@@ -110,6 +113,9 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `viewport: ${viewport}`,
     `roomIds: ${roomIds}`,
     `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
+    `snappedRoomId: ${debugState.snappedRoomId ?? 'null'}`,
+    `snapTargetRoomId: ${debugState.snapTargetRoomId ?? 'null'}`,
+    `roomPositions: ${roomPositions}`,
     `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
     `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
@@ -1247,6 +1253,11 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
                   <Text style={styles.metaText}>activeRoomId: {debugState.activeRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>snappedRoomId: {debugState.snappedRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>snapTargetRoomId: {debugState.snapTargetRoomId ?? 'null'}</Text>
+                  <Text style={styles.metaText}>
+                    roomPositions: {debugState.roomPositions.length ? debugState.roomPositions.map((room) => `${room.roomId}:(${room.centerX.toFixed(0)}, ${room.centerY.toFixed(0)})`).join(', ') : 'none'}
+                  </Text>
                   <Text style={styles.metaText}>gridStepMm: {debugState.gridStepMm}</Text>
                   <Text style={styles.metaText}>gridLevel: {debugState.gridLevel}</Text>
                   <Text style={styles.metaText}>cellsPerMeter: {debugState.cellsPerMeter}</Text>
