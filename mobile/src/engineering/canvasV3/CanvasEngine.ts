@@ -59,8 +59,6 @@ const ROOM_FALLBACK_PREFIX = 'Комната';
 const DEFAULT_WALL_HEIGHT_MM = 2700;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
-const SURFACE_FOCUS_WIDTH_RATIO = 0.33;
-const SURFACE_FOCUS_HEIGHT_RATIO = 0.7;
 const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east'];
 const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor'];
 
@@ -112,8 +110,6 @@ export class CanvasEngine {
   private surfaceSceneRoomId: string | null = null;
   private activeSurfaceId: string | null = null;
   private savedMainCameraState: CameraState | null = null;
-  private savedSurfaceSceneCameraState: CameraState | null = null;
-  private restoredCameraState: CameraState | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -501,10 +497,6 @@ export class CanvasEngine {
     return this.activeSurfaceId;
   }
 
-  isSurfaceFocusMode(): boolean {
-    return this.activeSurfaceId !== null;
-  }
-
   openRoomSurfaceScene(roomId: string): RoomSurfaceWorldGeometry[] | null {
     const room = this.rooms.find((candidate) => candidate.roomId === roomId);
 
@@ -513,8 +505,6 @@ export class CanvasEngine {
     }
 
     this.savedMainCameraState = this.camera.getState();
-    this.savedSurfaceSceneCameraState = null;
-    this.restoredCameraState = null;
     this.mode = 'room-surface-scene';
     this.surfaceSceneRoomId = roomId;
     this.activeSurfaceId = null;
@@ -530,36 +520,16 @@ export class CanvasEngine {
 
     if (restoreState) {
       this.camera.setView(restoreState);
-      this.restoredCameraState = restoreState;
     }
 
     this.mode = 'main';
     this.surfaceSceneRoomId = null;
     this.activeSurfaceId = null;
-    this.savedSurfaceSceneCameraState = null;
     this.savedMainCameraState = null;
   }
 
   setCameraView(next: { zoom: number; panX: number; panY: number }) {
     this.camera.setView(next);
-  }
-
-  clearSurfaceFocus() {
-    const restoreState = this.savedSurfaceSceneCameraState;
-
-    if (restoreState) {
-      this.camera.setView(restoreState);
-      this.restoredCameraState = restoreState;
-    } else {
-      this.fitSurfaceSceneToViewport();
-    }
-
-    this.activeSurfaceId = null;
-    this.savedSurfaceSceneCameraState = null;
-  }
-
-  private getRoomSurfaceById(surfaceId: string): RoomSurfaceWorldGeometry | null {
-    return this.getRoomSurfaceSceneWorldGeometry().find((surface) => surface.surfaceId === surfaceId) ?? null;
   }
 
   private getRoomSurfaceByScreenPoint(point: ScreenPoint): RoomSurfaceWorldGeometry | null {
@@ -579,25 +549,6 @@ export class CanvasEngine {
     return SELECTABLE_SURFACE_TYPES.includes(type);
   }
 
-  getSurfaceFocusCameraTarget(surfaceId: string): { zoom: number; panX: number; panY: number } | null {
-    const viewport = this.canvasState.viewport;
-    const surface = this.getRoomSurfaceById(surfaceId);
-
-    if (!surface || viewport.width <= 0 || viewport.height <= 0 || !this.isSelectableSurfaceType(surface.type)) {
-      return null;
-    }
-
-    const widthZoom = (viewport.width * SURFACE_FOCUS_WIDTH_RATIO) / Math.max(1, surface.bounds.width);
-    const heightZoom = (viewport.height * SURFACE_FOCUS_HEIGHT_RATIO) / Math.max(1, surface.bounds.height);
-    const zoom = Math.min(widthZoom, heightZoom);
-
-    return {
-      zoom,
-      panX: surface.center.x,
-      panY: surface.center.y,
-    };
-  }
-
   selectSurfaceAtScreenPoint(point: ScreenPoint): string | null {
     if (this.mode !== 'room-surface-scene') {
       return null;
@@ -607,11 +558,6 @@ export class CanvasEngine {
 
     if (!hitSurface || !this.isSelectableSurfaceType(hitSurface.type)) {
       return this.activeSurfaceId;
-    }
-
-    if (this.activeSurfaceId === null) {
-      this.savedSurfaceSceneCameraState = this.camera.getState();
-      this.restoredCameraState = null;
     }
 
     this.activeSurfaceId = hitSurface.surfaceId;
@@ -833,9 +779,6 @@ export class CanvasEngine {
       mode: this.mode,
       surfaceSceneRoomId: this.surfaceSceneRoomId,
       activeSurfaceId: this.activeSurfaceId,
-      isSurfaceFocusMode: this.activeSurfaceId !== null,
-      savedCameraState: this.savedSurfaceSceneCameraState ?? this.savedMainCameraState,
-      restoredCameraState: this.restoredCameraState,
     };
   }
 }
