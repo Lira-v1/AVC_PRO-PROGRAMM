@@ -218,6 +218,26 @@ export const CanvasV3DevScreen = () => {
 
   const beginInteraction = useCallback(
     (screenPoint: ScreenPoint, pointerId?: number) => {
+      const isSurfaceSceneMode = engineRef.current.getCanvasMode() === 'room-surface-scene';
+
+      if (isSurfaceSceneMode) {
+        engineRef.current.updateLastPointer(screenPoint);
+        engineRef.current.endDrag();
+        engineRef.current.endResize();
+        dragSessionRef.current = {
+          mode: 'pan',
+          pointerId: pointerId ?? null,
+          started: true,
+          moved: false,
+          startX: screenPoint.x,
+          startY: screenPoint.y,
+          lastX: screenPoint.x,
+          lastY: screenPoint.y,
+        };
+        refreshState();
+        return;
+      }
+
       const resizeHandleId = engineRef.current.getResizeHandleAtScreenPoint(screenPoint);
       const activeRoomIdBeforePress = engineRef.current.getActiveRoomId();
       const hitRoomId = engineRef.current.getRoomIdAtScreenPoint(screenPoint);
