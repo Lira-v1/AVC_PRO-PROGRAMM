@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { CanvasEngine } from '../../engineering/canvasV3/CanvasEngine';
-import { CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, RoomSurfaceType, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
+import { CameraState, CanvasDebugState, CanvasSnapshot, DimensionUnit, RoomModel, RoomSurfaceType, ScreenPoint } from '../../engineering/canvasV3/CanvasTypes';
 
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
@@ -142,6 +142,10 @@ const copyTextToClipboard = async (text: string) => {
 };
 
 const formatZoomState = (displayZoom: number) => `${displayZoom > 0 ? '+' : ''}${displayZoom.toFixed(0)}`;
+const formatCameraState = (state: CameraState | null) =>
+  state
+    ? `{ zoom: ${state.zoom.toFixed(3)}, panX: ${state.panX.toFixed(1)}, panY: ${state.panY.toFixed(1)} }`
+    : 'null';
 const getRoomDisplayName = (room: RoomModel, index: number) => {
   const explicitRoomName = room.roomName?.trim() || room.settings?.name?.trim();
 
@@ -542,6 +546,7 @@ export const CanvasV3DevScreen = () => {
   const isSurfaceFocusMode = snapshot.isSurfaceFocusMode;
   const activeSurfaceDisplayName = activeSurface ? getSurfaceTitle(activeSurface.type) : '-';
   const activeSurfaceWidthMm = activeSurfaceWorld?.widthMm ?? null;
+  const activeSurfaceHeightMm = activeSurfaceWorld?.heightMm ?? null;
   const miniMapWidth = 128;
   const miniMapHeight = 92;
   const miniMapPadding = 12;
@@ -925,11 +930,6 @@ export const CanvasV3DevScreen = () => {
                   <Pressable style={styles.surfaceBackButton} onPress={handleBackFromSurfaceScene}>
                     <Text style={styles.surfaceBackButtonText}>{isSurfaceFocusMode ? 'Назад к развёртке' : 'Назад'}</Text>
                   </Pressable>
-                  {isSurfaceFocusMode ? (
-                    <Pressable style={styles.surfaceAddOutletButton}>
-                      <Text style={styles.surfaceAddOutletButtonText}>+ Добавить розетку</Text>
-                    </Pressable>
-                  ) : null}
                 </View>
 
                 <View style={styles.surfaceMiniMapWrap} pointerEvents="none">
@@ -958,7 +958,7 @@ export const CanvasV3DevScreen = () => {
                     </View>
                     <View style={styles.surfaceInfoRow}>
                       <Text style={styles.surfaceInfoLabel}>Высота</Text>
-                      <Text style={styles.surfaceInfoValue}>{surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.wallHeightMm ?? 2700) : '-'}</Text>
+                      <Text style={styles.surfaceInfoValue}>{isSurfaceFocusMode && activeSurfaceHeightMm ? formatMetersLabel(activeSurfaceHeightMm) : surfaceSceneRoom ? formatMetersLabel(surfaceSceneRoom.wallHeightMm ?? 2700) : '-'}</Text>
                     </View>
                     {!isSurfaceFocusMode ? (
                       <View style={styles.surfaceInfoRow}>
@@ -1243,6 +1243,8 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>activeRoomId: {snapshot.activeRoomId ?? 'null'}</Text>
                   <Text style={styles.metaText}>activeSurfaceId: {snapshot.activeSurfaceId ?? 'null'}</Text>
                   <Text style={styles.metaText}>isSurfaceFocusMode: {snapshot.isSurfaceFocusMode ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>savedCameraState: {formatCameraState(snapshot.savedCameraState)}</Text>
+                  <Text style={styles.metaText}>restoredCameraState: {formatCameraState(snapshot.restoredCameraState)}</Text>
                   <Text style={styles.metaText}>activeRoomName: {activeRoom ? roomNameById[activeRoom.roomId] : 'null'}</Text>
                   <Text style={styles.metaText}>isDraggingRoom: {debugState.isDraggingRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>isResizingRoom: {debugState.isResizingRoom ? 'true' : 'false'}</Text>
@@ -1425,21 +1427,6 @@ const styles = StyleSheet.create({
   surfaceBackButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
-  },
-  surfaceAddOutletButton: {
-    minHeight: 38,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#93C5FD',
-    backgroundColor: '#EFF6FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  surfaceAddOutletButtonText: {
-    color: '#1D4ED8',
-    fontWeight: '700',
-    fontSize: 13,
   },
   surfaceMiniMapWrap: {
     position: 'absolute',
