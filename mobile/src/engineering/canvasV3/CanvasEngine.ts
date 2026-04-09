@@ -1921,6 +1921,8 @@ export class CanvasEngine {
       worldCenter: this.getWorldCenter(),
       screenCenter,
       worldAtScreenCenter: this.screenToWorld(screenCenter),
+      activeSurfaceId: this.activeSurfaceId,
+      activeWallId: this.lastCreatedWallId,
       activeRoomId: this.getActiveRoomId(),
       snappedRoomId: this.transform.getSnappedRoomId(),
       snapTargetRoomId: this.transform.getSnapTargetRoomId(),
