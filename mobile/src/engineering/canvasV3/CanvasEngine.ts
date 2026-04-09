@@ -66,6 +66,7 @@ const NEW_ROOM_OFFSET_MM = 1200;
 const NEW_ROOM_COLUMNS = 3;
 const MIN_CONTOUR_POINTS_TO_CLOSE = 3;
 const CONTOUR_CLOSE_THRESHOLD_MM = 160;
+const ORTHOGONAL_SEGMENT_ANGLES_DEG = [0, 45, 90, 135] as const;
 const SURFACE_SCENE_GAP_MM = 280;
 const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SINGLE_SURFACE_VIEWPORT_FILL_RATIO = 0.65;
@@ -150,8 +151,9 @@ export class CanvasEngine {
   private isDrawingMode = false;
   private currentContourPoints: WorldPoint[] = [];
   private contourShapes: ContourShapeWorldGeometry[] = [];
-  private contourShapeCounter = 0;
   private isContourClosed = false;
+  private isContourConvertedToRoom = false;
+  private currentSegmentAngle: number | null = null;
   private lastCreatedShapeId: string | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
@@ -261,7 +263,10 @@ export class CanvasEngine {
 
     if (!next) {
       this.currentContourPoints = [];
+      this.currentSegmentAngle = null;
+      this.contourShapes = [];
     }
+    this.isContourConvertedToRoom = false;
 
     return this.isDrawingMode;
   }
@@ -284,6 +289,62 @@ export class CanvasEngine {
     return distance(point, start) <= this.getContourCloseThresholdMm();
   }
 
+  private snapContourPointToOrthogonalDirection(rawPoint: WorldPoint): { point: WorldPoint; angleDeg: number | null } {
+    const anchor = this.currentContourPoints[this.currentContourPoints.length - 1];
+
+    if (!anchor) {
+      return { point: rawPoint, angleDeg: null };
+    }
+
+    const deltaX = rawPoint.x - anchor.x;
+    const deltaY = rawPoint.y - anchor.y;
+
+    if (Math.abs(deltaX) <= Number.EPSILON && Math.abs(deltaY) <= Number.EPSILON) {
+      return { point: anchor, angleDeg: null };
+    }
+
+    const rawAngleDeg = ((Math.atan2(deltaY, deltaX) * 180) / Math.PI + 360) % 180;
+    const nearestAngle = ORTHOGONAL_SEGMENT_ANGLES_DEG.reduce((nearest, candidate) => {
+      const nearestDiff = Math.min(Math.abs(rawAngleDeg - nearest), 180 - Math.abs(rawAngleDeg - nearest));
+      const candidateDiff = Math.min(Math.abs(rawAngleDeg - candidate), 180 - Math.abs(rawAngleDeg - candidate));
+      return candidateDiff < nearestDiff ? candidate : nearest;
+    }, ORTHOGONAL_SEGMENT_ANGLES_DEG[0]);
+    const directionRad = (nearestAngle * Math.PI) / 180;
+    const direction = { x: Math.cos(directionRad), y: Math.sin(directionRad) };
+    const projection = deltaX * direction.x + deltaY * direction.y;
+    const sign = projection >= 0 ? 1 : -1;
+    const normalizedDirection = { x: direction.x * sign, y: direction.y * sign };
+    const { gridStepMm } = this.grid.getGridMetrics();
+
+    if (nearestAngle === 0) {
+      const nextX = Math.round((anchor.x + projection) / gridStepMm) * gridStepMm;
+      return {
+        point: { x: nextX, y: anchor.y },
+        angleDeg: 0,
+      };
+    }
+
+    if (nearestAngle === 90) {
+      const nextY = Math.round((anchor.y + projection) / gridStepMm) * gridStepMm;
+      return {
+        point: { x: anchor.x, y: nextY },
+        angleDeg: 90,
+      };
+    }
+
+    const diagonalComponent = projection / Math.SQRT2;
+    const snappedComponent = Math.round(diagonalComponent / gridStepMm) * gridStepMm;
+    const point = {
+      x: anchor.x + snappedComponent * Math.sign(normalizedDirection.x || 1),
+      y: anchor.y + snappedComponent * Math.sign(normalizedDirection.y || 1),
+    };
+
+    return {
+      point,
+      angleDeg: nearestAngle,
+    };
+  }
+
   isContourSnapToStartActive(): boolean {
     if (!this.isDrawingMode || !this.lastPointerWorldPoint) {
       return false;
@@ -298,27 +359,32 @@ export class CanvasEngine {
     }
 
     const worldPoint = this.snapToGrid(this.screenToWorld(point));
-    this.lastPointerWorldPoint = worldPoint;
+    const snappedSegment = this.snapContourPointToOrthogonalDirection(worldPoint);
+    const contourPoint = this.currentContourPoints.length === 0 ? worldPoint : this.snapToGrid(snappedSegment.point);
+    this.currentSegmentAngle = snappedSegment.angleDeg;
+    this.lastPointerWorldPoint = contourPoint;
 
-    if (this.currentContourPoints.length >= MIN_CONTOUR_POINTS_TO_CLOSE && this.isPointNearContourStart(worldPoint)) {
+    if (this.currentContourPoints.length >= MIN_CONTOUR_POINTS_TO_CLOSE && this.isPointNearContourStart(contourPoint)) {
       const closedPoints = [...this.currentContourPoints];
-      const shapeId = `shape-${++this.contourShapeCounter}`;
       const room = this.createRoomFromContour(closedPoints);
-      const shape: ContourShapeWorldGeometry = {
-        shapeId,
-        points: closedPoints,
-        isClosed: true,
-        createdRoomId: room?.roomId ?? null,
-      };
-      this.contourShapes.push(shape);
       this.currentContourPoints = [];
+      this.contourShapes = [];
       this.isContourClosed = true;
-      this.lastCreatedShapeId = shapeId;
-      return shape;
+      this.isContourConvertedToRoom = room !== null;
+      this.currentSegmentAngle = null;
+      this.lastCreatedShapeId = room?.roomId ?? null;
+      return null;
     }
 
-    this.currentContourPoints.push(worldPoint);
+    const anchor = this.currentContourPoints[this.currentContourPoints.length - 1];
+
+    if (anchor && distance(anchor, contourPoint) <= Number.EPSILON) {
+      return null;
+    }
+
+    this.currentContourPoints.push(contourPoint);
     this.isContourClosed = false;
+    this.isContourConvertedToRoom = false;
     return null;
   }
 
@@ -548,7 +614,16 @@ export class CanvasEngine {
 
   updateLastPointer(screenPoint: ScreenPoint): WorldPoint {
     const worldPoint = this.screenToWorld(screenPoint);
+
+    if (this.isDrawingMode && this.currentContourPoints.length > 0) {
+      const snappedSegment = this.snapContourPointToOrthogonalDirection(this.snapToGrid(worldPoint));
+      this.currentSegmentAngle = snappedSegment.angleDeg;
+      this.lastPointerWorldPoint = this.snapToGrid(snappedSegment.point);
+      return this.lastPointerWorldPoint;
+    }
+
     this.lastPointerWorldPoint = worldPoint;
+    this.currentSegmentAngle = null;
     return worldPoint;
   }
 
@@ -842,8 +917,11 @@ export class CanvasEngine {
       roomsCount: this.rooms.length,
       roomPositions: this.rooms.map((room) => ({ roomId: room.roomId, centerX: room.centerX, centerY: room.centerY })),
       isDrawingMode: this.isDrawingMode,
+      isOrthogonalDrawingMode: this.isDrawingMode,
+      currentSegmentAngle: this.currentSegmentAngle,
       currentContourPointsCount: this.currentContourPoints.length,
       isContourClosed: this.isContourClosed,
+      isContourConvertedToRoom: this.isContourConvertedToRoom,
       lastCreatedShapeId: this.lastCreatedShapeId,
       activeSurfaceSharedDebug: this.getSurfaceSharedDebugState(),
       gridStepMm: gridMetrics.gridStepMm,

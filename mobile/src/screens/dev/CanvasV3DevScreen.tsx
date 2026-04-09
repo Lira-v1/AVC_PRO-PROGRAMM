@@ -100,8 +100,11 @@ const formatDebugText = (debugState: CanvasDebugState) => {
     `snapPreviewTargetRoomId: ${debugState.snapPreview?.targetRoomId ?? 'null'}`,
     `roomPositions: ${roomPositions}`,
     `isDrawingMode: ${debugState.isDrawingMode ? 'true' : 'false'}`,
+    `isOrthogonalDrawingMode: ${debugState.isOrthogonalDrawingMode ? 'true' : 'false'}`,
+    `currentSegmentAngle: ${debugState.currentSegmentAngle ?? 'null'}`,
     `currentContourPointsCount: ${debugState.currentContourPointsCount}`,
     `isContourClosed: ${debugState.isContourClosed ? 'true' : 'false'}`,
+    `isContourConvertedToRoom: ${debugState.isContourConvertedToRoom ? 'true' : 'false'}`,
     `lastCreatedShapeId: ${debugState.lastCreatedShapeId ?? 'null'}`,
     `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
     `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
@@ -1422,8 +1425,11 @@ export const CanvasV3DevScreen = () => {
                   <Text style={styles.metaText}>projectId: {snapshot.projectId}</Text>
                   <Text style={styles.metaText}>roomsCount: {snapshot.roomsCount}</Text>
                   <Text style={styles.metaText}>isDrawingMode: {debugState.isDrawingMode ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>isOrthogonalDrawingMode: {debugState.isOrthogonalDrawingMode ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>currentSegmentAngle: {debugState.currentSegmentAngle ?? 'null'}</Text>
                   <Text style={styles.metaText}>currentContourPointsCount: {debugState.currentContourPointsCount}</Text>
                   <Text style={styles.metaText}>isContourClosed: {debugState.isContourClosed ? 'true' : 'false'}</Text>
+                  <Text style={styles.metaText}>isContourConvertedToRoom: {debugState.isContourConvertedToRoom ? 'true' : 'false'}</Text>
                   <Text style={styles.metaText}>lastCreatedShapeId: {debugState.lastCreatedShapeId ?? 'null'}</Text>
                   <Text style={styles.metaText}>roomIds: {debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}</Text>
                   <Text style={styles.metaText}>activeRoomId: {debugState.activeRoomId ?? 'null'}</Text>
