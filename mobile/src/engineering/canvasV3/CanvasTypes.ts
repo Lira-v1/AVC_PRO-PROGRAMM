@@ -62,6 +62,17 @@ export type RoomModel = {
 
 export type CanvasMode = 'main' | 'room-surface-scene' | 'surface-scene';
 export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'floor' | 'ceiling';
+export type SharedSurfaceMode = 'full' | 'partial';
+export type SurfaceWallType = 'internal' | 'external';
+
+export type SharedSurfaceLink = {
+  linkedSurfaceId: string;
+  linkedRoomId: string;
+  sharedMode: SharedSurfaceMode;
+  sharedSegmentStart: WorldPoint;
+  sharedSegmentEnd: WorldPoint;
+  sharedLength: number;
+};
 
 export type RoomSurfaceWorldGeometry = {
   surfaceId: string;
@@ -72,6 +83,9 @@ export type RoomSurfaceWorldGeometry = {
   rotationDeg: number;
   center: WorldPoint;
   bounds: WorldBounds;
+  surfaceType: SurfaceWallType;
+  isSharedSurface: boolean;
+  sharedSurfaceLink: SharedSurfaceLink | null;
 };
 
 export type RoomSurfaceScreenGeometry = {
@@ -242,6 +256,14 @@ export type CanvasDebugState = {
   roomIds: string[];
   roomsCount: number;
   roomPositions: Array<{ roomId: string; centerX: number; centerY: number }>;
+  activeSurfaceSharedDebug: {
+    isSharedSurface: boolean;
+    linkedSurfaceId: string | null;
+    linkedRoomId: string | null;
+    sharedMode: SharedSurfaceMode | null;
+    sharedLength: number | null;
+    surfaceType: SurfaceWallType;
+  } | null;
   gridStepMm: number;
   gridLevel: string;
   cellsPerMeter: number;
