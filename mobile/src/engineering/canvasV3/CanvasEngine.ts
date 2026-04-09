@@ -6,6 +6,7 @@ import {
   CanvasDebugState,
   CanvasSnapshot,
   CanvasState,
+  CameraState,
   DimensionLineScreenGeometry,
   DimensionLineWorldGeometry,
   DimensionUnit,
@@ -61,6 +62,7 @@ const SURFACE_SCENE_VIEWPORT_PADDING_PX = 32;
 const SURFACE_FOCUS_WIDTH_RATIO = 0.33;
 const SURFACE_FOCUS_HEIGHT_RATIO = 0.7;
 const WALL_SURFACE_TYPES: RoomSurfaceType[] = ['north', 'south', 'west', 'east'];
+const SELECTABLE_SURFACE_TYPES: RoomSurfaceType[] = [...WALL_SURFACE_TYPES, 'floor'];
 
 const getRotatedHalfExtent = (widthMm: number, heightMm: number, rotationDeg: number) => {
   const normalizedRotation = ((rotationDeg % 360) + 360) % 360;
@@ -109,6 +111,9 @@ export class CanvasEngine {
   private mode: CanvasMode = 'main';
   private surfaceSceneRoomId: string | null = null;
   private activeSurfaceId: string | null = null;
+  private savedMainCameraState: CameraState | null = null;
+  private savedSurfaceSceneCameraState: CameraState | null = null;
+  private restoredCameraState: CameraState | null = null;
 
   private getRoomFallbackNameById(roomId: string): string {
     const roomIndex = this.rooms.findIndex((room) => room.roomId === roomId);
@@ -507,6 +512,9 @@ export class CanvasEngine {
       return null;
     }
 
+    this.savedMainCameraState = this.camera.getState();
+    this.savedSurfaceSceneCameraState = null;
+    this.restoredCameraState = null;
     this.mode = 'room-surface-scene';
     this.surfaceSceneRoomId = roomId;
     this.activeSurfaceId = null;
@@ -518,9 +526,18 @@ export class CanvasEngine {
   }
 
   closeRoomSurfaceScene() {
+    const restoreState = this.savedMainCameraState;
+
+    if (restoreState) {
+      this.camera.setView(restoreState);
+      this.restoredCameraState = restoreState;
+    }
+
     this.mode = 'main';
     this.surfaceSceneRoomId = null;
     this.activeSurfaceId = null;
+    this.savedSurfaceSceneCameraState = null;
+    this.savedMainCameraState = null;
   }
 
   setCameraView(next: { zoom: number; panX: number; panY: number }) {
@@ -528,8 +545,17 @@ export class CanvasEngine {
   }
 
   clearSurfaceFocus() {
+    const restoreState = this.savedSurfaceSceneCameraState;
+
+    if (restoreState) {
+      this.camera.setView(restoreState);
+      this.restoredCameraState = restoreState;
+    } else {
+      this.fitSurfaceSceneToViewport();
+    }
+
     this.activeSurfaceId = null;
-    this.fitSurfaceSceneToViewport();
+    this.savedSurfaceSceneCameraState = null;
   }
 
   private getRoomSurfaceById(surfaceId: string): RoomSurfaceWorldGeometry | null {
@@ -549,15 +575,15 @@ export class CanvasEngine {
     ) ?? null;
   }
 
-  private isWallSurfaceType(type: RoomSurfaceType): boolean {
-    return WALL_SURFACE_TYPES.includes(type);
+  private isSelectableSurfaceType(type: RoomSurfaceType): boolean {
+    return SELECTABLE_SURFACE_TYPES.includes(type);
   }
 
   getSurfaceFocusCameraTarget(surfaceId: string): { zoom: number; panX: number; panY: number } | null {
     const viewport = this.canvasState.viewport;
     const surface = this.getRoomSurfaceById(surfaceId);
 
-    if (!surface || viewport.width <= 0 || viewport.height <= 0 || !this.isWallSurfaceType(surface.type)) {
+    if (!surface || viewport.width <= 0 || viewport.height <= 0 || !this.isSelectableSurfaceType(surface.type)) {
       return null;
     }
 
@@ -579,8 +605,13 @@ export class CanvasEngine {
 
     const hitSurface = this.getRoomSurfaceByScreenPoint(point);
 
-    if (!hitSurface || !this.isWallSurfaceType(hitSurface.type)) {
+    if (!hitSurface || !this.isSelectableSurfaceType(hitSurface.type)) {
       return this.activeSurfaceId;
+    }
+
+    if (this.activeSurfaceId === null) {
+      this.savedSurfaceSceneCameraState = this.camera.getState();
+      this.restoredCameraState = null;
     }
 
     this.activeSurfaceId = hitSurface.surfaceId;
@@ -803,6 +834,8 @@ export class CanvasEngine {
       surfaceSceneRoomId: this.surfaceSceneRoomId,
       activeSurfaceId: this.activeSurfaceId,
       isSurfaceFocusMode: this.activeSurfaceId !== null,
+      savedCameraState: this.savedSurfaceSceneCameraState ?? this.savedMainCameraState,
+      restoredCameraState: this.restoredCameraState,
     };
   }
 }
