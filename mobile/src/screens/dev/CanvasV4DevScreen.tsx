@@ -25,7 +25,9 @@ type HistoryAction =
   | { type: 'CREATE_POLYLINE_SEGMENT'; entity: CanvasV4LineEntity; index: number }
   | { type: 'DELETE_LINE'; entity: CanvasV4LineEntity; index: number }
   | { type: 'DELETE_SELECTED_LINES'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
-  | { type: 'MOVE_SELECTED_LINES'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; delta: Point };
+  | { type: 'MOVE_SELECTED_LINES'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; delta: Point }
+  | { type: 'RESIZE_LINE'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string }
+  | { type: 'RESIZE_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string; scaleX: number; scaleY: number };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
 
@@ -44,8 +46,28 @@ type EndpointSnapTarget = {
   distance: number;
 };
 
-type InteractionMode = 'pan' | 'selection-box' | 'move-selection';
+type InteractionMode = 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection';
 type SelectionMode = 'single' | 'box' | 'move';
+type TransformMode = 'idle' | 'resize-line' | 'resize-selection';
+type ResizeAxis = 'none' | 'x' | 'y' | 'xy';
+type TransformHandleId =
+  | 'single-start'
+  | 'single-end'
+  | 'bbox-nw'
+  | 'bbox-n'
+  | 'bbox-ne'
+  | 'bbox-e'
+  | 'bbox-se'
+  | 'bbox-s'
+  | 'bbox-sw'
+  | 'bbox-w';
+
+type BoundingBox = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+};
 
 type DragSession = {
   started: boolean;
@@ -58,6 +80,12 @@ type DragSession = {
   lastY: number;
   moveEntityIds: string[];
   moveOriginalEntities: CanvasV4LineEntity[];
+  resizeHandleId: TransformHandleId | null;
+  resizeAxis: ResizeAxis;
+  resizeOriginalEntities: CanvasV4LineEntity[];
+  resizeOriginalBoundingBox: BoundingBox | null;
+  resizeAnchorPoint: Point | null;
+  resizeActivePoint: Point | null;
 };
 
 type SelectionBoxState = {
@@ -75,6 +103,8 @@ const ZOOM_IN_FACTOR = 1.25;
 const DRAG_THRESHOLD_PX = 3;
 const HIT_TOLERANCE_PX = 12;
 const ENDPOINT_SNAP_THRESHOLD_PX = 14;
+const TRANSFORM_HANDLE_SIZE_PX = 14;
+const TRANSFORM_HANDLE_HIT_RADIUS_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
 const ANGLE_HELPER_TOLERANCE_DEG = 6;
 const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
@@ -90,6 +120,12 @@ const EMPTY_DRAG_SESSION: DragSession = {
   lastY: 0,
   moveEntityIds: [],
   moveOriginalEntities: [],
+  resizeHandleId: null,
+  resizeAxis: 'none',
+  resizeOriginalEntities: [],
+  resizeOriginalBoundingBox: null,
+  resizeAnchorPoint: null,
+  resizeActivePoint: null,
 };
 
 const normalizeAngle = (angle: number) => {
@@ -160,7 +196,7 @@ const snapEndPointToAngleHelper = (startPoint: Point, gridEndPoint: Point): { po
   };
 };
 
-const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint: Point, threshold: number): EndpointSnapTarget | null => {
+const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint: Point, threshold: number, excludedTargetIds = new Set<string>()): EndpointSnapTarget | null => {
   let nearestTarget: EndpointSnapTarget | null = null;
 
   entities.forEach((entity) => {
@@ -168,6 +204,10 @@ const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint:
       { targetId: `${entity.entityId}:startPoint`, point: entity.startPoint },
       { targetId: `${entity.entityId}:endPoint`, point: entity.endPoint },
     ] as Array<{ targetId: string; point: Point }>).forEach((candidate) => {
+      if (excludedTargetIds.has(candidate.targetId)) {
+        return;
+      }
+
       const distance = Math.hypot(rawPoint.x - candidate.point.x, rawPoint.y - candidate.point.y);
 
       if (distance <= threshold && (!nearestTarget || distance < nearestTarget.distance)) {
@@ -183,8 +223,8 @@ const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint:
   return nearestTarget;
 };
 
-const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, endpointThreshold: number, startPoint?: Point | null): SnapResult => {
-  const endpointTarget = findNearestEndpointSnapTarget(entities, rawPoint, endpointThreshold);
+const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, endpointThreshold: number, startPoint?: Point | null, excludedTargetIds = new Set<string>()): SnapResult => {
+  const endpointTarget = findNearestEndpointSnapTarget(entities, rawPoint, endpointThreshold, excludedTargetIds);
 
   if (endpointTarget) {
     return {
@@ -252,6 +292,103 @@ const moveLineEntity = (entity: CanvasV4LineEntity, delta: Point): CanvasV4LineE
     angle: metrics.angle,
   };
 };
+
+const updateLineEntityGeometry = (entity: CanvasV4LineEntity, startPoint: Point, endPoint: Point): CanvasV4LineEntity => {
+  const metrics = getLineMetrics(startPoint, endPoint);
+
+  return {
+    ...entity,
+    startPoint,
+    endPoint,
+    length: metrics.length,
+    angle: metrics.angle,
+  };
+};
+
+const getEntitiesBoundingBox = (entities: CanvasV4LineEntity[]): BoundingBox | null => {
+  if (entities.length === 0) {
+    return null;
+  }
+
+  return entities.reduce<BoundingBox>(
+    (box, entity) => ({
+      minX: Math.min(box.minX, entity.startPoint.x, entity.endPoint.x),
+      maxX: Math.max(box.maxX, entity.startPoint.x, entity.endPoint.x),
+      minY: Math.min(box.minY, entity.startPoint.y, entity.endPoint.y),
+      maxY: Math.max(box.maxY, entity.startPoint.y, entity.endPoint.y),
+    }),
+    { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY },
+  );
+};
+
+const getResizeAxisForHandle = (handleId: TransformHandleId): ResizeAxis => {
+  if (handleId === 'bbox-n' || handleId === 'bbox-s') {
+    return 'y';
+  }
+
+  if (handleId === 'bbox-e' || handleId === 'bbox-w') {
+    return 'x';
+  }
+
+  return 'xy';
+};
+
+const getBoundingBoxHandlePoint = (box: BoundingBox, handleId: TransformHandleId): Point => {
+  const centerX = (box.minX + box.maxX) / 2;
+  const centerY = (box.minY + box.maxY) / 2;
+
+  switch (handleId) {
+    case 'bbox-nw':
+      return { x: box.minX, y: box.minY };
+    case 'bbox-n':
+      return { x: centerX, y: box.minY };
+    case 'bbox-ne':
+      return { x: box.maxX, y: box.minY };
+    case 'bbox-e':
+      return { x: box.maxX, y: centerY };
+    case 'bbox-se':
+      return { x: box.maxX, y: box.maxY };
+    case 'bbox-s':
+      return { x: centerX, y: box.maxY };
+    case 'bbox-sw':
+      return { x: box.minX, y: box.maxY };
+    case 'bbox-w':
+      return { x: box.minX, y: centerY };
+    default:
+      return { x: centerX, y: centerY };
+  }
+};
+
+const getBoundingBoxAnchorPoint = (box: BoundingBox, handleId: TransformHandleId): Point => {
+  const centerX = (box.minX + box.maxX) / 2;
+  const centerY = (box.minY + box.maxY) / 2;
+
+  switch (handleId) {
+    case 'bbox-nw':
+      return { x: box.maxX, y: box.maxY };
+    case 'bbox-n':
+      return { x: centerX, y: box.maxY };
+    case 'bbox-ne':
+      return { x: box.minX, y: box.maxY };
+    case 'bbox-e':
+      return { x: box.minX, y: centerY };
+    case 'bbox-se':
+      return { x: box.minX, y: box.minY };
+    case 'bbox-s':
+      return { x: centerX, y: box.minY };
+    case 'bbox-sw':
+      return { x: box.maxX, y: box.minY };
+    case 'bbox-w':
+      return { x: box.maxX, y: centerY };
+    default:
+      return { x: centerX, y: centerY };
+  }
+};
+
+const scalePointFromAnchor = (point: Point, anchorPoint: Point, scaleX: number, scaleY: number): Point => ({
+  x: anchorPoint.x + (point.x - anchorPoint.x) * scaleX,
+  y: anchorPoint.y + (point.y - anchorPoint.y) * scaleY,
+});
 
 const getNormalizedRect = (startPoint: Point, endPoint: Point) => ({
   minX: Math.min(startPoint.x, endPoint.x),
@@ -370,6 +507,11 @@ export const CanvasV4DevScreen = () => {
   const [moveDeltaMm, setMoveDeltaMm] = useState<Point>({ x: 0, y: 0 });
   const [lastMoveAction, setLastMoveAction] = useState<string>('null');
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('single');
+  const [transformMode, setTransformMode] = useState<TransformMode>('idle');
+  const [activeHandleId, setActiveHandleId] = useState<TransformHandleId | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeAxis, setResizeAxis] = useState<ResizeAxis>('none');
+  const [resizeScale, setResizeScale] = useState({ x: 1, y: 1 });
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -476,6 +618,42 @@ export const CanvasV4DevScreen = () => {
         .find((entity) => getDistanceToSegment(worldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null;
     },
     [cameraZoom, entities],
+  );
+
+  const selectedEntities = useMemo(() => {
+    const selectedSet = new Set(selectedEntityIds);
+    return entities.filter((entity) => selectedSet.has(entity.entityId));
+  }, [entities, selectedEntityIds]);
+
+  const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
+
+  const transformHandles = useMemo(() => {
+    if (selectedEntities.length === 1) {
+      const entity = selectedEntities[0];
+      return [
+        { id: 'single-start' as TransformHandleId, point: entity.startPoint, axis: 'xy' as ResizeAxis },
+        { id: 'single-end' as TransformHandleId, point: entity.endPoint, axis: 'xy' as ResizeAxis },
+      ];
+    }
+
+    if (selectedEntities.length > 1 && selectedBoundingBox) {
+      const handleIds: TransformHandleId[] = ['bbox-nw', 'bbox-n', 'bbox-ne', 'bbox-e', 'bbox-se', 'bbox-s', 'bbox-sw', 'bbox-w'];
+      return handleIds.map((id) => ({ id, point: getBoundingBoxHandlePoint(selectedBoundingBox, id), axis: getResizeAxisForHandle(id) }));
+    }
+
+    return [];
+  }, [selectedBoundingBox, selectedEntities]);
+
+  const findTransformHandleAtScreenPoint = useCallback(
+    (screenPoint: Point) => {
+      return [...transformHandles]
+        .reverse()
+        .find((handle) => {
+          const handleScreenPoint = worldToScreen(handle.point);
+          return Math.hypot(screenPoint.x - handleScreenPoint.x, screenPoint.y - handleScreenPoint.y) <= TRANSFORM_HANDLE_HIT_RADIUS_PX;
+        }) ?? null;
+    },
+    [transformHandles, worldToScreen],
   );
 
   const applyZoom = useCallback((factor: number) => {
@@ -673,6 +851,11 @@ export const CanvasV4DevScreen = () => {
     setActivePolylineId(null);
     setPointerWorldPoint(null);
     setSelectionBox(null);
+    setTransformMode('idle');
+    setActiveHandleId(null);
+    setIsResizing(false);
+    setResizeAxis('none');
+    setResizeScale({ x: 1, y: 1 });
     setLastActionType(`SET_TOOL_${mode.toUpperCase()}`);
   }, []);
 
@@ -684,11 +867,26 @@ export const CanvasV4DevScreen = () => {
   const beginInteraction = useCallback(
     (screenPoint: Point, pointerId?: number) => {
       const rawWorldPoint = screenToWorld(screenPoint);
-      const hitEntityId = currentToolMode === 'select' ? findEntityAtWorldPoint(rawWorldPoint) : null;
       const selectedSet = new Set(selectedEntityIds);
+      const transformHandle = currentToolMode === 'select' ? findTransformHandleAtScreenPoint(screenPoint) : null;
+      const isLineResize = !!transformHandle && selectedEntities.length === 1;
+      const isSelectionResize = !!transformHandle && selectedEntities.length > 1;
+      const hitEntityId = currentToolMode === 'select' && !transformHandle ? findEntityAtWorldPoint(rawWorldPoint) : null;
       const shouldMoveSelection = currentToolMode === 'select' && !!hitEntityId && selectedSet.has(hitEntityId);
-      const interactionMode: InteractionMode = shouldMoveSelection ? 'move-selection' : currentToolMode === 'select' && !hitEntityId ? 'selection-box' : 'pan';
-      const moveOriginalEntities = shouldMoveSelection ? entities.filter((entity) => selectedSet.has(entity.entityId)) : [];
+      const interactionMode: InteractionMode = isLineResize
+        ? 'resize-line'
+        : isSelectionResize
+          ? 'resize-selection'
+          : shouldMoveSelection
+            ? 'move-selection'
+            : currentToolMode === 'select' && !hitEntityId
+              ? 'selection-box'
+              : 'pan';
+      const moveOriginalEntities = shouldMoveSelection ? selectedEntities : [];
+      const resizeOriginalEntities = isLineResize || isSelectionResize ? selectedEntities : [];
+      const resizeOriginalBoundingBox = isSelectionResize ? selectedBoundingBox : null;
+      const resizeAnchorPoint = isSelectionResize && selectedBoundingBox && transformHandle ? getBoundingBoxAnchorPoint(selectedBoundingBox, transformHandle.id) : null;
+      const resizeActivePoint = isSelectionResize && selectedBoundingBox && transformHandle ? getBoundingBoxHandlePoint(selectedBoundingBox, transformHandle.id) : null;
 
       dragSessionRef.current = {
         started: true,
@@ -701,13 +899,24 @@ export const CanvasV4DevScreen = () => {
         lastY: screenPoint.y,
         moveEntityIds: moveOriginalEntities.map((entity) => entity.entityId),
         moveOriginalEntities,
+        resizeHandleId: transformHandle?.id ?? null,
+        resizeAxis: transformHandle?.axis ?? 'none',
+        resizeOriginalEntities,
+        resizeOriginalBoundingBox,
+        resizeAnchorPoint,
+        resizeActivePoint,
       };
       setPointerWorldPoint(rawWorldPoint);
       setSelectionBox(null);
       setIsMovingSelection(false);
       setMoveDeltaMm({ x: 0, y: 0 });
+      setTransformMode(isLineResize ? 'resize-line' : isSelectionResize ? 'resize-selection' : 'idle');
+      setActiveHandleId(transformHandle?.id ?? null);
+      setIsResizing(false);
+      setResizeAxis(transformHandle?.axis ?? 'none');
+      setResizeScale({ x: 1, y: 1 });
     },
-    [currentToolMode, entities, findEntityAtWorldPoint, screenToWorld, selectedEntityIds],
+    [currentToolMode, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, screenToWorld, selectedBoundingBox, selectedEntities, selectedEntityIds],
   );
 
   const moveInteraction = useCallback(
@@ -747,6 +956,70 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
+      if (session.interactionMode === 'resize-line') {
+        const originalEntity = session.resizeOriginalEntities[0];
+
+        if (originalEntity && session.resizeHandleId) {
+          const fixedPoint = session.resizeHandleId === 'single-start' ? originalEntity.endPoint : originalEntity.startPoint;
+          const excludedTargetIds = new Set([
+            `${originalEntity.entityId}:startPoint`,
+            `${originalEntity.entityId}:endPoint`,
+          ]);
+          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, fixedPoint, excludedTargetIds);
+          const resizedEntity = session.resizeHandleId === 'single-start'
+            ? updateLineEntityGeometry(originalEntity, resizeSnap.point, originalEntity.endPoint)
+            : updateLineEntityGeometry(originalEntity, originalEntity.startPoint, resizeSnap.point);
+
+          setEntities((current) => current.map((entity) => (entity.entityId === resizedEntity.entityId ? resizedEntity : entity)));
+          setIsResizing(true);
+          setTransformMode('resize-line');
+          setResizeAxis('xy');
+          setResizeScale({ x: 1, y: 1 });
+          setLastActionType('RESIZE_LINE_DRAG');
+        }
+
+        return;
+      }
+
+      if (session.interactionMode === 'resize-selection') {
+        const anchorPoint = session.resizeAnchorPoint;
+        const activePoint = session.resizeActivePoint;
+
+        if (anchorPoint && activePoint && session.resizeHandleId) {
+          const selectedTargetIds = new Set(
+            session.resizeOriginalEntities.flatMap((entity) => [`${entity.entityId}:startPoint`, `${entity.entityId}:endPoint`]),
+          );
+          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, null, selectedTargetIds);
+          const nextActivePoint = {
+            x: session.resizeAxis === 'y' ? activePoint.x : resizeSnap.point.x,
+            y: session.resizeAxis === 'x' ? activePoint.y : resizeSnap.point.y,
+          };
+          const originalWidth = activePoint.x - anchorPoint.x;
+          const originalHeight = activePoint.y - anchorPoint.y;
+          const scaleX = session.resizeAxis === 'y' || Math.abs(originalWidth) < 0.000001 ? 1 : (nextActivePoint.x - anchorPoint.x) / originalWidth;
+          const scaleY = session.resizeAxis === 'x' || Math.abs(originalHeight) < 0.000001 ? 1 : (nextActivePoint.y - anchorPoint.y) / originalHeight;
+          const resizedById = new Map(
+            session.resizeOriginalEntities.map((entity) => [
+              entity.entityId,
+              updateLineEntityGeometry(
+                entity,
+                scalePointFromAnchor(entity.startPoint, anchorPoint, scaleX, scaleY),
+                scalePointFromAnchor(entity.endPoint, anchorPoint, scaleX, scaleY),
+              ),
+            ]),
+          );
+
+          setEntities((current) => current.map((entity) => resizedById.get(entity.entityId) ?? entity));
+          setIsResizing(true);
+          setTransformMode('resize-selection');
+          setResizeAxis(session.resizeAxis);
+          setResizeScale({ x: scaleX, y: scaleY });
+          setLastActionType('RESIZE_SELECTION_DRAG');
+        }
+
+        return;
+      }
+
       if (session.interactionMode === 'move-selection') {
         const moveDelta = { x: totalDx / cameraZoom, y: totalDy / cameraZoom };
         const movedById = new Map(session.moveOriginalEntities.map((entity) => [entity.entityId, moveLineEntity(entity, moveDelta)]));
@@ -762,7 +1035,7 @@ export const CanvasV4DevScreen = () => {
       setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }));
       setLastActionType('PAN_CHANGE');
     },
-    [cameraZoom, screenToWorld],
+    [cameraZoom, endpointSnapThreshold, entities, screenToWorld],
   );
 
   const endInteraction = useCallback(
@@ -775,7 +1048,79 @@ export const CanvasV4DevScreen = () => {
 
       setPointerWorldPoint(screenToWorld(screenPoint));
 
-      if (session.interactionMode === 'move-selection' && session.moved) {
+      if (session.interactionMode === 'resize-line' && session.moved) {
+        const originalEntity = session.resizeOriginalEntities[0];
+
+        if (originalEntity && session.resizeHandleId) {
+          const fixedPoint = session.resizeHandleId === 'single-start' ? originalEntity.endPoint : originalEntity.startPoint;
+          const excludedTargetIds = new Set([
+            `${originalEntity.entityId}:startPoint`,
+            `${originalEntity.entityId}:endPoint`,
+          ]);
+          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, fixedPoint, excludedTargetIds);
+          const resizedEntity = session.resizeHandleId === 'single-start'
+            ? updateLineEntityGeometry(originalEntity, resizeSnap.point, originalEntity.endPoint)
+            : updateLineEntityGeometry(originalEntity, originalEntity.startPoint, resizeSnap.point);
+          const geometryChanged =
+            Math.hypot(resizedEntity.startPoint.x - originalEntity.startPoint.x, resizedEntity.startPoint.y - originalEntity.startPoint.y) > 0.000001 ||
+            Math.hypot(resizedEntity.endPoint.x - originalEntity.endPoint.x, resizedEntity.endPoint.y - originalEntity.endPoint.y) > 0.000001;
+
+          if (geometryChanged) {
+            pushHistoryAction({
+              type: 'RESIZE_LINE',
+              beforeEntities: [originalEntity],
+              afterEntities: [resizedEntity],
+              handleId: session.resizeHandleId,
+            });
+            setSelectedEntityIds([resizedEntity.entityId]);
+          }
+        }
+      } else if (session.interactionMode === 'resize-selection' && session.moved) {
+        const anchorPoint = session.resizeAnchorPoint;
+        const activePoint = session.resizeActivePoint;
+
+        if (anchorPoint && activePoint && session.resizeHandleId) {
+          const selectedTargetIds = new Set(
+            session.resizeOriginalEntities.flatMap((entity) => [`${entity.entityId}:startPoint`, `${entity.entityId}:endPoint`]),
+          );
+          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, null, selectedTargetIds);
+          const nextActivePoint = {
+            x: session.resizeAxis === 'y' ? activePoint.x : resizeSnap.point.x,
+            y: session.resizeAxis === 'x' ? activePoint.y : resizeSnap.point.y,
+          };
+          const originalWidth = activePoint.x - anchorPoint.x;
+          const originalHeight = activePoint.y - anchorPoint.y;
+          const scaleX = session.resizeAxis === 'y' || Math.abs(originalWidth) < 0.000001 ? 1 : (nextActivePoint.x - anchorPoint.x) / originalWidth;
+          const scaleY = session.resizeAxis === 'x' || Math.abs(originalHeight) < 0.000001 ? 1 : (nextActivePoint.y - anchorPoint.y) / originalHeight;
+          const afterEntities = session.resizeOriginalEntities.map((entity) =>
+            updateLineEntityGeometry(
+              entity,
+              scalePointFromAnchor(entity.startPoint, anchorPoint, scaleX, scaleY),
+              scalePointFromAnchor(entity.endPoint, anchorPoint, scaleX, scaleY),
+            ),
+          );
+          const geometryChanged = afterEntities.some((entity, index) => {
+            const before = session.resizeOriginalEntities[index];
+            return (
+              Math.hypot(entity.startPoint.x - before.startPoint.x, entity.startPoint.y - before.startPoint.y) > 0.000001 ||
+              Math.hypot(entity.endPoint.x - before.endPoint.x, entity.endPoint.y - before.endPoint.y) > 0.000001
+            );
+          });
+
+          if (geometryChanged) {
+            pushHistoryAction({
+              type: 'RESIZE_SELECTION',
+              beforeEntities: session.resizeOriginalEntities,
+              afterEntities,
+              handleId: session.resizeHandleId,
+              scaleX,
+              scaleY,
+            });
+            setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
+            setResizeScale({ x: scaleX, y: scaleY });
+          }
+        }
+      } else if (session.interactionMode === 'move-selection' && session.moved) {
         const moveDelta = { x: (screenPoint.x - session.startX) / cameraZoom, y: (screenPoint.y - session.startY) / cameraZoom };
         const afterEntities = session.moveOriginalEntities.map((entity) => moveLineEntity(entity, moveDelta));
 
@@ -797,9 +1142,13 @@ export const CanvasV4DevScreen = () => {
 
       setSelectionBox(null);
       setIsMovingSelection(false);
+      setIsResizing(false);
+      setTransformMode('idle');
+      setActiveHandleId(null);
+      setResizeAxis('none');
       dragSessionRef.current = EMPTY_DRAG_SESSION;
     },
-    [cameraZoom, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox],
+    [cameraZoom, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox],
   );
 
   const responderHandlers = useMemo(
@@ -884,6 +1233,13 @@ export const CanvasV4DevScreen = () => {
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedCount: ${selectedEntityIds.length}`,
+      `transformMode: ${transformMode}`,
+      `selectedBoundingBox: ${selectedBoundingBox ? `(${selectedBoundingBox.minX.toFixed(0)}, ${selectedBoundingBox.minY.toFixed(0)}) - (${selectedBoundingBox.maxX.toFixed(0)}, ${selectedBoundingBox.maxY.toFixed(0)})` : 'null'}`,
+      `activeHandleId: ${activeHandleId ?? 'null'}`,
+      `isResizing: ${isResizing ? 'true' : 'false'}`,
+      `resizeAxis: ${resizeAxis}`,
+      `resizeScaleX: ${resizeScale.x.toFixed(3)}`,
+      `resizeScaleY: ${resizeScale.y.toFixed(3)}`,
       `isMovingSelection: ${isMovingSelection ? 'true' : 'false'}`,
       `moveDeltaMm: (${moveDeltaMm.x.toFixed(1)}, ${moveDeltaMm.y.toFixed(1)})`,
       `lastMoveAction: ${lastMoveAction}`,
@@ -912,6 +1268,7 @@ export const CanvasV4DevScreen = () => {
       `previewLineLength: ${previewLine ? `${previewLine.length.toFixed(0)} mm` : 'null'}`,
     ],
     [
+      activeHandleId,
       activeLineDelta,
       activeSnap.activeSnapDistance,
       activeSnap.activeSnapTargetId,
@@ -934,10 +1291,16 @@ export const CanvasV4DevScreen = () => {
       polylineLastPoint,
       previewLine,
       redoStack.length,
+      resizeAxis,
+      resizeScale.x,
+      resizeScale.y,
+      selectedBoundingBox,
       selectedEntityIds,
       selectionBox?.active,
       selectionMode,
+      transformMode,
       undoStack.length,
+      isResizing,
     ],
   );
 
@@ -945,6 +1308,9 @@ export const CanvasV4DevScreen = () => {
   const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
   const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
   const selectedEntityIdSet = new Set(selectedEntityIds);
+  const selectedBoundingBoxScreenRect = selectedEntities.length > 1 && selectedBoundingBox
+    ? getNormalizedRect(worldToScreen({ x: selectedBoundingBox.minX, y: selectedBoundingBox.minY }), worldToScreen({ x: selectedBoundingBox.maxX, y: selectedBoundingBox.maxY }))
+    : null;
   const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
 
   return (
@@ -1049,6 +1415,40 @@ export const CanvasV4DevScreen = () => {
             {lineStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, { left: worldToScreen(lineStartPoint).x - 5, top: worldToScreen(lineStartPoint).y - 5 }]} /> : null}
             {polylineLastPoint ? <View pointerEvents="none" style={[styles.anchorPoint, styles.polylineAnchor, { left: worldToScreen(polylineLastPoint).x - 5, top: worldToScreen(polylineLastPoint).y - 5 }]} /> : null}
             {endpointSnapScreenPoint ? <View pointerEvents="none" style={[styles.endpointSnapMarker, { left: endpointSnapScreenPoint.x - 8, top: endpointSnapScreenPoint.y - 8 }]} /> : null}
+
+            {selectedBoundingBoxScreenRect ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.transformBoundingBox,
+                  {
+                    left: selectedBoundingBoxScreenRect.minX,
+                    top: selectedBoundingBoxScreenRect.minY,
+                    width: Math.max(selectedBoundingBoxScreenRect.maxX - selectedBoundingBoxScreenRect.minX, 1),
+                    height: Math.max(selectedBoundingBoxScreenRect.maxY - selectedBoundingBoxScreenRect.minY, 1),
+                  },
+                ]}
+              />
+            ) : null}
+
+            {transformHandles.map((handle) => {
+              const handleScreenPoint = worldToScreen(handle.point);
+              return (
+                <View
+                  key={handle.id}
+                  pointerEvents="none"
+                  style={[
+                    styles.transformHandle,
+                    handle.id.startsWith('single') ? styles.lineEndpointHandle : null,
+                    activeHandleId === handle.id ? styles.transformHandleActive : null,
+                    {
+                      left: handleScreenPoint.x - TRANSFORM_HANDLE_SIZE_PX / 2,
+                      top: handleScreenPoint.y - TRANSFORM_HANDLE_SIZE_PX / 2,
+                    },
+                  ]}
+                />
+              );
+            })}
 
             {selectionBoxRect ? (
               <View
@@ -1261,6 +1661,33 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     borderColor: '#2563EB',
     backgroundColor: 'rgba(37, 99, 235, 0.12)',
+  },
+  transformBoundingBox: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: '#F97316',
+    backgroundColor: 'rgba(249, 115, 22, 0.06)',
+  },
+  transformHandle: {
+    position: 'absolute',
+    width: TRANSFORM_HANDLE_SIZE_PX,
+    height: TRANSFORM_HANDLE_SIZE_PX,
+    borderRadius: 3,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: '#2563EB',
+    shadowColor: '#1D4ED8',
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+  },
+  lineEndpointHandle: {
+    borderRadius: TRANSFORM_HANDLE_SIZE_PX / 2,
+    backgroundColor: '#F97316',
+    shadowColor: '#F97316',
+  },
+  transformHandleActive: {
+    backgroundColor: '#22C55E',
+    shadowColor: '#22C55E',
   },
   inspectorPanel: {
     position: 'absolute',
