@@ -80,7 +80,21 @@ export type RoomModel = {
 };
 
 export type CanvasMode = 'main' | 'room-surface-scene' | 'surface-scene';
-export type CanvasToolMode = 'select' | 'wall';
+export type CanvasToolMode = 'idle' | 'room' | 'surface' | 'segment' | 'split' | 'object' | 'unfold';
+export type CanvasPipelineStage = 'idle' | 'pointer-input' | 'tool-mode' | 'geometry-update' | 'scene-update' | 'inspector-update';
+export type CanvasActionType = 'NONE' | 'CREATE_ROOM' | 'CREATE_SEGMENT' | 'MOVE_ROOM' | 'RESIZE_ROOM' | 'ROTATE_ROOM' | 'OPEN_SURFACE' | 'OPEN_ROOM' | 'SELECT_ROOM' | 'PAN' | 'ZOOM' | 'TOOL_CHANGE';
+export type CanvasSnapState = 'inactive' | 'preview' | 'soft';
+
+export type SegmentType = 'line' | 'wall-draft' | 'debug';
+
+export type Segment = {
+  segmentId: string;
+  startPoint: WorldPoint;
+  endPoint: WorldPoint;
+  length: number;
+  angle: number;
+  segmentType: SegmentType;
+};
 export type RoomSurfaceType = 'north' | 'south' | 'west' | 'east' | 'wall' | 'floor' | 'ceiling';
 export type SharedSurfaceMode = 'full' | 'partial';
 export type SurfaceWallType = 'internal' | 'external';
@@ -259,6 +273,9 @@ export type CanvasSnapshot = {
   activeRoomId: string | null;
   roomIds: string[];
   roomsCount: number;
+  segmentsCount: number;
+  surfacesCount: number;
+  objectsCount: number;
   mode: CanvasMode;
   surfaceSceneRoomId: string | null;
   activeSurfaceId: string | null;
@@ -269,6 +286,10 @@ export type CanvasSnapshot = {
   currentContourPointsCount: number;
   isContourClosed: boolean;
   lastCreatedShapeId: string | null;
+  lastCanvasAction: CanvasActionType;
+  snapState: CanvasSnapState;
+  isSceneUpdating: boolean;
+  activePipelineStage: CanvasPipelineStage;
 };
 
 export type RoomOpenEntryPoint = {
@@ -294,6 +315,7 @@ export type CanvasDebugState = {
   worldAtScreenCenter: WorldPoint;
   activeSurfaceId: string | null;
   activeWallId: string | null;
+  activeSegmentId: string | null;
   activeRoomId: string | null;
   snappedRoomId: string | null;
   snapTargetRoomId: string | null;
@@ -311,11 +333,15 @@ export type CanvasDebugState = {
   activeRoomRotationDeg: number | null;
   roomIds: string[];
   roomsCount: number;
+  segmentsCount: number;
+  surfacesCount: number;
+  objectsCount: number;
   roomPositions: Array<{ roomId: string; centerX: number; centerY: number }>;
   isDrawingMode: boolean;
   currentToolMode: CanvasToolMode;
   wallDrawingMode: boolean;
   isWallDrawingMode: boolean;
+  isSegmentDrawingMode: boolean;
   isOrthogonalDrawingMode: boolean;
   currentSegmentAngle: number | null;
   currentContourPointsCount: number;
@@ -348,4 +374,8 @@ export type CanvasDebugState = {
   lastCreatedNodeId: string | null;
   lastDetectedRoomId: string | null;
   wallGraphUpdated: boolean;
+  lastCanvasAction: CanvasActionType;
+  snapState: CanvasSnapState;
+  isSceneUpdating: boolean;
+  activePipelineStage: CanvasPipelineStage;
 };
