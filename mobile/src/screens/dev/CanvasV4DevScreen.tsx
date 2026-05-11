@@ -14,6 +14,7 @@ type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
 type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
 type SegmentSpatialRole = 'external-like' | 'internal-like' | 'unknown';
+type CanvasV4Mode = 'plan' | 'project';
 
 type CanvasV4WallSegment = {
   entityId: string;
@@ -57,6 +58,19 @@ type CanvasV4Window = {
   height: number;
   bottomOffset: number;
   createdAt: number;
+};
+
+type CanvasV4ProjectGeometrySnapshot = {
+  frozenAt: number;
+  entities: CanvasV4LineEntity[];
+  doors: CanvasV4Door[];
+  windows: CanvasV4Window[];
+};
+
+type CanvasV4ProjectState = {
+  projectId: string;
+  createdAt: number;
+  geometrySnapshot: CanvasV4ProjectGeometrySnapshot;
 };
 
 type HistoryAction =
@@ -251,6 +265,11 @@ type ClosedContourInfo = {
   signedArea: number;
   orientation: ClosedContourOrientation;
   centroid: Point;
+};
+
+type ProjectContourInfo = ClosedContourInfo & {
+  contourId: string;
+  segmentIds: string[];
 };
 
 type DimensionNeighborInfo = {
@@ -977,6 +996,39 @@ const getClosedPolylineInfoForEntity = (entity: CanvasV4LineEntity, entities: Ca
   };
 };
 
+const cloneCanvasV4ProjectGeometrySnapshot = (entities: CanvasV4LineEntity[], doors: CanvasV4Door[], windows: CanvasV4Window[]): CanvasV4ProjectGeometrySnapshot => ({
+  frozenAt: Date.now(),
+  entities: entities.map((entity) => ({
+    ...entity,
+    startPoint: { ...entity.startPoint },
+    endPoint: { ...entity.endPoint },
+    connectedSegmentIds: [...entity.connectedSegmentIds],
+    doorIds: [...entity.doorIds],
+    windowIds: [...entity.windowIds],
+  })),
+  doors: doors.map((door) => ({ ...door })),
+  windows: windows.map((window) => ({ ...window })),
+});
+
+const recognizeProjectContours = (entities: CanvasV4LineEntity[]): ProjectContourInfo[] => {
+  const polylineIds = Array.from(new Set(entities.map((entity) => entity.polylineId).filter((polylineId): polylineId is string => Boolean(polylineId))));
+
+  return polylineIds.flatMap((polylineId) => {
+    const contourSegments = entities.filter((entity) => entity.polylineId === polylineId);
+    const sourceContour = contourSegments[0] ? getClosedPolylineInfoForEntity(contourSegments[0], entities) : null;
+
+    if (!sourceContour) {
+      return [];
+    }
+
+    return [{
+      ...sourceContour,
+      contourId: `project-contour-${polylineId}`,
+      segmentIds: contourSegments.map((segment) => segment.segmentId),
+    }];
+  });
+};
+
 const getClosedContourOutwardNormal = (entity: CanvasV4LineEntity, contourInfo: ClosedContourInfo): Point => {
   const { leftNormal } = getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint);
 
@@ -1441,6 +1493,10 @@ export const CanvasV4DevScreen = () => {
   const [resizeScale, setResizeScale] = useState({ x: 1, y: 1 });
   const [hitTestTargetType, setHitTestTargetType] = useState<HitTestTargetType>('empty-canvas');
   const [lastHitTestEntityId, setLastHitTestEntityId] = useState<string | null>(null);
+  const [currentCanvasMode, setCurrentCanvasMode] = useState<CanvasV4Mode>('plan');
+  const [projectState, setProjectState] = useState<CanvasV4ProjectState | null>(null);
+
+  const projectCreated = currentCanvasMode === 'project' && Boolean(projectState);
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -1460,6 +1516,27 @@ export const CanvasV4DevScreen = () => {
 
   const endpointSnapThreshold = ENDPOINT_SNAP_THRESHOLD_PX / cameraZoom;
   const activeDrawingStartPoint = currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null;
+
+  const projectContours = useMemo(
+    () => (currentCanvasMode === 'project' ? recognizeProjectContours(entities) : []),
+    [currentCanvasMode, entities],
+  );
+
+  const createProjectStub = useCallback(() => {
+    const activatedAt = Date.now();
+
+    setProjectState({
+      projectId: `canvas-v4-project-${activatedAt}`,
+      createdAt: activatedAt,
+      geometrySnapshot: cloneCanvasV4ProjectGeometrySnapshot(entities, doors, windows),
+    });
+    setCurrentCanvasMode('project');
+    setLastActionType('CREATE_PROJECT_STUB_V1');
+    setLineStartPoint(null);
+    setPolylineLastPoint(null);
+    setActivePolylineId(null);
+    setSelectionBox(null);
+  }, [doors, entities, windows]);
 
   const activeSnap = useMemo<SnapResult>(() => {
     if (!pointerWorldPoint) {
@@ -3016,6 +3093,12 @@ export const CanvasV4DevScreen = () => {
 
   const inspectorLines = useMemo(
     () => [
+      `currentCanvasMode: ${currentCanvasMode}`,
+      `projectCreated: ${projectCreated ? 'true' : 'false'}`,
+      `projectId: ${projectState?.projectId ?? 'null'}`,
+      `projectGeometrySnapshot: ${projectState ? `entities=${projectState.geometrySnapshot.entities.length}, doors=${projectState.geometrySnapshot.doors.length}, windows=${projectState.geometrySnapshot.windows.length}, frozenAt=${new Date(projectState.geometrySnapshot.frozenAt).toISOString()}` : 'null'}`,
+      `projectContoursCount: ${projectContours.length}`,
+      `projectModeActivatedAt: ${projectState ? new Date(projectState.createdAt).toISOString() : 'null'}`,
       `currentToolMode: ${currentToolMode}`,
       `interactionMode: ${interactionMode}`,
       `isPanningCanvas: ${isPanningCanvas ? 'true' : 'false'}`,
@@ -3120,6 +3203,7 @@ export const CanvasV4DevScreen = () => {
       activeSnap.angleHelperActive,
       activeSnap.gridSnappedEndPoint,
       cameraZoom,
+      currentCanvasMode,
       currentToolMode,
       dimensionCollisionAvoidance,
       dimensionDisplayMode,
@@ -3153,6 +3237,9 @@ export const CanvasV4DevScreen = () => {
       polylineLastPoint,
       previewLine,
       previewLineLength,
+      projectContours.length,
+      projectCreated,
+      projectState,
       redoStack.length,
       resizeAxis,
       resizeScale.x,
@@ -3180,6 +3267,16 @@ export const CanvasV4DevScreen = () => {
     { mode: 'door', icon: '▯', label: 'Дверь' },
     { mode: 'window', icon: '═', label: 'Окно' },
   ];
+  const projectTabs = projectCreated
+    ? [
+        { id: 'plan', icon: '▦', label: 'План', active: true },
+        { id: '3d', icon: '□', label: '3D', active: false },
+        { id: 'inside-view', icon: '◉', label: 'Вид изнутри', active: false },
+        { id: 'execution-scheme', icon: '⌗', label: 'Исполнительная схема', active: false },
+      ]
+    : [
+        { id: 'plan', icon: '▦', label: 'План', active: true },
+      ];
   const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
   const selectedEntityIdSet = new Set(selectedEntityIds);
   const selectedBoundingBoxScreenRect = selectedEntities.length > 1 && selectedBoundingBox
@@ -3189,7 +3286,7 @@ export const CanvasV4DevScreen = () => {
 
   return (
     <View style={styles.root}>
-      <AppHeader title="Canvas V4 — CAD-lite" />
+      <AppHeader title={`Canvas V4 — ${currentCanvasMode === 'plan' ? 'PLAN MODE' : 'PROJECT MODE'}`} />
 
       <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent}>
         <View style={styles.systemBar}>
@@ -3230,14 +3327,22 @@ export const CanvasV4DevScreen = () => {
 
         <View style={styles.canvasShell}>
           <View style={styles.projectRail} pointerEvents="box-none">
-            <Pressable style={[styles.projectRailButton, styles.projectRailButtonActive]} accessibilityLabel="План">
-              <Text style={styles.projectRailIcon}>▦</Text>
-              <Text style={styles.projectRailText}>План</Text>
-            </Pressable>
-            <Pressable style={styles.projectRailButton} accessibilityLabel="Создать проект">
-              <Text style={styles.projectRailIcon}>＋</Text>
-              <Text style={styles.projectRailText}>Создать</Text>
-            </Pressable>
+            {projectTabs.map((tab) => (
+              <Pressable
+                key={tab.id}
+                style={[styles.projectRailButton, tab.active ? styles.projectRailButtonActive : styles.projectRailButtonStub]}
+                accessibilityLabel={tab.label}
+              >
+                <Text style={styles.projectRailIcon}>{tab.icon}</Text>
+                <Text style={styles.projectRailText}>{tab.label}</Text>
+              </Pressable>
+            ))}
+            {!projectCreated ? (
+              <Pressable style={[styles.projectRailButton, styles.projectRailCreateButton]} onPress={createProjectStub} accessibilityLabel="Создать проект">
+                <Text style={styles.projectRailIcon}>＋</Text>
+                <Text style={styles.projectRailText}>Создать проект</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           <View style={styles.drawingToolbar} pointerEvents="box-none">
@@ -3533,6 +3638,31 @@ export const CanvasV4DevScreen = () => {
                       },
                     ]}
                   />
+                </React.Fragment>
+              );
+            })}
+
+            {projectContours.map((contour) => {
+              const screenCentroid = worldToScreen(contour.centroid);
+
+              return (
+                <React.Fragment key={contour.contourId}>
+                  {contour.vertices.map((vertex, index) => {
+                    const nextVertex = contour.vertices[(index + 1) % contour.vertices.length];
+                    const start = worldToScreen(vertex);
+                    const end = worldToScreen(nextVertex);
+
+                    return (
+                      <View
+                        key={`${contour.contourId}-edge-${index}`}
+                        pointerEvents="none"
+                        style={[styles.projectContourEdge, getScreenLineStyle(start, end)]}
+                      />
+                    );
+                  })}
+                  <View pointerEvents="none" style={[styles.projectContourBadge, { left: screenCentroid.x - 13, top: screenCentroid.y - 13 }]}>
+                    <Text style={styles.projectContourBadgeText}>P</Text>
+                  </View>
                 </React.Fragment>
               );
             })}
@@ -3840,6 +3970,14 @@ const styles = StyleSheet.create({
     borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
   },
+  projectRailButtonStub: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  projectRailCreateButton: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+  },
   projectRailIcon: {
     color: '#0F172A',
     fontSize: 18,
@@ -4034,6 +4172,30 @@ const styles = StyleSheet.create({
   windowElementSelected: {
     backgroundColor: '#F97316',
     borderColor: '#F97316',
+  },
+  projectContourEdge: {
+    position: 'absolute',
+    height: 4,
+    borderRadius: 4,
+    backgroundColor: 'rgba(37, 99, 235, 0.42)',
+    borderWidth: 1,
+    borderColor: 'rgba(29, 78, 216, 0.72)',
+  },
+  projectContourBadge: {
+    position: 'absolute',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(37, 99, 235, 0.90)',
+    borderWidth: 2,
+    borderColor: '#DBEAFE',
+  },
+  projectContourBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   dimensionLine: {
     position: 'absolute',
