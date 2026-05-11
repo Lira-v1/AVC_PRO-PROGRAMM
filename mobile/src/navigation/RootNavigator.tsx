@@ -10,6 +10,7 @@ import { ServicesScreen } from '../screens/ServicesScreen';
 import { PlatformPlaceholderScreen } from '../screens/PlatformPlaceholderScreen';
 import { ChatMasterScreen } from '../screens/ChatMasterScreen';
 import { CanvasV3DevScreen } from '../screens/dev/CanvasV3DevScreen';
+import { CanvasV4DevScreen } from '../screens/dev/CanvasV4DevScreen';
 import { SmetMasterProjectBuilderScreen } from '../modules/project-builder';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
@@ -29,6 +30,7 @@ type MainStackParamList = {
   Placeholder: { title: string };
   ChatMaster: undefined;
   CanvasV3Dev: undefined;
+  CanvasV4Dev: undefined;
 };
 
 type RootStackParamList = {
@@ -120,6 +122,7 @@ const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.
       <MainStack.Screen name="Placeholder" component={PlatformPlaceholderScreen} />
       <MainStack.Screen name="ChatMaster" component={ChatMasterScreen} />
       <MainStack.Screen name="CanvasV3Dev" component={CanvasV3DevScreen} />
+      <MainStack.Screen name="CanvasV4Dev" component={CanvasV4DevScreen} />
     </MainStack.Navigator>
   );
 };
