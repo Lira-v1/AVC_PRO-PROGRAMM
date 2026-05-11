@@ -10,6 +10,7 @@ type Point = {
 type ToolMode = 'idle' | 'line' | 'polyline' | 'select' | 'door' | 'window';
 type WallSegmentType = 'external' | 'internal';
 type DimensionDisplayMode = 'minimal' | 'architectural' | 'full';
+type DimensionLevel = 'external' | 'internal' | 'detail';
 type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
 type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
@@ -199,7 +200,7 @@ const SNAP_ANGLE_STEP_DEG = 45;
 const ANGLE_HELPER_TOLERANCE_DEG = 6;
 const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
 const DIMENSION_BASE_OFFSET_PX = 34;
-const DIMENSION_INTERNAL_OFFSET_PX = 18;
+const DIMENSION_INTERNAL_OFFSET_PX = 22;
 const DIMENSION_COLLISION_STEP_PX = 16;
 const DIMENSION_MAX_COLLISION_PASSES = 5;
 const DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM = 1200;
@@ -212,6 +213,8 @@ const DIMENSION_TICK_LENGTH_PX = 12;
 const DIMENSION_LABEL_GAP_PX = 9;
 const LINE_DIMENSION_LABEL_WIDTH_PX = 62;
 const LINE_DIMENSION_LABEL_HEIGHT_PX = 18;
+const ARCHITECTURAL_MAJOR_DIMENSION_MIN_MM = 1000;
+const DIMENSION_DUPLICATE_LENGTH_TOLERANCE_MM = 10;
 const POINT_MATCH_EPSILON = 0.001;
 const DEFAULT_WALL_THICKNESS_MM = 100;
 const WALL_THICKNESS_VISUAL = false;
@@ -314,6 +317,7 @@ type DimensionLabelPlacement = {
 type DimensionScreenItem = {
   id: string;
   entity: CanvasV4LineEntity;
+  level: DimensionLevel;
   placement: DimensionLabelPlacement;
   label: string;
   isSelected: boolean;
@@ -1360,6 +1364,46 @@ const getLineScreenRect = (startPoint: Point, endPoint: Point, padding = 4): Scr
   bottom: Math.max(startPoint.y, endPoint.y) + padding,
 });
 
+const getDimensionLevel = (entity: CanvasV4LineEntity, spatialAnalysis: DimensionSpatialAnalysis): DimensionLevel => {
+  if (entity.segmentType === 'external' || spatialAnalysis.role === 'external-like') {
+    return 'external';
+  }
+
+  if (entity.segmentType === 'internal' && spatialAnalysis.role === 'internal-like' && entity.length >= ARCHITECTURAL_MAJOR_DIMENSION_MIN_MM) {
+    return 'internal';
+  }
+
+  return 'detail';
+};
+
+const areDimensionsParallel = (first: DimensionSpatialAnalysis, second: DimensionSpatialAnalysis) => (
+  (first.isHorizontalLike && second.isHorizontalLike) || (first.isVerticalLike && second.isVerticalLike)
+);
+
+const isDuplicateOfExternalDimension = (
+  entity: CanvasV4LineEntity,
+  entitySpatialAnalysis: DimensionSpatialAnalysis,
+  externalEntity: CanvasV4LineEntity,
+  externalSpatialAnalysis: DimensionSpatialAnalysis,
+) => {
+  if (!areDimensionsParallel(entitySpatialAnalysis, externalSpatialAnalysis)) {
+    return false;
+  }
+
+  if (Math.abs(entity.length - externalEntity.length) > DIMENSION_DUPLICATE_LENGTH_TOLERANCE_MM) {
+    return false;
+  }
+
+  const entityBox = getEntityBoundingBox(entity);
+  const externalBox = getEntityBoundingBox(externalEntity);
+
+  if (entitySpatialAnalysis.isHorizontalLike) {
+    return rangesOverlap(entityBox.minX, entityBox.maxX, externalBox.minX, externalBox.maxX, DIMENSION_SPATIAL_PROJECTION_PADDING_MM);
+  }
+
+  return rangesOverlap(entityBox.minY, entityBox.maxY, externalBox.minY, externalBox.maxY, DIMENSION_SPATIAL_PROJECTION_PADDING_MM);
+};
+
 const formatNeighborDistance = (value: number | null) => (value === null ? 'null' : `${value.toFixed(0)}mm`);
 
 const formatDimensionNeighborInfo = (neighborInfo?: DimensionNeighborInfo) => {
@@ -1647,7 +1691,7 @@ export const CanvasV4DevScreen = () => {
   );
 
   const visibleDimensions = useMemo<DimensionScreenItem[]>(() => {
-    if (!showLineDimensions) {
+    if (!showLineDimensions || dimensionDisplayMode === 'minimal') {
       return [];
     }
 
@@ -1685,65 +1729,88 @@ export const CanvasV4DevScreen = () => {
         bottom: center.y + 14,
       };
     })].filter((rect): rect is ScreenRect => Boolean(rect));
+    const wallRects = entities.map((entity) => {
+      const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+      const wallPadding = Math.max(entity.wallThickness * cameraZoom, 8);
+      return getLineScreenRect(geometry.screenStart, geometry.screenEnd, wallPadding);
+    });
+    const dimensionCandidates = entities.map((entity) => {
+      const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
+      const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
+      const spatialAnalysis = getDimensionSpatialAnalysis(entity, entities, closedContourOutwardNormal);
+      const level = getDimensionLevel(entity, spatialAnalysis);
+
+      return {
+        entity,
+        closedContourOutwardNormal,
+        spatialAnalysis,
+        level,
+      };
+    });
+    const visibleCandidates = dimensionCandidates.filter((candidate) => {
+      if (dimensionDisplayMode === 'full') {
+        return true;
+      }
+
+      if (candidate.level === 'detail') {
+        return false;
+      }
+
+      if (candidate.level === 'internal') {
+        return !dimensionCandidates.some((externalCandidate) => (
+          externalCandidate.level === 'external'
+          && externalCandidate.entity.entityId !== candidate.entity.entityId
+          && isDuplicateOfExternalDimension(candidate.entity, candidate.spatialAnalysis, externalCandidate.entity, externalCandidate.spatialAnalysis)
+        ));
+      }
+
+      return true;
+    }).sort((first, second) => {
+      const levelPriority: Record<DimensionLevel, number> = {
+        external: 0,
+        internal: 1,
+        detail: 2,
+      };
+
+      return levelPriority[first.level] - levelPriority[second.level] || second.entity.length - first.entity.length;
+    });
 
     const placedLabelRects: ScreenRect[] = [];
     const placedLineRects: ScreenRect[] = [];
 
-    return entities.flatMap((entity) => {
-      const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
-      const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
-      const spatialAnalysis = getDimensionSpatialAnalysis(entity, entities, closedContourOutwardNormal);
-      const hasOpening = entity.doorIds.length > 0 || entity.windowIds.length > 0;
+    return visibleCandidates.flatMap((candidate) => {
+      const { entity, closedContourOutwardNormal, level, spatialAnalysis } = candidate;
       const isSelected = selectedDimensionEntityIds.has(entity.entityId);
-      const isPrimaryExternal = entity.segmentType === 'external';
-      const isMajorInternal = entity.segmentType === 'internal' && (entity.length >= 1000 || isSelected || hasOpening);
-      const isSuppressedDuplicate = dimensionDisplayMode !== 'full' && spatialAnalysis.role !== 'external-like' && entities.some((candidate) => {
-        if (candidate.entityId === entity.entityId || candidate.length <= entity.length) {
-          return false;
-        }
-
-        const candidateContourInfo = getClosedPolylineInfoForEntity(candidate, entities);
-        const candidateOutwardNormal = candidateContourInfo ? getClosedContourOutwardNormal(candidate, candidateContourInfo) : null;
-        const candidateSpatialAnalysis = getDimensionSpatialAnalysis(candidate, entities, candidateOutwardNormal);
-
-        if (candidateSpatialAnalysis.role !== 'external-like') {
-          return false;
-        }
-
-        const entityBox = getEntityBoundingBox(entity);
-        const candidateBox = getEntityBoundingBox(candidate);
-        const sameHorizontalAxis = spatialAnalysis.isHorizontalLike && candidateSpatialAnalysis.isHorizontalLike
-          && Math.abs((entityBox.minY + entityBox.maxY) / 2 - (candidateBox.minY + candidateBox.maxY) / 2) <= DIMENSION_SPATIAL_PROJECTION_PADDING_MM;
-        const sameVerticalAxis = spatialAnalysis.isVerticalLike && candidateSpatialAnalysis.isVerticalLike
-          && Math.abs((entityBox.minX + entityBox.maxX) / 2 - (candidateBox.minX + candidateBox.maxX) / 2) <= DIMENSION_SPATIAL_PROJECTION_PADDING_MM;
-
-        return (sameHorizontalAxis && rangesOverlap(entityBox.minX, entityBox.maxX, candidateBox.minX, candidateBox.maxX, DIMENSION_SPATIAL_PROJECTION_PADDING_MM))
-          || (sameVerticalAxis && rangesOverlap(entityBox.minY, entityBox.maxY, candidateBox.minY, candidateBox.maxY, DIMENSION_SPATIAL_PROJECTION_PADDING_MM));
-      });
-      const isVisibleInMode = dimensionDisplayMode === 'full'
-        || (dimensionDisplayMode === 'architectural' && (isPrimaryExternal || isMajorInternal))
-        || (dimensionDisplayMode === 'minimal' && isPrimaryExternal);
-
-      if (!isVisibleInMode || isSuppressedDuplicate) {
-        return [];
-      }
-
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-      const baseOffset = spatialAnalysis.role === 'internal-like'
-        ? DIMENSION_INTERNAL_OFFSET_PX
-        : DIMENSION_BASE_OFFSET_PX + (dimensionDisplayMode === 'full' ? 8 : 0);
+      const baseOffset = dimensionDisplayMode === 'full'
+        ? (spatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX + 8)
+        : (level === 'internal' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX);
+      const collisionStep = dimensionDisplayMode === 'architectural' && level === 'internal' ? 6 : DIMENSION_COLLISION_STEP_PX;
+      const maxOffset = dimensionDisplayMode === 'architectural' && level === 'internal'
+        ? DIMENSION_BASE_OFFSET_PX - 4
+        : Number.POSITIVE_INFINITY;
       let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset, spatialAnalysis);
       let collisionAvoidancePasses = 0;
+      const labelObstacles = dimensionDisplayMode === 'full' ? [...openingRects, ...placedLabelRects] : [...openingRects, ...placedLabelRects, ...wallRects];
+      const lineObstacles = dimensionDisplayMode === 'full' ? [...openingRects, ...placedLineRects] : [...openingRects, ...placedLineRects, ...wallRects];
+      let hasCollision = labelObstacles.some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
+        || lineObstacles.some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6));
 
-      while (
-        collisionAvoidancePasses < DIMENSION_MAX_COLLISION_PASSES
-        && (
-          [...openingRects, ...placedLabelRects].some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
-          || [...openingRects, ...placedLineRects].some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6))
-        )
-      ) {
+      while (collisionAvoidancePasses < DIMENSION_MAX_COLLISION_PASSES && hasCollision) {
+        const nextOffset = baseOffset + (collisionAvoidancePasses + 1) * collisionStep;
+
+        if (nextOffset > maxOffset) {
+          break;
+        }
+
         collisionAvoidancePasses += 1;
-        placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset + collisionAvoidancePasses * DIMENSION_COLLISION_STEP_PX, spatialAnalysis);
+        placement = getDimensionPlacement(geometry, closedContourOutwardNormal, nextOffset, spatialAnalysis);
+        hasCollision = labelObstacles.some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
+          || lineObstacles.some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6));
+      }
+
+      if (hasCollision && dimensionDisplayMode !== 'full') {
+        return [];
       }
 
       placedLabelRects.push(getDimensionLabelRect(placement));
@@ -1752,6 +1819,7 @@ export const CanvasV4DevScreen = () => {
       return [{
         id: `${entity.entityId}:dimension`,
         entity,
+        level,
         placement,
         label: formatLineLength(entity.length),
         isSelected,
@@ -3399,49 +3467,51 @@ export const CanvasV4DevScreen = () => {
               );
             })}
 
-            {visibleDimensions.map((dimension) => (
-              <React.Fragment key={dimension.id}>
-                <View pointerEvents="none" style={[styles.dimensionLine, getScreenLineStyle(dimension.placement.lineStart, dimension.placement.lineEnd)]} />
-                <View pointerEvents="none" style={[styles.dimensionExtensionLine, getScreenLineStyle(dimension.placement.extensionStartA, dimension.placement.extensionEndA)]} />
-                <View pointerEvents="none" style={[styles.dimensionExtensionLine, getScreenLineStyle(dimension.placement.extensionStartB, dimension.placement.extensionEndB)]} />
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.dimensionTick,
-                    {
-                      left: dimension.placement.tickStart.x - DIMENSION_TICK_LENGTH_PX / 2,
-                      top: dimension.placement.tickStart.y - 0.5,
-                      transform: [{ rotate: `${dimension.placement.tickAngleDeg}deg` }],
-                    },
-                  ]}
-                />
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.dimensionTick,
-                    {
-                      left: dimension.placement.tickEnd.x - DIMENSION_TICK_LENGTH_PX / 2,
-                      top: dimension.placement.tickEnd.y - 0.5,
-                      transform: [{ rotate: `${dimension.placement.tickAngleDeg}deg` }],
-                    },
-                  ]}
-                />
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.dimensionLabel,
-                    dimension.isSelected ? styles.dimensionLabelSelected : null,
-                    {
-                      left: dimension.placement.left,
-                      top: dimension.placement.top,
-                      transform: [{ rotate: `${dimension.placement.rotationDeg}deg` }],
-                    },
-                  ]}
-                >
-                  <Text style={[styles.dimensionLabelText, dimension.isSelected ? styles.dimensionLabelTextSelected : null]}>{dimension.label}</Text>
-                </View>
-              </React.Fragment>
-            ))}
+            <View pointerEvents="none" style={styles.dimensionLayer}>
+              {visibleDimensions.map((dimension) => (
+                <React.Fragment key={dimension.id}>
+                  <View pointerEvents="none" style={[styles.dimensionLine, getScreenLineStyle(dimension.placement.lineStart, dimension.placement.lineEnd)]} />
+                  <View pointerEvents="none" style={[styles.dimensionExtensionLine, getScreenLineStyle(dimension.placement.extensionStartA, dimension.placement.extensionEndA)]} />
+                  <View pointerEvents="none" style={[styles.dimensionExtensionLine, getScreenLineStyle(dimension.placement.extensionStartB, dimension.placement.extensionEndB)]} />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.dimensionTick,
+                      {
+                        left: dimension.placement.tickStart.x - DIMENSION_TICK_LENGTH_PX / 2,
+                        top: dimension.placement.tickStart.y - 0.5,
+                        transform: [{ rotate: `${dimension.placement.tickAngleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.dimensionTick,
+                      {
+                        left: dimension.placement.tickEnd.x - DIMENSION_TICK_LENGTH_PX / 2,
+                        top: dimension.placement.tickEnd.y - 0.5,
+                        transform: [{ rotate: `${dimension.placement.tickAngleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.dimensionLabel,
+                      dimension.isSelected ? styles.dimensionLabelSelected : null,
+                      {
+                        left: dimension.placement.left,
+                        top: dimension.placement.top,
+                        transform: [{ rotate: `${dimension.placement.rotationDeg}deg` }],
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.dimensionLabelText, dimension.isSelected ? styles.dimensionLabelTextSelected : null]}>{dimension.label}</Text>
+                  </View>
+                </React.Fragment>
+              ))}
+            </View>
 
             {doors.map((door) => {
               const segment = entities.find((entity) => entity.segmentId === door.segmentId);
@@ -4196,6 +4266,14 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '900',
+  },
+  dimensionLayer: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 3,
   },
   dimensionLine: {
     position: 'absolute',
