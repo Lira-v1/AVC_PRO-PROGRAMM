@@ -7,7 +7,7 @@ type Point = {
   y: number;
 };
 
-type ToolMode = 'idle' | 'line' | 'polyline' | 'select';
+type ToolMode = 'idle' | 'line' | 'polyline' | 'select' | 'door';
 type WallSegmentType = 'external' | 'internal';
 type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
@@ -33,14 +33,28 @@ type CanvasV4WallSegment = {
 
 type CanvasV4LineEntity = CanvasV4WallSegment;
 
+type DoorSwingDirection = 'right';
+
+type CanvasV4Door = {
+  doorId: string;
+  segmentId: string;
+  positionOnSegment: number;
+  width: number;
+  swingDirection: DoorSwingDirection;
+  createdAt: number;
+};
+
 type HistoryAction =
   | { type: 'CREATE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
   | { type: 'CREATE_POLYLINE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
-  | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; delta: Point }
-  | { type: 'RESIZE_WALL_SEGMENT'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string }
-  | { type: 'RESIZE_WALL_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string; scaleX: number; scaleY: number };
+  | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; doors: Array<{ door: CanvasV4Door; index: number }> }
+  | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }>; doors: Array<{ door: CanvasV4Door; index: number }> }
+  | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; delta: Point }
+  | { type: 'RESIZE_WALL_SEGMENT'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; handleId: string }
+  | { type: 'RESIZE_WALL_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; handleId: string; scaleX: number; scaleY: number }
+  | { type: 'CREATE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
+  | { type: 'MOVE_DOOR'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
+  | { type: 'DELETE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
 
@@ -59,8 +73,8 @@ type EndpointSnapTarget = {
   distance: number;
 };
 
-type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection';
-type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'empty-canvas';
+type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection' | 'move-door';
+type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'door-geometry' | 'empty-canvas';
 type SelectionMode = 'single' | 'box' | 'move';
 type LastInteractionType =
   | 'init'
@@ -70,6 +84,7 @@ type LastInteractionType =
   | 'pan-canvas'
   | 'selection-box'
   | 'move-selection'
+  | 'move-door'
   | 'resize-line'
   | 'resize-selection'
   | 'draw-line'
@@ -109,6 +124,8 @@ type DragSession = {
   lastY: number;
   moveEntityIds: string[];
   moveOriginalEntities: CanvasV4LineEntity[];
+  moveDoorId: string | null;
+  moveOriginalDoor: CanvasV4Door | null;
   resizeHandleId: TransformHandleId | null;
   resizeAxis: ResizeAxis;
   resizeOriginalEntities: CanvasV4LineEntity[];
@@ -151,6 +168,9 @@ const DEFAULT_WALL_THICKNESS_MM = 100;
 const WALL_THICKNESS_VISUAL = false;
 const WALL_THICKNESS_FROZEN = true;
 const DEFAULT_CORNER_JOIN_MODE: CornerJoinMode = 'bevel';
+const DEFAULT_DOOR_WIDTH_MM = 800;
+const DOOR_HIT_TOLERANCE_PX = 16;
+const DOOR_LEAF_DEPTH_MM = 650;
 
 type LineScreenGeometry = {
   length: number;
@@ -204,6 +224,8 @@ const EMPTY_DRAG_SESSION: DragSession = {
   lastY: 0,
   moveEntityIds: [],
   moveOriginalEntities: [],
+  moveDoorId: null,
+  moveOriginalDoor: null,
   resizeHandleId: null,
   resizeAxis: 'none',
   resizeOriginalEntities: [],
@@ -625,6 +647,93 @@ const getDistanceToSegment = (point: Point, startPoint: Point, endPoint: Point) 
   return Math.hypot(point.x - projection.x, point.y - projection.y);
 };
 
+
+const projectPointToSegment = (point: Point, segment: CanvasV4LineEntity) => {
+  const dx = segment.endPoint.x - segment.startPoint.x;
+  const dy = segment.endPoint.y - segment.startPoint.y;
+  const segmentLengthSq = dx * dx + dy * dy;
+
+  if (segmentLengthSq === 0) {
+    return {
+      point: segment.startPoint,
+      distance: Math.hypot(point.x - segment.startPoint.x, point.y - segment.startPoint.y),
+      positionOnSegment: 0,
+    };
+  }
+
+  const t = Math.max(0, Math.min(1, ((point.x - segment.startPoint.x) * dx + (point.y - segment.startPoint.y) * dy) / segmentLengthSq));
+  const projection = {
+    x: segment.startPoint.x + t * dx,
+    y: segment.startPoint.y + t * dy,
+  };
+
+  return {
+    point: projection,
+    distance: Math.hypot(point.x - projection.x, point.y - projection.y),
+    positionOnSegment: t * segment.length,
+  };
+};
+
+const getDoorPositionLimit = (segment: CanvasV4LineEntity, width = DEFAULT_DOOR_WIDTH_MM) => Math.max(0, segment.length - width / 2);
+
+const clampDoorPositionOnSegment = (segment: CanvasV4LineEntity, positionOnSegment: number, width = DEFAULT_DOOR_WIDTH_MM) => {
+  const min = Math.min(segment.length, width / 2);
+  const max = Math.max(min, getDoorPositionLimit(segment, width));
+  return Math.max(min, Math.min(max, positionOnSegment));
+};
+
+const getPointOnSegmentAtDistance = (segment: CanvasV4LineEntity, distance: number): Point => {
+  const length = Math.max(segment.length, 1);
+  const t = Math.max(0, Math.min(1, distance / length));
+
+  return {
+    x: segment.startPoint.x + (segment.endPoint.x - segment.startPoint.x) * t,
+    y: segment.startPoint.y + (segment.endPoint.y - segment.startPoint.y) * t,
+  };
+};
+
+const createDoor = (segment: CanvasV4LineEntity, positionOnSegment: number): CanvasV4Door => ({
+  doorId: `door-${Date.now()}-${Math.round(Math.random() * 100000)}`,
+  segmentId: segment.segmentId,
+  positionOnSegment: clampDoorPositionOnSegment(segment, positionOnSegment),
+  width: DEFAULT_DOOR_WIDTH_MM,
+  swingDirection: 'right',
+  createdAt: Date.now(),
+});
+
+const insertDoorAtIndex = (doors: CanvasV4Door[], door: CanvasV4Door, index: number) => {
+  const next = doors.filter((item) => item.doorId !== door.doorId);
+  next.splice(Math.min(index, next.length), 0, door);
+  return next;
+};
+
+const withDoorAttachedToSegment = (entity: CanvasV4LineEntity, doorId: string): CanvasV4LineEntity => ({
+  ...entity,
+  doorIds: entity.doorIds.includes(doorId) ? entity.doorIds : [...entity.doorIds, doorId],
+});
+
+const withDoorDetachedFromSegment = (entity: CanvasV4LineEntity, doorId: string): CanvasV4LineEntity => ({
+  ...entity,
+  doorIds: entity.doorIds.filter((id) => id !== doorId),
+});
+
+const clampDoorsToSegments = (doors: CanvasV4Door[], entities: CanvasV4LineEntity[]) => {
+  const segmentsById = new Map(entities.map((entity) => [entity.segmentId, entity]));
+
+  return doors.map((door) => {
+    const segment = segmentsById.get(door.segmentId);
+
+    if (!segment) {
+      return door;
+    }
+
+    return {
+      ...door,
+      positionOnSegment: clampDoorPositionOnSegment(segment, door.positionOnSegment, door.width),
+    };
+  });
+};
+
 const getScreenPoint = (nativeEvent: any): Point => ({
   x: nativeEvent.locationX ?? nativeEvent.offsetX ?? 0,
   y: nativeEvent.locationY ?? nativeEvent.offsetY ?? 0,
@@ -836,7 +945,9 @@ export const CanvasV4DevScreen = () => {
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('select');
   const [newSegmentType, setNewSegmentType] = useState<WallSegmentType>('internal');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
+  const [doors, setDoors] = useState<CanvasV4Door[]>([]);
   const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
+  const [selectedDoorId, setSelectedDoorId] = useState<string | null>(null);
   const [lineStartPoint, setLineStartPoint] = useState<Point | null>(null);
   const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null);
   const [activePolylineId, setActivePolylineId] = useState<string | null>(null);
@@ -1029,17 +1140,59 @@ export const CanvasV4DevScreen = () => {
     [cameraZoom, entities],
   );
 
+  const findNearestSegmentProjection = useCallback(
+    (worldPoint: Point): { entity: CanvasV4LineEntity; positionOnSegment: number; distance: number } | null => {
+      const tolerance = HIT_TOLERANCE_PX / cameraZoom;
+
+      return entities.reduce<{ entity: CanvasV4LineEntity; positionOnSegment: number; distance: number } | null>((nearest, entity) => {
+        const projection = projectPointToSegment(worldPoint, entity);
+
+        if (projection.distance <= tolerance && (!nearest || projection.distance < nearest.distance)) {
+          return { entity, positionOnSegment: projection.positionOnSegment, distance: projection.distance };
+        }
+
+        return nearest;
+      }, null);
+    },
+    [cameraZoom, entities],
+  );
+
+  const findDoorAtWorldPoint = useCallback(
+    (worldPoint: Point) => {
+      const tolerance = DOOR_HIT_TOLERANCE_PX / cameraZoom;
+      const segmentsById = new Map(entities.map((entity) => [entity.segmentId, entity]));
+
+      return [...doors]
+        .reverse()
+        .find((door) => {
+          const segment = segmentsById.get(door.segmentId);
+
+          if (!segment) {
+            return false;
+          }
+
+          const centerPoint = getPointOnSegmentAtDistance(segment, door.positionOnSegment);
+          const alongDistance = Math.abs(projectPointToSegment(worldPoint, segment).positionOnSegment - door.positionOnSegment);
+          const centerDistance = Math.hypot(worldPoint.x - centerPoint.x, worldPoint.y - centerPoint.y);
+
+          return alongDistance <= door.width / 2 + tolerance && centerDistance <= Math.max(door.width / 2, DOOR_LEAF_DEPTH_MM) + tolerance;
+        })?.doorId ?? null;
+    },
+    [cameraZoom, doors, entities],
+  );
+
   const selectedEntities = useMemo(() => {
     const selectedSet = new Set(selectedEntityIds);
     return entities.filter((entity) => selectedSet.has(entity.entityId));
   }, [entities, selectedEntityIds]);
 
+  const selectedDoor = useMemo(() => doors.find((door) => door.doorId === selectedDoorId) ?? null, [doors, selectedDoorId]);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
 
   const transformHandles = useMemo(() => {
-    if (selectedEntities.length === 1) {
+    if (!selectedDoorId && selectedEntities.length === 1) {
       const entity = selectedEntities[0];
       return [
         { id: 'single-start' as TransformHandleId, point: entity.startPoint, axis: 'xy' as ResizeAxis },
@@ -1047,13 +1200,13 @@ export const CanvasV4DevScreen = () => {
       ];
     }
 
-    if (selectedEntities.length > 1 && selectedBoundingBox) {
+    if (!selectedDoorId && selectedEntities.length > 1 && selectedBoundingBox) {
       const handleIds: TransformHandleId[] = ['bbox-nw', 'bbox-n', 'bbox-ne', 'bbox-e', 'bbox-se', 'bbox-s', 'bbox-sw', 'bbox-w'];
       return handleIds.map((id) => ({ id, point: getBoundingBoxHandlePoint(selectedBoundingBox, id), axis: getResizeAxisForHandle(id) }));
     }
 
     return [];
-  }, [selectedBoundingBox, selectedEntities]);
+  }, [selectedBoundingBox, selectedDoorId, selectedEntities]);
 
   const findTransformHandleAtScreenPoint = useCallback(
     (screenPoint: Point) => {
@@ -1081,6 +1234,24 @@ export const CanvasV4DevScreen = () => {
   }, []);
 
   const deleteSelectedEntities = useCallback(() => {
+    if (selectedDoorId) {
+      const doorIndex = doors.findIndex((door) => door.doorId === selectedDoorId);
+      const door = doorIndex >= 0 ? doors[doorIndex] : null;
+      const beforeEntity = door ? entities.find((entity) => entity.segmentId === door.segmentId) ?? null : null;
+
+      if (!door || !beforeEntity) {
+        return;
+      }
+
+      const afterEntity = withDoorDetachedFromSegment(beforeEntity, door.doorId);
+      pushHistoryAction({ type: 'DELETE_DOOR', door, doorIndex, beforeEntity, afterEntity });
+      setDoors((current) => current.filter((item) => item.doorId !== door.doorId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === afterEntity.entityId ? afterEntity : entity))));
+      setSelectedDoorId(null);
+      setLastActionType('DELETE_DOOR');
+      return;
+    }
+
     if (selectedEntityIds.length === 0) {
       return;
     }
@@ -1094,15 +1265,22 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
+    const deletedSegmentIds = new Set(deletedEntities.map(({ entity }) => entity.segmentId));
+    const deletedDoors = doors
+      .map((door, index) => ({ door, index }))
+      .filter(({ door }) => deletedSegmentIds.has(door.segmentId));
+    const deletedDoorIds = new Set(deletedDoors.map(({ door }) => door.doorId));
     const action: HistoryAction =
       deletedEntities.length === 1
-        ? { type: 'DELETE_WALL_SEGMENT', entity: deletedEntities[0].entity, index: deletedEntities[0].index }
-        : { type: 'DELETE_SELECTED_WALL_SEGMENTS', entities: deletedEntities };
+        ? { type: 'DELETE_WALL_SEGMENT', entity: deletedEntities[0].entity, index: deletedEntities[0].index, doors: deletedDoors }
+        : { type: 'DELETE_SELECTED_WALL_SEGMENTS', entities: deletedEntities, doors: deletedDoors };
 
     pushHistoryAction(action);
     setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !selectedSet.has(entity.entityId))));
+    setDoors((current) => current.filter((door) => !deletedDoorIds.has(door.doorId)));
     setSelectedEntityIds([]);
-  }, [entities, pushHistoryAction, selectedEntityIds]);
+    setSelectedDoorId(null);
+  }, [doors, entities, pushHistoryAction, selectedDoorId, selectedEntityIds]);
 
   const applyHistoryUndo = useCallback((action: HistoryAction) => {
     if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
@@ -1113,7 +1291,13 @@ export const CanvasV4DevScreen = () => {
 
     if (action.type === 'DELETE_WALL_SEGMENT') {
       setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
+      setDoors((current) =>
+        [...action.doors]
+          .sort((a, b) => a.index - b.index)
+          .reduce((next, item) => insertDoorAtIndex(next, item.door, item.index), current),
+      );
       setSelectedEntityIds([action.entity.entityId]);
+      setSelectedDoorId(null);
       return;
     }
 
@@ -1125,13 +1309,44 @@ export const CanvasV4DevScreen = () => {
             .reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
         ),
       );
+      setDoors((current) =>
+        [...action.doors]
+          .sort((a, b) => a.index - b.index)
+          .reduce((next, item) => insertDoorAtIndex(next, item.door, item.index), current),
+      );
       setSelectedEntityIds(action.entities.map(({ entity }) => entity.entityId));
+      setSelectedDoorId(null);
+      return;
+    }
+
+    if (action.type === 'CREATE_DOOR') {
+      setDoors((current) => current.filter((door) => door.doorId !== action.door.doorId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.beforeEntity.entityId ? action.beforeEntity : entity))));
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    if (action.type === 'DELETE_DOOR') {
+      setDoors((current) => insertDoorAtIndex(current, action.door, action.doorIndex));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.beforeEntity.entityId ? action.beforeEntity : entity))));
+      setSelectedDoorId(action.door.doorId);
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    if (action.type === 'MOVE_DOOR') {
+      setDoors((current) => current.map((door) => (door.doorId === action.beforeDoor.doorId ? action.beforeDoor : door)));
+      setSelectedDoorId(action.beforeDoor.doorId);
+      setSelectedEntityIds([]);
       return;
     }
 
     const beforeById = new Map(action.beforeEntities.map((entity) => [entity.entityId, entity]));
     setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => beforeById.get(entity.entityId) ?? entity)));
+    setDoors(action.beforeDoors);
     setSelectedEntityIds(action.beforeEntities.map((entity) => entity.entityId));
+    setSelectedDoorId(null);
   }, []);
 
   const applyHistoryRedo = useCallback((action: HistoryAction) => {
@@ -1142,21 +1357,52 @@ export const CanvasV4DevScreen = () => {
     }
 
     if (action.type === 'DELETE_WALL_SEGMENT') {
+      const deletedDoorIds = new Set(action.doors.map(({ door }) => door.doorId));
       setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => entity.entityId !== action.entity.entityId)));
+      setDoors((current) => current.filter((door) => !deletedDoorIds.has(door.doorId)));
       setSelectedEntityIds([]);
+      setSelectedDoorId(null);
       return;
     }
 
     if (action.type === 'DELETE_SELECTED_WALL_SEGMENTS') {
       const deletedEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
+      const deletedDoorIds = new Set(action.doors.map(({ door }) => door.doorId));
       setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !deletedEntityIds.has(entity.entityId))));
+      setDoors((current) => current.filter((door) => !deletedDoorIds.has(door.doorId)));
+      setSelectedEntityIds([]);
+      setSelectedDoorId(null);
+      return;
+    }
+
+    if (action.type === 'CREATE_DOOR') {
+      setDoors((current) => insertDoorAtIndex(current, action.door, action.doorIndex));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.afterEntity.entityId ? action.afterEntity : entity))));
+      setSelectedDoorId(action.door.doorId);
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    if (action.type === 'DELETE_DOOR') {
+      setDoors((current) => current.filter((door) => door.doorId !== action.door.doorId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.afterEntity.entityId ? action.afterEntity : entity))));
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    if (action.type === 'MOVE_DOOR') {
+      setDoors((current) => current.map((door) => (door.doorId === action.afterDoor.doorId ? action.afterDoor : door)));
+      setSelectedDoorId(action.afterDoor.doorId);
       setSelectedEntityIds([]);
       return;
     }
 
     const afterById = new Map(action.afterEntities.map((entity) => [entity.entityId, entity]));
     setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => afterById.get(entity.entityId) ?? entity)));
+    setDoors(action.afterDoors);
     setSelectedEntityIds(action.afterEntities.map((entity) => entity.entityId));
+    setSelectedDoorId(null);
   }, []);
 
   const undoLastAction = useCallback(() => {
@@ -1217,6 +1463,7 @@ export const CanvasV4DevScreen = () => {
         if (!lineStartPoint) {
           setLineStartPoint(clickSnap.point);
           setSelectedEntityIds([]);
+          setSelectedDoorId(null);
           setLastActionType('SET_LINE_START');
           return;
         }
@@ -1227,6 +1474,7 @@ export const CanvasV4DevScreen = () => {
         setEntities((current) => normalizeWallSegmentConnectivity([...current, entity]));
         setLineStartPoint(null);
         setSelectedEntityIds([entity.entityId]);
+        setSelectedDoorId(null);
         return;
       }
 
@@ -1237,6 +1485,7 @@ export const CanvasV4DevScreen = () => {
           setPolylineLastPoint(clickSnap.point);
           setActivePolylineId(`polyline-${Date.now()}`);
           setSelectedEntityIds([]);
+          setSelectedDoorId(null);
           setLastActionType('SET_POLYLINE_START');
           return;
         }
@@ -1247,17 +1496,50 @@ export const CanvasV4DevScreen = () => {
         setEntities((current) => normalizeWallSegmentConnectivity([...current, entity]));
         setPolylineLastPoint(endPoint);
         setSelectedEntityIds([entity.entityId]);
+        setSelectedDoorId(null);
+        return;
+      }
+
+      if (currentToolMode === 'door') {
+        const target = findNearestSegmentProjection(rawWorldPoint);
+
+        if (!target) {
+          setLastActionType('DOOR_EMPTY_TAP');
+          setLastInteractionType('tap-empty');
+          return;
+        }
+
+        const door = createDoor(target.entity, target.positionOnSegment);
+        const afterEntity = withDoorAttachedToSegment(target.entity, door.doorId);
+        pushHistoryAction({ type: 'CREATE_DOOR', door, doorIndex: doors.length, beforeEntity: target.entity, afterEntity });
+        setDoors((current) => [...current, door]);
+        setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === afterEntity.entityId ? afterEntity : entity))));
+        setSelectedEntityIds([]);
+        setSelectedDoorId(door.doorId);
+        setLastInteractionType('tap-select');
         return;
       }
 
       if (!isDrawingTool) {
-        const hitEntityId = findEntityAtWorldPoint(rawWorldPoint);
+        const hitDoorId = findDoorAtWorldPoint(rawWorldPoint);
+        const hitEntityId = hitDoorId ? null : findEntityAtWorldPoint(rawWorldPoint);
         const now = Date.now();
-        setHitTestTargetType(hitEntityId && selectedEntityIds.includes(hitEntityId) ? 'selected-geometry' : hitEntityId ? 'wall-geometry' : 'empty-canvas');
-        setLastHitTestEntityId(hitEntityId);
+        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitEntityId && selectedEntityIds.includes(hitEntityId) ? 'selected-geometry' : hitEntityId ? 'wall-geometry' : 'empty-canvas');
+        setLastHitTestEntityId(hitDoorId ?? hitEntityId);
+
+        if (hitDoorId) {
+          setSelectedDoorId(hitDoorId);
+          setSelectedEntityIds([]);
+          setSelectionMode('single');
+          setLastActionType('SELECT_DOOR');
+          setLastInteractionType('tap-select');
+          lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
+          return;
+        }
 
         if (hitEntityId) {
           setSelectedEntityIds([hitEntityId]);
+          setSelectedDoorId(null);
           setSelectionMode('single');
           setLastActionType('SELECT_ENTITY');
           setLastInteractionType('tap-select');
@@ -1273,6 +1555,7 @@ export const CanvasV4DevScreen = () => {
 
         if (isDoubleTapEmpty) {
           setSelectedEntityIds([]);
+          setSelectedDoorId(null);
           setSelectionMode('single');
           setLastActionType('DOUBLE_TAP_CLEAR_SELECTION');
           setLastInteractionType('double-tap-clear');
@@ -1285,7 +1568,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds],
+    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds],
   );
 
   const setToolMode = useCallback((mode: ToolMode) => {
@@ -1295,6 +1578,7 @@ export const CanvasV4DevScreen = () => {
     setActivePolylineId(null);
     setPointerWorldPoint(null);
     setSelectionBox(null);
+    setSelectedDoorId(null);
     setInteractionMode('idle');
     setIsPanningCanvas(false);
     setLastInteractionType('tool-change');
@@ -1315,28 +1599,34 @@ export const CanvasV4DevScreen = () => {
     (screenPoint: Point, pointerId?: number) => {
       const rawWorldPoint = screenToWorld(screenPoint);
       const selectedSet = new Set(selectedEntityIds);
-      const isNavigationSelectionMode = currentToolMode !== 'line' && currentToolMode !== 'polyline';
-      const transformHandle = isNavigationSelectionMode ? findTransformHandleAtScreenPoint(screenPoint) : null;
+      const isNavigationSelectionMode = currentToolMode !== 'line' && currentToolMode !== 'polyline' && currentToolMode !== 'door';
+      const hitDoorId = isNavigationSelectionMode ? findDoorAtWorldPoint(rawWorldPoint) : null;
+      const transformHandle = isNavigationSelectionMode && !hitDoorId ? findTransformHandleAtScreenPoint(screenPoint) : null;
       const isLineResize = !!transformHandle && selectedEntities.length === 1;
       const isSelectionResize = !!transformHandle && selectedEntities.length > 1;
       const tolerance = HIT_TOLERANCE_PX / cameraZoom;
-      const hitSelectedEntityId = isNavigationSelectionMode && !transformHandle
+      const hitSelectedEntityId = isNavigationSelectionMode && !hitDoorId && !transformHandle
         ? [...selectedEntities].reverse().find((entity) => getDistanceToSegment(rawWorldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null
         : null;
-      const hitEntityId = isNavigationSelectionMode && !transformHandle ? hitSelectedEntityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const hitEntityId = isNavigationSelectionMode && !hitDoorId && !transformHandle ? hitSelectedEntityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const shouldMoveDoor = isNavigationSelectionMode && !!hitDoorId && selectedDoorId === hitDoorId;
       const shouldMoveSelection = isNavigationSelectionMode && !!hitSelectedEntityId && selectedSet.has(hitSelectedEntityId);
       const hitTargetType: HitTestTargetType = transformHandle
         ? 'resize-handle'
+        : hitDoorId
+          ? 'door-geometry'
         : hitSelectedEntityId
           ? 'selected-geometry'
           : hitEntityId
             ? 'wall-geometry'
             : 'empty-canvas';
-      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitEntityId;
+      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitDoorId && !hitEntityId;
       const initialInteractionMode: InteractionMode = isLineResize
         ? 'resize-line'
         : isSelectionResize
           ? 'resize-selection'
+          : shouldMoveDoor
+            ? 'move-door'
           : shouldMoveSelection
             ? 'move-selection'
             : 'pan';
@@ -1357,6 +1647,8 @@ export const CanvasV4DevScreen = () => {
         lastY: screenPoint.y,
         moveEntityIds: moveOriginalEntities.map((entity) => entity.entityId),
         moveOriginalEntities,
+        moveDoorId: shouldMoveDoor ? hitDoorId : null,
+        moveOriginalDoor: shouldMoveDoor ? doors.find((door) => door.doorId === hitDoorId) ?? null : null,
         resizeHandleId: transformHandle?.id ?? null,
         resizeAxis: transformHandle?.axis ?? 'none',
         resizeOriginalEntities,
@@ -1369,7 +1661,7 @@ export const CanvasV4DevScreen = () => {
       };
       setPointerWorldPoint(rawWorldPoint);
       setHitTestTargetType(hitTargetType);
-      setLastHitTestEntityId(hitEntityId);
+      setLastHitTestEntityId(hitDoorId ?? hitEntityId);
       setInteractionMode(initialInteractionMode);
       setIsPanningCanvas(false);
       setSelectionBox(null);
@@ -1381,7 +1673,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis(transformHandle?.axis ?? 'none');
       setResizeScale({ x: 1, y: 1 });
     },
-    [cameraZoom, currentToolMode, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, screenToWorld, selectedBoundingBox, selectedEntities, selectedEntityIds],
+    [cameraZoom, currentToolMode, doors, findDoorAtWorldPoint, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds],
   );
 
   const moveInteraction = useCallback(
@@ -1498,6 +1790,26 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
+      if (session.interactionMode === 'move-door' && session.moveOriginalDoor) {
+        const segment = entities.find((entity) => entity.segmentId === session.moveOriginalDoor?.segmentId);
+
+        if (segment) {
+          const projection = projectPointToSegment(screenToWorld(screenPoint), segment);
+          const movedDoor = {
+            ...session.moveOriginalDoor,
+            positionOnSegment: clampDoorPositionOnSegment(segment, projection.positionOnSegment, session.moveOriginalDoor.width),
+          };
+
+          setDoors((current) => current.map((door) => (door.doorId === movedDoor.doorId ? movedDoor : door)));
+          setIsMovingSelection(true);
+          setSelectionMode('move');
+          setLastActionType('MOVE_DOOR_DRAG');
+          setLastInteractionType('move-door');
+        }
+
+        return;
+      }
+
       if (session.interactionMode === 'move-selection') {
         const moveDelta = { x: totalDx / cameraZoom, y: totalDy / cameraZoom };
         const movedById = new Map(session.moveOriginalEntities.map((entity) => [entity.entityId, moveLineEntity(entity, moveDelta)]));
@@ -1547,13 +1859,18 @@ export const CanvasV4DevScreen = () => {
             Math.hypot(resizedEntity.endPoint.x - originalEntity.endPoint.x, resizedEntity.endPoint.y - originalEntity.endPoint.y) > 0.000001;
 
           if (geometryChanged) {
+            const afterDoors = clampDoorsToSegments(doors, entities.map((entity) => (entity.entityId === resizedEntity.entityId ? resizedEntity : entity)));
             pushHistoryAction({
               type: 'RESIZE_WALL_SEGMENT',
               beforeEntities: [originalEntity],
               afterEntities: [resizedEntity],
+              beforeDoors: doors,
+              afterDoors,
               handleId: session.resizeHandleId,
             });
+            setDoors(afterDoors);
             setSelectedEntityIds([resizedEntity.entityId]);
+            setSelectedDoorId(null);
           }
         }
       } else if (session.interactionMode === 'resize-selection' && session.moved) {
@@ -1589,16 +1906,41 @@ export const CanvasV4DevScreen = () => {
           });
 
           if (geometryChanged) {
+            const afterById = new Map(afterEntities.map((entity) => [entity.entityId, entity]));
+            const nextEntities = entities.map((entity) => afterById.get(entity.entityId) ?? entity);
+            const afterDoors = clampDoorsToSegments(doors, nextEntities);
             pushHistoryAction({
               type: 'RESIZE_WALL_SELECTION',
               beforeEntities: session.resizeOriginalEntities,
               afterEntities,
+              beforeDoors: doors,
+              afterDoors,
               handleId: session.resizeHandleId,
               scaleX,
               scaleY,
             });
+            setDoors(afterDoors);
             setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
+            setSelectedDoorId(null);
             setResizeScale({ x: scaleX, y: scaleY });
+          }
+        }
+      } else if (session.interactionMode === 'move-door' && session.moved && session.moveOriginalDoor) {
+        const segment = entities.find((entity) => entity.segmentId === session.moveOriginalDoor?.segmentId);
+
+        if (segment) {
+          const projection = projectPointToSegment(screenToWorld(screenPoint), segment);
+          const afterDoor = {
+            ...session.moveOriginalDoor,
+            positionOnSegment: clampDoorPositionOnSegment(segment, projection.positionOnSegment, session.moveOriginalDoor.width),
+          };
+          const movedDistance = Math.abs(afterDoor.positionOnSegment - session.moveOriginalDoor.positionOnSegment);
+
+          if (movedDistance > 0.000001) {
+            pushHistoryAction({ type: 'MOVE_DOOR', beforeDoor: session.moveOriginalDoor, afterDoor });
+            setSelectedDoorId(afterDoor.doorId);
+            setSelectedEntityIds([]);
+            setLastMoveAction('MOVE_DOOR');
           }
         }
       } else if (session.interactionMode === 'move-selection' && session.moved) {
@@ -1610,6 +1952,8 @@ export const CanvasV4DevScreen = () => {
             type: 'MOVE_SELECTED_WALL_SEGMENTS',
             beforeEntities: session.moveOriginalEntities,
             afterEntities,
+            beforeDoors: doors,
+            afterDoors: doors,
             delta: moveDelta,
           });
           setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
@@ -1631,7 +1975,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis('none');
       dragSessionRef.current = EMPTY_DRAG_SESSION;
     },
-    [cameraZoom, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox],
+    [cameraZoom, doors, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox],
   );
 
   const responderHandlers = useMemo(
@@ -1732,6 +2076,11 @@ export const CanvasV4DevScreen = () => {
       'compassVisible: true',
       'compassMode: visual-only',
       `entitiesCount: ${entities.length}`,
+      `doorsCount: ${doors.length}`,
+      `selectedDoorId: ${selectedDoor?.doorId ?? 'null'}`,
+      `activeDoorSegmentId: ${selectedDoor?.segmentId ?? 'null'}`,
+      `doorPositionOnSegment: ${selectedDoor ? `${selectedDoor.positionOnSegment.toFixed(0)} mm` : 'null'}`,
+      `doorWidth: ${selectedDoor ? `${selectedDoor.width} mm` : `${DEFAULT_DOOR_WIDTH_MM} mm (default)`}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedSegmentId: ${selectedSegment?.segmentId ?? 'null'}`,
       `selectedSegmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
@@ -1746,7 +2095,7 @@ export const CanvasV4DevScreen = () => {
       `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
       `doorIds: [${selectedSegment?.doorIds.join(', ') || 'empty'}]`,
       `windowIds: [${selectedSegment?.windowIds.join(', ') || 'empty'}]`,
-      `selectedCount: ${selectedEntityIds.length}`,
+      `selectedCount: ${selectedEntityIds.length + (selectedDoor ? 1 : 0)}`,
       `transformMode: ${transformMode}`,
       `selectedBoundingBox: ${selectedBoundingBox ? `(${selectedBoundingBox.minX.toFixed(0)}, ${selectedBoundingBox.minY.toFixed(0)}) - (${selectedBoundingBox.maxX.toFixed(0)}, ${selectedBoundingBox.maxY.toFixed(0)})` : 'null'}`,
       `activeHandleId: ${activeHandleId ?? 'null'}`,
@@ -1797,6 +2146,7 @@ export const CanvasV4DevScreen = () => {
       currentToolMode,
       newSegmentType,
       showLineDimensions,
+      doors.length,
       entities.length,
       lastActionType,
       lastRedoAction,
@@ -1823,6 +2173,7 @@ export const CanvasV4DevScreen = () => {
       resizeScale.y,
       selectedBoundingBox,
       selectedLineLength,
+      selectedDoor,
       selectedEntityIds,
       selectedSegment,
       selectionBox?.active,
@@ -1869,10 +2220,10 @@ export const CanvasV4DevScreen = () => {
         </View>
 
         <View style={styles.toolRow}>
-          {(['select', 'line', 'polyline'] as ToolMode[]).map((mode) => (
+          {(['select', 'line', 'polyline', 'door'] as ToolMode[]).map((mode) => (
             <Pressable key={mode} style={[styles.toolButton, currentToolMode === mode ? styles.toolButtonActive : null]} onPress={() => setToolMode(mode)}>
               <Text style={[styles.toolButtonText, currentToolMode === mode ? styles.toolButtonTextActive : null]}>
-                {mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : 'Выбор'}
+                {mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : mode === 'door' ? 'Дверь' : 'Выбор'}
               </Text>
             </Pressable>
           ))}
@@ -1883,8 +2234,8 @@ export const CanvasV4DevScreen = () => {
               </Text>
             </Pressable>
           ))}
-          <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0}>
-            <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
+          <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 || selectedDoorId ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0 && !selectedDoorId}>
+            <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 || selectedDoorId ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
           </Pressable>
           <Pressable style={[styles.toolButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
             <Text style={[styles.toolButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶ Отменить</Text>
@@ -1952,6 +2303,78 @@ export const CanvasV4DevScreen = () => {
               );
             })}
 
+            {doors.map((door) => {
+              const segment = entities.find((entity) => entity.segmentId === door.segmentId);
+
+              if (!segment) {
+                return null;
+              }
+
+              const center = getPointOnSegmentAtDistance(segment, door.positionOnSegment);
+              const screenCenter = worldToScreen(center);
+              const segmentGeometry = getLineScreenGeometry(segment.startPoint, segment.endPoint);
+              const widthPx = Math.max(door.width * cameraZoom, 18);
+              const leafPx = Math.max(DOOR_LEAF_DEPTH_MM * cameraZoom, 28);
+              const halfWidthPx = widthPx / 2;
+              const angleRad = (segmentGeometry.angleDeg * Math.PI) / 180;
+              const unit = { x: Math.cos(angleRad), y: Math.sin(angleRad) };
+              const normal = { x: unit.y, y: -unit.x };
+              const hingePoint = { x: screenCenter.x - unit.x * halfWidthPx, y: screenCenter.y - unit.y * halfWidthPx };
+              const leafCenter = { x: hingePoint.x + normal.x * leafPx / 2, y: hingePoint.y + normal.y * leafPx / 2 };
+              const isSelected = selectedDoorId === door.doorId;
+
+              return (
+                <React.Fragment key={door.doorId}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.doorWallBreakOverlay,
+                      {
+                        width: widthPx,
+                        left: screenCenter.x - halfWidthPx,
+                        top: screenCenter.y - 3,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.doorLeafLine,
+                      isSelected ? styles.doorElementSelected : null,
+                      {
+                        width: leafPx,
+                        left: leafCenter.x - leafPx / 2,
+                        top: leafCenter.y - 1,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg - 90}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.doorSwingArc,
+                      isSelected ? styles.doorElementSelected : null,
+                      {
+                        width: leafPx,
+                        height: leafPx,
+                        left: hingePoint.x,
+                        top: hingePoint.y - leafPx,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.doorHingeMarker,
+                      isSelected ? styles.doorHingeMarkerSelected : null,
+                      { left: hingePoint.x - 4, top: hingePoint.y - 4 },
+                    ]}
+                  />
+                </React.Fragment>
+              );
+            })}
 
             {previewLine && previewGeometry ? (
               <React.Fragment>
@@ -2244,6 +2667,45 @@ const styles = StyleSheet.create({
     height: 2,
     borderRadius: 2,
     opacity: 0.72,
+  },
+  doorWallBreakOverlay: {
+    position: 'absolute',
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.35)',
+  },
+  doorLeafLine: {
+    position: 'absolute',
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: '#2563EB',
+  },
+  doorSwingArc: {
+    position: 'absolute',
+    borderTopWidth: 2,
+    borderRightWidth: 2,
+    borderTopRightRadius: 999,
+    borderColor: '#2563EB',
+    opacity: 0.85,
+  },
+  doorElementSelected: {
+    backgroundColor: '#F97316',
+    borderColor: '#F97316',
+  },
+  doorHingeMarker: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#2563EB',
+    borderWidth: 1,
+    borderColor: '#EFF6FF',
+  },
+  doorHingeMarkerSelected: {
+    backgroundColor: '#F97316',
   },
   dimensionLabel: {
     position: 'absolute',
