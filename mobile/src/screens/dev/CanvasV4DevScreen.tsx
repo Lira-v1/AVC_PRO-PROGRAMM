@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 
 type Point = {
@@ -7,7 +7,7 @@ type Point = {
   y: number;
 };
 
-type ToolMode = 'idle' | 'line' | 'polyline' | 'select' | 'door';
+type ToolMode = 'idle' | 'line' | 'polyline' | 'select' | 'door' | 'window';
 type WallSegmentType = 'external' | 'internal';
 type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
@@ -46,19 +46,33 @@ type CanvasV4Door = {
   createdAt: number;
 };
 
+type CanvasV4Window = {
+  windowId: string;
+  segmentId: string;
+  positionOnSegment: number;
+  width: number;
+  height: number;
+  bottomOffset: number;
+  createdAt: number;
+};
+
 type HistoryAction =
   | { type: 'CREATE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
   | { type: 'CREATE_POLYLINE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; doors: Array<{ door: CanvasV4Door; index: number }> }
-  | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }>; doors: Array<{ door: CanvasV4Door; index: number }> }
-  | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; delta: Point }
-  | { type: 'RESIZE_WALL_SEGMENT'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; handleId: string }
-  | { type: 'RESIZE_WALL_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; handleId: string; scaleX: number; scaleY: number }
+  | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; doors: Array<{ door: CanvasV4Door; index: number }>; windows: Array<{ window: CanvasV4Window; index: number }> }
+  | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }>; doors: Array<{ door: CanvasV4Door; index: number }>; windows: Array<{ window: CanvasV4Window; index: number }> }
+  | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; beforeWindows: CanvasV4Window[]; afterWindows: CanvasV4Window[]; delta: Point }
+  | { type: 'RESIZE_WALL_SEGMENT'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; beforeWindows: CanvasV4Window[]; afterWindows: CanvasV4Window[]; handleId: string }
+  | { type: 'RESIZE_WALL_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; beforeWindows: CanvasV4Window[]; afterWindows: CanvasV4Window[]; handleId: string; scaleX: number; scaleY: number }
   | { type: 'CREATE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
   | { type: 'MOVE_DOOR'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
   | { type: 'CHANGE_DOOR_HINGE_SIDE'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
   | { type: 'CHANGE_DOOR_SWING_SIDE'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
-  | { type: 'DELETE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity };
+  | { type: 'DELETE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
+  | { type: 'CREATE_WINDOW'; window: CanvasV4Window; windowIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
+  | { type: 'MOVE_WINDOW'; beforeWindow: CanvasV4Window; afterWindow: CanvasV4Window }
+  | { type: 'DELETE_WINDOW'; window: CanvasV4Window; windowIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
+  | { type: 'UPDATE_WINDOW_WIDTH'; beforeWindow: CanvasV4Window; afterWindow: CanvasV4Window };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
 
@@ -77,8 +91,8 @@ type EndpointSnapTarget = {
   distance: number;
 };
 
-type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection' | 'move-door';
-type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'door-geometry' | 'empty-canvas';
+type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection' | 'move-door' | 'move-window';
+type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'door-geometry' | 'window-geometry' | 'empty-canvas';
 type SelectionMode = 'single' | 'box' | 'move';
 type LastInteractionType =
   | 'init'
@@ -89,6 +103,7 @@ type LastInteractionType =
   | 'selection-box'
   | 'move-selection'
   | 'move-door'
+  | 'move-window'
   | 'resize-line'
   | 'resize-selection'
   | 'draw-line'
@@ -130,6 +145,8 @@ type DragSession = {
   moveOriginalEntities: CanvasV4LineEntity[];
   moveDoorId: string | null;
   moveOriginalDoor: CanvasV4Door | null;
+  moveWindowId: string | null;
+  moveOriginalWindow: CanvasV4Window | null;
   resizeHandleId: TransformHandleId | null;
   resizeAxis: ResizeAxis;
   resizeOriginalEntities: CanvasV4LineEntity[];
@@ -173,7 +190,12 @@ const WALL_THICKNESS_VISUAL = false;
 const WALL_THICKNESS_FROZEN = true;
 const DEFAULT_CORNER_JOIN_MODE: CornerJoinMode = 'bevel';
 const DEFAULT_DOOR_WIDTH_MM = 800;
+const DEFAULT_WINDOW_WIDTH_MM = 1200;
+const DEFAULT_WINDOW_HEIGHT_MM = 1400;
+const DEFAULT_WINDOW_BOTTOM_OFFSET_MM = 900;
+const MIN_WINDOW_WIDTH_MM = 100;
 const DOOR_HIT_TOLERANCE_PX = 16;
+const WINDOW_HIT_TOLERANCE_PX = 14;
 const DOOR_SWING_ARC_VISUAL_SCALE = 0.68;
 const DOOR_SWING_ARC_SEGMENTS = 12;
 
@@ -231,6 +253,8 @@ const EMPTY_DRAG_SESSION: DragSession = {
   moveOriginalEntities: [],
   moveDoorId: null,
   moveOriginalDoor: null,
+  moveWindowId: null,
+  moveOriginalWindow: null,
   resizeHandleId: null,
   resizeAxis: 'none',
   resizeOriginalEntities: [],
@@ -697,8 +721,10 @@ const getPointOnSegmentAtDistance = (segment: CanvasV4LineEntity, distance: numb
   };
 };
 
+const createCanvasEntityId = (prefix: 'door' | 'window') => `${prefix}-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+
 const createDoor = (segment: CanvasV4LineEntity, positionOnSegment: number): CanvasV4Door => ({
-  doorId: `door-${Date.now()}-${Math.round(Math.random() * 100000)}`,
+  doorId: createCanvasEntityId('door'),
   segmentId: segment.segmentId,
   positionOnSegment: clampDoorPositionOnSegment(segment, positionOnSegment),
   width: DEFAULT_DOOR_WIDTH_MM,
@@ -727,6 +753,40 @@ const withDoorDetachedFromSegment = (entity: CanvasV4LineEntity, doorId: string)
   doorIds: entity.doorIds.filter((id) => id !== doorId),
 });
 
+const getWindowPositionLimit = (segment: CanvasV4LineEntity, width = DEFAULT_WINDOW_WIDTH_MM) => Math.max(0, segment.length - width / 2);
+
+const clampWindowPositionOnSegment = (segment: CanvasV4LineEntity, positionOnSegment: number, width = DEFAULT_WINDOW_WIDTH_MM) => {
+  const min = Math.min(segment.length, width / 2);
+  const max = Math.max(min, getWindowPositionLimit(segment, width));
+  return Math.max(min, Math.min(max, positionOnSegment));
+};
+
+const createWindow = (segment: CanvasV4LineEntity, positionOnSegment: number): CanvasV4Window => ({
+  windowId: createCanvasEntityId('window'),
+  segmentId: segment.segmentId,
+  positionOnSegment: clampWindowPositionOnSegment(segment, positionOnSegment),
+  width: DEFAULT_WINDOW_WIDTH_MM,
+  height: DEFAULT_WINDOW_HEIGHT_MM,
+  bottomOffset: DEFAULT_WINDOW_BOTTOM_OFFSET_MM,
+  createdAt: Date.now(),
+});
+
+const insertWindowAtIndex = (windows: CanvasV4Window[], window: CanvasV4Window, index: number) => {
+  const next = windows.filter((item) => item.windowId !== window.windowId);
+  next.splice(Math.min(index, next.length), 0, window);
+  return next;
+};
+
+const withWindowAttachedToSegment = (entity: CanvasV4LineEntity, windowId: string): CanvasV4LineEntity => ({
+  ...entity,
+  windowIds: entity.windowIds.includes(windowId) ? entity.windowIds : [...entity.windowIds, windowId],
+});
+
+const withWindowDetachedFromSegment = (entity: CanvasV4LineEntity, windowId: string): CanvasV4LineEntity => ({
+  ...entity,
+  windowIds: entity.windowIds.filter((id) => id !== windowId),
+});
+
 const clampDoorsToSegments = (doors: CanvasV4Door[], entities: CanvasV4LineEntity[]) => {
   const segmentsById = new Map(entities.map((entity) => [entity.segmentId, entity]));
 
@@ -740,6 +800,23 @@ const clampDoorsToSegments = (doors: CanvasV4Door[], entities: CanvasV4LineEntit
     return {
       ...door,
       positionOnSegment: clampDoorPositionOnSegment(segment, door.positionOnSegment, door.width),
+    };
+  });
+};
+
+const clampWindowsToSegments = (windows: CanvasV4Window[], entities: CanvasV4LineEntity[]) => {
+  const segmentsById = new Map(entities.map((entity) => [entity.segmentId, entity]));
+
+  return windows.map((window) => {
+    const segment = segmentsById.get(window.segmentId);
+
+    if (!segment) {
+      return window;
+    }
+
+    return {
+      ...window,
+      positionOnSegment: clampWindowPositionOnSegment(segment, window.positionOnSegment, window.width),
     };
   });
 };
@@ -956,8 +1033,13 @@ export const CanvasV4DevScreen = () => {
   const [newSegmentType, setNewSegmentType] = useState<WallSegmentType>('internal');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
   const [doors, setDoors] = useState<CanvasV4Door[]>([]);
+  const [windows, setWindows] = useState<CanvasV4Window[]>([]);
   const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
   const [selectedDoorId, setSelectedDoorId] = useState<string | null>(null);
+  const [selectedWindowId, setSelectedWindowId] = useState<string | null>(null);
+  const [windowWidthInput, setWindowWidthInput] = useState(String(DEFAULT_WINDOW_WIDTH_MM));
+  const [lastCreatedDoorId, setLastCreatedDoorId] = useState<string | null>(null);
+  const [lastCreatedWindowId, setLastCreatedWindowId] = useState<string | null>(null);
   const [lineStartPoint, setLineStartPoint] = useState<Point | null>(null);
   const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null);
   const [activePolylineId, setActivePolylineId] = useState<string | null>(null);
@@ -975,6 +1057,7 @@ export const CanvasV4DevScreen = () => {
   const [moveDeltaMm, setMoveDeltaMm] = useState<Point>({ x: 0, y: 0 });
   const [lastMoveAction, setLastMoveAction] = useState<string>('null');
   const [lastDoorAction, setLastDoorAction] = useState<string>('null');
+  const [lastWindowAction, setLastWindowAction] = useState<string>('null');
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('single');
   const [transformMode, setTransformMode] = useState<TransformMode>('idle');
   const [activeHandleId, setActiveHandleId] = useState<TransformHandleId | null>(null);
@@ -1192,18 +1275,47 @@ export const CanvasV4DevScreen = () => {
     [cameraZoom, doors, entities],
   );
 
+  const findWindowAtWorldPoint = useCallback(
+    (worldPoint: Point) => {
+      const tolerance = WINDOW_HIT_TOLERANCE_PX / cameraZoom;
+      const segmentsById = new Map(entities.map((entity) => [entity.segmentId, entity]));
+
+      return [...windows]
+        .reverse()
+        .find((window) => {
+          const segment = segmentsById.get(window.segmentId);
+
+          if (!segment) {
+            return false;
+          }
+
+          const centerPoint = getPointOnSegmentAtDistance(segment, window.positionOnSegment);
+          const alongDistance = Math.abs(projectPointToSegment(worldPoint, segment).positionOnSegment - window.positionOnSegment);
+          const centerDistance = Math.hypot(worldPoint.x - centerPoint.x, worldPoint.y - centerPoint.y);
+
+          return alongDistance <= window.width / 2 + tolerance && centerDistance <= window.width / 2 + tolerance;
+        })?.windowId ?? null;
+    },
+    [cameraZoom, entities, windows],
+  );
+
   const selectedEntities = useMemo(() => {
     const selectedSet = new Set(selectedEntityIds);
     return entities.filter((entity) => selectedSet.has(entity.entityId));
   }, [entities, selectedEntityIds]);
 
   const selectedDoor = useMemo(() => doors.find((door) => door.doorId === selectedDoorId) ?? null, [doors, selectedDoorId]);
+  const selectedWindow = useMemo(() => windows.find((window) => window.windowId === selectedWindowId) ?? null, [selectedWindowId, windows]);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
 
+  useEffect(() => {
+    setWindowWidthInput(selectedWindow ? String(Math.round(selectedWindow.width)) : String(DEFAULT_WINDOW_WIDTH_MM));
+  }, [selectedWindow]);
+
   const transformHandles = useMemo(() => {
-    if (!selectedDoorId && selectedEntities.length === 1) {
+    if (!selectedDoorId && !selectedWindowId && selectedEntities.length === 1) {
       const entity = selectedEntities[0];
       return [
         { id: 'single-start' as TransformHandleId, point: entity.startPoint, axis: 'xy' as ResizeAxis },
@@ -1211,13 +1323,13 @@ export const CanvasV4DevScreen = () => {
       ];
     }
 
-    if (!selectedDoorId && selectedEntities.length > 1 && selectedBoundingBox) {
+    if (!selectedDoorId && !selectedWindowId && selectedEntities.length > 1 && selectedBoundingBox) {
       const handleIds: TransformHandleId[] = ['bbox-nw', 'bbox-n', 'bbox-ne', 'bbox-e', 'bbox-se', 'bbox-s', 'bbox-sw', 'bbox-w'];
       return handleIds.map((id) => ({ id, point: getBoundingBoxHandlePoint(selectedBoundingBox, id), axis: getResizeAxisForHandle(id) }));
     }
 
     return [];
-  }, [selectedBoundingBox, selectedDoorId, selectedEntities]);
+  }, [selectedBoundingBox, selectedDoorId, selectedEntities, selectedWindowId]);
 
   const findTransformHandleAtScreenPoint = useCallback(
     (screenPoint: Point) => {
@@ -1264,6 +1376,25 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
+    if (selectedWindowId) {
+      const windowIndex = windows.findIndex((window) => window.windowId === selectedWindowId);
+      const window = windowIndex >= 0 ? windows[windowIndex] : null;
+      const beforeEntity = window ? entities.find((entity) => entity.segmentId === window.segmentId) ?? null : null;
+
+      if (!window || !beforeEntity) {
+        return;
+      }
+
+      const afterEntity = withWindowDetachedFromSegment(beforeEntity, window.windowId);
+      pushHistoryAction({ type: 'DELETE_WINDOW', window, windowIndex, beforeEntity, afterEntity });
+      setWindows((current) => current.filter((item) => item.windowId !== window.windowId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === afterEntity.entityId ? afterEntity : entity))));
+      setSelectedWindowId(null);
+      setLastWindowAction('DELETE_WINDOW');
+      setLastActionType('DELETE_WINDOW');
+      return;
+    }
+
     if (selectedEntityIds.length === 0) {
       return;
     }
@@ -1281,18 +1412,24 @@ export const CanvasV4DevScreen = () => {
     const deletedDoors = doors
       .map((door, index) => ({ door, index }))
       .filter(({ door }) => deletedSegmentIds.has(door.segmentId));
+    const deletedWindows = windows
+      .map((window, index) => ({ window, index }))
+      .filter(({ window }) => deletedSegmentIds.has(window.segmentId));
     const deletedDoorIds = new Set(deletedDoors.map(({ door }) => door.doorId));
+    const deletedWindowIds = new Set(deletedWindows.map(({ window }) => window.windowId));
     const action: HistoryAction =
       deletedEntities.length === 1
-        ? { type: 'DELETE_WALL_SEGMENT', entity: deletedEntities[0].entity, index: deletedEntities[0].index, doors: deletedDoors }
-        : { type: 'DELETE_SELECTED_WALL_SEGMENTS', entities: deletedEntities, doors: deletedDoors };
+        ? { type: 'DELETE_WALL_SEGMENT', entity: deletedEntities[0].entity, index: deletedEntities[0].index, doors: deletedDoors, windows: deletedWindows }
+        : { type: 'DELETE_SELECTED_WALL_SEGMENTS', entities: deletedEntities, doors: deletedDoors, windows: deletedWindows };
 
     pushHistoryAction(action);
     setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !selectedSet.has(entity.entityId))));
     setDoors((current) => current.filter((door) => !deletedDoorIds.has(door.doorId)));
+    setWindows((current) => current.filter((window) => !deletedWindowIds.has(window.windowId)));
     setSelectedEntityIds([]);
     setSelectedDoorId(null);
-  }, [doors, entities, pushHistoryAction, selectedDoorId, selectedEntityIds]);
+    setSelectedWindowId(null);
+  }, [doors, entities, pushHistoryAction, selectedDoorId, selectedEntityIds, selectedWindowId, windows]);
 
   const applyHistoryUndo = useCallback((action: HistoryAction) => {
     if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
@@ -1308,8 +1445,15 @@ export const CanvasV4DevScreen = () => {
           .sort((a, b) => a.index - b.index)
           .reduce((next, item) => insertDoorAtIndex(next, item.door, item.index), current),
       );
+      setWindows((current) =>
+        [...action.windows]
+          .sort((a, b) => a.index - b.index)
+          .reduce((next, item) => insertWindowAtIndex(next, item.window, item.index), current),
+      );
       setSelectedEntityIds([action.entity.entityId]);
       setSelectedDoorId(null);
+      setSelectedWindowId(null);
+      setSelectedWindowId(null);
       return;
     }
 
@@ -1326,8 +1470,14 @@ export const CanvasV4DevScreen = () => {
           .sort((a, b) => a.index - b.index)
           .reduce((next, item) => insertDoorAtIndex(next, item.door, item.index), current),
       );
+      setWindows((current) =>
+        [...action.windows]
+          .sort((a, b) => a.index - b.index)
+          .reduce((next, item) => insertWindowAtIndex(next, item.window, item.index), current),
+      );
       setSelectedEntityIds(action.entities.map(({ entity }) => entity.entityId));
       setSelectedDoorId(null);
+      setSelectedWindowId(null);
       return;
     }
 
@@ -1344,6 +1494,7 @@ export const CanvasV4DevScreen = () => {
       setDoors((current) => insertDoorAtIndex(current, action.door, action.doorIndex));
       setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.beforeEntity.entityId ? action.beforeEntity : entity))));
       setSelectedDoorId(action.door.doorId);
+      setSelectedWindowId(null);
       setSelectedEntityIds([]);
       setLastDoorAction('UNDO_DELETE_DOOR');
       return;
@@ -1352,16 +1503,48 @@ export const CanvasV4DevScreen = () => {
     if (action.type === 'MOVE_DOOR' || action.type === 'CHANGE_DOOR_HINGE_SIDE' || action.type === 'CHANGE_DOOR_SWING_SIDE') {
       setDoors((current) => current.map((door) => (door.doorId === action.beforeDoor.doorId ? action.beforeDoor : door)));
       setSelectedDoorId(action.beforeDoor.doorId);
+      setSelectedWindowId(null);
       setSelectedEntityIds([]);
       setLastDoorAction(`UNDO_${action.type}`);
+      return;
+    }
+
+    if (action.type === 'CREATE_WINDOW') {
+      setWindows((current) => current.filter((window) => window.windowId !== action.window.windowId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.beforeEntity.entityId ? action.beforeEntity : entity))));
+      setSelectedWindowId(null);
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      setLastWindowAction('UNDO_CREATE_WINDOW');
+      return;
+    }
+
+    if (action.type === 'DELETE_WINDOW') {
+      setWindows((current) => insertWindowAtIndex(current, action.window, action.windowIndex));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.beforeEntity.entityId ? action.beforeEntity : entity))));
+      setSelectedWindowId(action.window.windowId);
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      setLastWindowAction('UNDO_DELETE_WINDOW');
+      return;
+    }
+
+    if (action.type === 'MOVE_WINDOW' || action.type === 'UPDATE_WINDOW_WIDTH') {
+      setWindows((current) => current.map((window) => (window.windowId === action.beforeWindow.windowId ? action.beforeWindow : window)));
+      setSelectedWindowId(action.beforeWindow.windowId);
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      setLastWindowAction(`UNDO_${action.type}`);
       return;
     }
 
     const beforeById = new Map(action.beforeEntities.map((entity) => [entity.entityId, entity]));
     setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => beforeById.get(entity.entityId) ?? entity)));
     setDoors(action.beforeDoors);
+    setWindows(action.beforeWindows);
     setSelectedEntityIds(action.beforeEntities.map((entity) => entity.entityId));
     setSelectedDoorId(null);
+    setSelectedWindowId(null);
   }, []);
 
   const applyHistoryRedo = useCallback((action: HistoryAction) => {
@@ -1373,20 +1556,26 @@ export const CanvasV4DevScreen = () => {
 
     if (action.type === 'DELETE_WALL_SEGMENT') {
       const deletedDoorIds = new Set(action.doors.map(({ door }) => door.doorId));
+      const deletedWindowIds = new Set(action.windows.map(({ window }) => window.windowId));
       setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => entity.entityId !== action.entity.entityId)));
       setDoors((current) => current.filter((door) => !deletedDoorIds.has(door.doorId)));
+      setWindows((current) => current.filter((window) => !deletedWindowIds.has(window.windowId)));
       setSelectedEntityIds([]);
       setSelectedDoorId(null);
+      setSelectedWindowId(null);
       return;
     }
 
     if (action.type === 'DELETE_SELECTED_WALL_SEGMENTS') {
       const deletedEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
       const deletedDoorIds = new Set(action.doors.map(({ door }) => door.doorId));
+      const deletedWindowIds = new Set(action.windows.map(({ window }) => window.windowId));
       setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !deletedEntityIds.has(entity.entityId))));
       setDoors((current) => current.filter((door) => !deletedDoorIds.has(door.doorId)));
+      setWindows((current) => current.filter((window) => !deletedWindowIds.has(window.windowId)));
       setSelectedEntityIds([]);
       setSelectedDoorId(null);
+      setSelectedWindowId(null);
       return;
     }
 
@@ -1394,6 +1583,7 @@ export const CanvasV4DevScreen = () => {
       setDoors((current) => insertDoorAtIndex(current, action.door, action.doorIndex));
       setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.afterEntity.entityId ? action.afterEntity : entity))));
       setSelectedDoorId(action.door.doorId);
+      setSelectedWindowId(null);
       setSelectedEntityIds([]);
       setLastDoorAction('REDO_CREATE_DOOR');
       return;
@@ -1411,16 +1601,48 @@ export const CanvasV4DevScreen = () => {
     if (action.type === 'MOVE_DOOR' || action.type === 'CHANGE_DOOR_HINGE_SIDE' || action.type === 'CHANGE_DOOR_SWING_SIDE') {
       setDoors((current) => current.map((door) => (door.doorId === action.afterDoor.doorId ? action.afterDoor : door)));
       setSelectedDoorId(action.afterDoor.doorId);
+      setSelectedWindowId(null);
       setSelectedEntityIds([]);
       setLastDoorAction(`REDO_${action.type}`);
+      return;
+    }
+
+    if (action.type === 'CREATE_WINDOW') {
+      setWindows((current) => insertWindowAtIndex(current, action.window, action.windowIndex));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.afterEntity.entityId ? action.afterEntity : entity))));
+      setSelectedWindowId(action.window.windowId);
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      setLastWindowAction('REDO_CREATE_WINDOW');
+      return;
+    }
+
+    if (action.type === 'DELETE_WINDOW') {
+      setWindows((current) => current.filter((window) => window.windowId !== action.window.windowId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === action.afterEntity.entityId ? action.afterEntity : entity))));
+      setSelectedWindowId(null);
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      setLastWindowAction('REDO_DELETE_WINDOW');
+      return;
+    }
+
+    if (action.type === 'MOVE_WINDOW' || action.type === 'UPDATE_WINDOW_WIDTH') {
+      setWindows((current) => current.map((window) => (window.windowId === action.afterWindow.windowId ? action.afterWindow : window)));
+      setSelectedWindowId(action.afterWindow.windowId);
+      setSelectedDoorId(null);
+      setSelectedEntityIds([]);
+      setLastWindowAction(`REDO_${action.type}`);
       return;
     }
 
     const afterById = new Map(action.afterEntities.map((entity) => [entity.entityId, entity]));
     setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => afterById.get(entity.entityId) ?? entity)));
     setDoors(action.afterDoors);
+    setWindows(action.afterWindows);
     setSelectedEntityIds(action.afterEntities.map((entity) => entity.entityId));
     setSelectedDoorId(null);
+    setSelectedWindowId(null);
   }, []);
 
   const undoLastAction = useCallback(() => {
@@ -1461,6 +1683,8 @@ export const CanvasV4DevScreen = () => {
       const nextSelectedIds = entities.filter((entity) => doesLineIntersectRect(entity, worldRect)).map((entity) => entity.entityId);
 
       setSelectedEntityIds(nextSelectedIds);
+      setSelectedDoorId(null);
+      setSelectedWindowId(null);
       setSelectionMode('box');
       setLastActionType(nextSelectedIds.length > 0 ? 'SELECTION_BOX_SELECT' : 'SELECTION_BOX_CLEAR');
       setLastInteractionType('selection-box');
@@ -1482,6 +1706,7 @@ export const CanvasV4DevScreen = () => {
           setLineStartPoint(clickSnap.point);
           setSelectedEntityIds([]);
           setSelectedDoorId(null);
+          setSelectedWindowId(null);
           setLastActionType('SET_LINE_START');
           return;
         }
@@ -1493,6 +1718,7 @@ export const CanvasV4DevScreen = () => {
         setLineStartPoint(null);
         setSelectedEntityIds([entity.entityId]);
         setSelectedDoorId(null);
+        setSelectedWindowId(null);
         return;
       }
 
@@ -1504,6 +1730,7 @@ export const CanvasV4DevScreen = () => {
           setActivePolylineId(`polyline-${Date.now()}`);
           setSelectedEntityIds([]);
           setSelectedDoorId(null);
+          setSelectedWindowId(null);
           setLastActionType('SET_POLYLINE_START');
           return;
         }
@@ -1515,6 +1742,7 @@ export const CanvasV4DevScreen = () => {
         setPolylineLastPoint(endPoint);
         setSelectedEntityIds([entity.entityId]);
         setSelectedDoorId(null);
+        setSelectedWindowId(null);
         return;
       }
 
@@ -1534,6 +1762,8 @@ export const CanvasV4DevScreen = () => {
         setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === afterEntity.entityId ? afterEntity : entity))));
         setSelectedEntityIds([]);
         setSelectedDoorId(door.doorId);
+        setSelectedWindowId(null);
+        setLastCreatedDoorId(door.doorId);
         setCurrentToolMode('select');
         setLineStartPoint(null);
         setPolylineLastPoint(null);
@@ -1547,15 +1777,48 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
+      if (currentToolMode === 'window') {
+        const target = findNearestSegmentProjection(rawWorldPoint);
+
+        if (!target) {
+          setLastActionType('WINDOW_EMPTY_TAP');
+          setLastInteractionType('tap-empty');
+          return;
+        }
+
+        const window = createWindow(target.entity, target.positionOnSegment);
+        const afterEntity = withWindowAttachedToSegment(target.entity, window.windowId);
+        pushHistoryAction({ type: 'CREATE_WINDOW', window, windowIndex: windows.length, beforeEntity: target.entity, afterEntity });
+        setWindows((current) => [...current, window]);
+        setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === afterEntity.entityId ? afterEntity : entity))));
+        setSelectedEntityIds([]);
+        setSelectedDoorId(null);
+        setSelectedWindowId(window.windowId);
+        setLastCreatedWindowId(window.windowId);
+        setCurrentToolMode('select');
+        setLineStartPoint(null);
+        setPolylineLastPoint(null);
+        setActivePolylineId(null);
+        setSelectionBox(null);
+        setInteractionMode('idle');
+        setIsPanningCanvas(false);
+        setTransformMode('idle');
+        setLastWindowAction('CREATE_WINDOW_AUTO_SELECT');
+        setLastInteractionType('tap-select');
+        return;
+      }
+
       if (!isDrawingTool) {
         const hitDoorId = findDoorAtWorldPoint(rawWorldPoint);
-        const hitEntityId = hitDoorId ? null : findEntityAtWorldPoint(rawWorldPoint);
+        const hitWindowId = hitDoorId ? null : findWindowAtWorldPoint(rawWorldPoint);
+        const hitEntityId = hitDoorId || hitWindowId ? null : findEntityAtWorldPoint(rawWorldPoint);
         const now = Date.now();
-        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitEntityId && selectedEntityIds.includes(hitEntityId) ? 'selected-geometry' : hitEntityId ? 'wall-geometry' : 'empty-canvas');
-        setLastHitTestEntityId(hitDoorId ?? hitEntityId);
+        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitWindowId ? 'window-geometry' : hitEntityId && selectedEntityIds.includes(hitEntityId) ? 'selected-geometry' : hitEntityId ? 'wall-geometry' : 'empty-canvas');
+        setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitEntityId);
 
         if (hitDoorId) {
           setSelectedDoorId(hitDoorId);
+          setSelectedWindowId(null);
           setSelectedEntityIds([]);
           setSelectionMode('single');
           setLastActionType('SELECT_DOOR');
@@ -1564,9 +1827,21 @@ export const CanvasV4DevScreen = () => {
           return;
         }
 
+        if (hitWindowId) {
+          setSelectedWindowId(hitWindowId);
+          setSelectedDoorId(null);
+          setSelectedEntityIds([]);
+          setSelectionMode('single');
+          setLastActionType('SELECT_WINDOW');
+          setLastInteractionType('tap-select');
+          lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
+          return;
+        }
+
         if (hitEntityId) {
           setSelectedEntityIds([hitEntityId]);
           setSelectedDoorId(null);
+          setSelectedWindowId(null);
           setSelectionMode('single');
           setLastActionType('SELECT_ENTITY');
           setLastInteractionType('tap-select');
@@ -1583,6 +1858,7 @@ export const CanvasV4DevScreen = () => {
         if (isDoubleTapEmpty) {
           setSelectedEntityIds([]);
           setSelectedDoorId(null);
+          setSelectedWindowId(null);
           setSelectionMode('single');
           setLastActionType('DOUBLE_TAP_CLEAR_SELECTION');
           setLastInteractionType('double-tap-clear');
@@ -1595,7 +1871,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds],
+    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, windows.length],
   );
 
   const changeSelectedDoorHingeSide = useCallback(() => {
@@ -1611,6 +1887,7 @@ export const CanvasV4DevScreen = () => {
     pushHistoryAction({ type: 'CHANGE_DOOR_HINGE_SIDE', beforeDoor: selectedDoor, afterDoor });
     setDoors((current) => current.map((door) => (door.doorId === afterDoor.doorId ? afterDoor : door)));
     setSelectedDoorId(afterDoor.doorId);
+    setSelectedWindowId(null);
     setSelectedEntityIds([]);
     setLastDoorAction('CHANGE_DOOR_HINGE_SIDE');
   }, [pushHistoryAction, selectedDoor]);
@@ -1628,9 +1905,47 @@ export const CanvasV4DevScreen = () => {
     pushHistoryAction({ type: 'CHANGE_DOOR_SWING_SIDE', beforeDoor: selectedDoor, afterDoor });
     setDoors((current) => current.map((door) => (door.doorId === afterDoor.doorId ? afterDoor : door)));
     setSelectedDoorId(afterDoor.doorId);
+    setSelectedWindowId(null);
     setSelectedEntityIds([]);
     setLastDoorAction('CHANGE_DOOR_SWING_SIDE');
   }, [pushHistoryAction, selectedDoor]);
+
+  const updateSelectedWindowWidth = useCallback(() => {
+    if (!selectedWindow) {
+      return;
+    }
+
+    const parsedWidth = Number(windowWidthInput.replace(',', '.'));
+    if (!Number.isFinite(parsedWidth) || parsedWidth <= 0) {
+      setWindowWidthInput(String(Math.round(selectedWindow.width)));
+      setLastWindowAction('UPDATE_WINDOW_WIDTH_INVALID');
+      return;
+    }
+
+    const segment = entities.find((entity) => entity.segmentId === selectedWindow.segmentId);
+    if (!segment) {
+      return;
+    }
+
+    const normalizedWidth = Math.max(MIN_WINDOW_WIDTH_MM, Math.round(parsedWidth));
+    const afterWindow: CanvasV4Window = {
+      ...selectedWindow,
+      width: normalizedWidth,
+      positionOnSegment: clampWindowPositionOnSegment(segment, selectedWindow.positionOnSegment, normalizedWidth),
+    };
+
+    if (afterWindow.width === selectedWindow.width && afterWindow.positionOnSegment === selectedWindow.positionOnSegment) {
+      return;
+    }
+
+    pushHistoryAction({ type: 'UPDATE_WINDOW_WIDTH', beforeWindow: selectedWindow, afterWindow });
+    setWindows((current) => current.map((window) => (window.windowId === afterWindow.windowId ? afterWindow : window)));
+    setSelectedWindowId(afterWindow.windowId);
+    setSelectedDoorId(null);
+    setSelectedEntityIds([]);
+    setWindowWidthInput(String(Math.round(afterWindow.width)));
+    setLastWindowAction('UPDATE_WINDOW_WIDTH');
+  }, [entities, pushHistoryAction, selectedWindow, windowWidthInput]);
 
   const setToolMode = useCallback((mode: ToolMode) => {
     setCurrentToolMode(mode);
@@ -1640,6 +1955,7 @@ export const CanvasV4DevScreen = () => {
     setPointerWorldPoint(null);
     setSelectionBox(null);
     setSelectedDoorId(null);
+    setSelectedWindowId(null);
     setInteractionMode('idle');
     setIsPanningCanvas(false);
     setLastInteractionType('tool-change');
@@ -1660,37 +1976,43 @@ export const CanvasV4DevScreen = () => {
     (screenPoint: Point, pointerId?: number) => {
       const rawWorldPoint = screenToWorld(screenPoint);
       const selectedSet = new Set(selectedEntityIds);
-      const isNavigationSelectionMode = currentToolMode !== 'line' && currentToolMode !== 'polyline' && currentToolMode !== 'door';
-      const hitDoorId = isNavigationSelectionMode ? findDoorAtWorldPoint(rawWorldPoint) : null;
-      const transformHandle = isNavigationSelectionMode && !hitDoorId ? findTransformHandleAtScreenPoint(screenPoint) : null;
+      const isNavigationSelectionMode = currentToolMode !== 'line' && currentToolMode !== 'polyline' && currentToolMode !== 'door' && currentToolMode !== 'window';
+      const transformHandle = isNavigationSelectionMode ? findTransformHandleAtScreenPoint(screenPoint) : null;
+      const hitDoorId = isNavigationSelectionMode && !transformHandle ? findDoorAtWorldPoint(rawWorldPoint) : null;
+      const hitWindowId = isNavigationSelectionMode && !transformHandle && !hitDoorId ? findWindowAtWorldPoint(rawWorldPoint) : null;
       const isLineResize = !!transformHandle && selectedEntities.length === 1;
       const isSelectionResize = !!transformHandle && selectedEntities.length > 1;
       const tolerance = HIT_TOLERANCE_PX / cameraZoom;
-      const hitSelectedEntityId = isNavigationSelectionMode && !hitDoorId && !transformHandle
+      const hitSelectedEntityId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle
         ? [...selectedEntities].reverse().find((entity) => getDistanceToSegment(rawWorldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null
         : null;
-      const hitEntityId = isNavigationSelectionMode && !hitDoorId && !transformHandle ? hitSelectedEntityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const hitEntityId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle ? hitSelectedEntityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
       const shouldMoveDoor = isNavigationSelectionMode && !!hitDoorId && selectedDoorId === hitDoorId;
+      const shouldMoveWindow = isNavigationSelectionMode && !!hitWindowId && selectedWindowId === hitWindowId;
       const shouldMoveSelection = isNavigationSelectionMode && !!hitSelectedEntityId && selectedSet.has(hitSelectedEntityId);
       const hitTargetType: HitTestTargetType = transformHandle
         ? 'resize-handle'
         : hitDoorId
           ? 'door-geometry'
-        : hitSelectedEntityId
-          ? 'selected-geometry'
-          : hitEntityId
-            ? 'wall-geometry'
-            : 'empty-canvas';
-      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitDoorId && !hitEntityId;
+          : hitWindowId
+            ? 'window-geometry'
+            : hitSelectedEntityId
+              ? 'selected-geometry'
+              : hitEntityId
+                ? 'wall-geometry'
+                : 'empty-canvas';
+      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitDoorId && !hitWindowId && !hitEntityId;
       const initialInteractionMode: InteractionMode = isLineResize
         ? 'resize-line'
         : isSelectionResize
           ? 'resize-selection'
           : shouldMoveDoor
             ? 'move-door'
-          : shouldMoveSelection
-            ? 'move-selection'
-            : 'pan';
+            : shouldMoveWindow
+              ? 'move-window'
+              : shouldMoveSelection
+                ? 'move-selection'
+                : 'pan';
       const moveOriginalEntities = shouldMoveSelection ? selectedEntities : [];
       const resizeOriginalEntities = isLineResize || isSelectionResize ? selectedEntities : [];
       const resizeOriginalBoundingBox = isSelectionResize ? selectedBoundingBox : null;
@@ -1710,6 +2032,8 @@ export const CanvasV4DevScreen = () => {
         moveOriginalEntities,
         moveDoorId: shouldMoveDoor ? hitDoorId : null,
         moveOriginalDoor: shouldMoveDoor ? doors.find((door) => door.doorId === hitDoorId) ?? null : null,
+        moveWindowId: shouldMoveWindow ? hitWindowId : null,
+        moveOriginalWindow: shouldMoveWindow ? windows.find((window) => window.windowId === hitWindowId) ?? null : null,
         resizeHandleId: transformHandle?.id ?? null,
         resizeAxis: transformHandle?.axis ?? 'none',
         resizeOriginalEntities,
@@ -1722,7 +2046,7 @@ export const CanvasV4DevScreen = () => {
       };
       setPointerWorldPoint(rawWorldPoint);
       setHitTestTargetType(hitTargetType);
-      setLastHitTestEntityId(hitDoorId ?? hitEntityId);
+      setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitEntityId);
       setInteractionMode(initialInteractionMode);
       setIsPanningCanvas(false);
       setSelectionBox(null);
@@ -1734,7 +2058,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis(transformHandle?.axis ?? 'none');
       setResizeScale({ x: 1, y: 1 });
     },
-    [cameraZoom, currentToolMode, doors, findDoorAtWorldPoint, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds],
+    [cameraZoom, currentToolMode, doors, findDoorAtWorldPoint, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, findWindowAtWorldPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds, selectedWindowId, windows],
   );
 
   const moveInteraction = useCallback(
@@ -1871,6 +2195,26 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
+      if (session.interactionMode === 'move-window' && session.moveOriginalWindow) {
+        const segment = entities.find((entity) => entity.segmentId === session.moveOriginalWindow?.segmentId);
+
+        if (segment) {
+          const projection = projectPointToSegment(screenToWorld(screenPoint), segment);
+          const movedWindow = {
+            ...session.moveOriginalWindow,
+            positionOnSegment: clampWindowPositionOnSegment(segment, projection.positionOnSegment, session.moveOriginalWindow.width),
+          };
+
+          setWindows((current) => current.map((window) => (window.windowId === movedWindow.windowId ? movedWindow : window)));
+          setIsMovingSelection(true);
+          setSelectionMode('move');
+          setLastActionType('MOVE_WINDOW_DRAG');
+          setLastInteractionType('move-window');
+        }
+
+        return;
+      }
+
       if (session.interactionMode === 'move-selection') {
         const moveDelta = { x: totalDx / cameraZoom, y: totalDy / cameraZoom };
         const movedById = new Map(session.moveOriginalEntities.map((entity) => [entity.entityId, moveLineEntity(entity, moveDelta)]));
@@ -1920,16 +2264,21 @@ export const CanvasV4DevScreen = () => {
             Math.hypot(resizedEntity.endPoint.x - originalEntity.endPoint.x, resizedEntity.endPoint.y - originalEntity.endPoint.y) > 0.000001;
 
           if (geometryChanged) {
-            const afterDoors = clampDoorsToSegments(doors, entities.map((entity) => (entity.entityId === resizedEntity.entityId ? resizedEntity : entity)));
+            const nextEntities = entities.map((entity) => (entity.entityId === resizedEntity.entityId ? resizedEntity : entity));
+            const afterDoors = clampDoorsToSegments(doors, nextEntities);
+            const afterWindows = clampWindowsToSegments(windows, nextEntities);
             pushHistoryAction({
               type: 'RESIZE_WALL_SEGMENT',
               beforeEntities: [originalEntity],
               afterEntities: [resizedEntity],
               beforeDoors: doors,
               afterDoors,
+              beforeWindows: windows,
+              afterWindows,
               handleId: session.resizeHandleId,
             });
             setDoors(afterDoors);
+            setWindows(afterWindows);
             setSelectedEntityIds([resizedEntity.entityId]);
             setSelectedDoorId(null);
           }
@@ -1970,17 +2319,21 @@ export const CanvasV4DevScreen = () => {
             const afterById = new Map(afterEntities.map((entity) => [entity.entityId, entity]));
             const nextEntities = entities.map((entity) => afterById.get(entity.entityId) ?? entity);
             const afterDoors = clampDoorsToSegments(doors, nextEntities);
+            const afterWindows = clampWindowsToSegments(windows, nextEntities);
             pushHistoryAction({
               type: 'RESIZE_WALL_SELECTION',
               beforeEntities: session.resizeOriginalEntities,
               afterEntities,
               beforeDoors: doors,
               afterDoors,
+              beforeWindows: windows,
+              afterWindows,
               handleId: session.resizeHandleId,
               scaleX,
               scaleY,
             });
             setDoors(afterDoors);
+            setWindows(afterWindows);
             setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
             setSelectedDoorId(null);
             setResizeScale({ x: scaleX, y: scaleY });
@@ -2005,6 +2358,26 @@ export const CanvasV4DevScreen = () => {
             setLastDoorAction('MOVE_DOOR');
           }
         }
+      } else if (session.interactionMode === 'move-window' && session.moved && session.moveOriginalWindow) {
+        const segment = entities.find((entity) => entity.segmentId === session.moveOriginalWindow?.segmentId);
+
+        if (segment) {
+          const projection = projectPointToSegment(screenToWorld(screenPoint), segment);
+          const afterWindow = {
+            ...session.moveOriginalWindow,
+            positionOnSegment: clampWindowPositionOnSegment(segment, projection.positionOnSegment, session.moveOriginalWindow.width),
+          };
+          const movedDistance = Math.abs(afterWindow.positionOnSegment - session.moveOriginalWindow.positionOnSegment);
+
+          if (movedDistance > 0.000001) {
+            pushHistoryAction({ type: 'MOVE_WINDOW', beforeWindow: session.moveOriginalWindow, afterWindow });
+            setSelectedWindowId(afterWindow.windowId);
+            setSelectedDoorId(null);
+            setSelectedEntityIds([]);
+            setLastMoveAction('MOVE_WINDOW');
+            setLastWindowAction('MOVE_WINDOW');
+          }
+        }
       } else if (session.interactionMode === 'move-selection' && session.moved) {
         const moveDelta = { x: (screenPoint.x - session.startX) / cameraZoom, y: (screenPoint.y - session.startY) / cameraZoom };
         const afterEntities = session.moveOriginalEntities.map((entity) => moveLineEntity(entity, moveDelta));
@@ -2016,6 +2389,8 @@ export const CanvasV4DevScreen = () => {
             afterEntities,
             beforeDoors: doors,
             afterDoors: doors,
+            beforeWindows: windows,
+            afterWindows: windows,
             delta: moveDelta,
           });
           setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
@@ -2037,7 +2412,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis('none');
       dragSessionRef.current = EMPTY_DRAG_SESSION;
     },
-    [cameraZoom, doors, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox],
+    [cameraZoom, doors, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox, windows],
   );
 
   const responderHandlers = useMemo(
@@ -2139,13 +2514,25 @@ export const CanvasV4DevScreen = () => {
       'compassMode: visual-only',
       `entitiesCount: ${entities.length}`,
       `doorsCount: ${doors.length}`,
+      `windowsCount: ${windows.length}`,
       `selectedDoorId: ${selectedDoor?.doorId ?? 'null'}`,
+      `selectedWindowId: ${selectedWindow?.windowId ?? 'null'}`,
+      `lastCreatedDoorId: ${lastCreatedDoorId ?? 'null'}`,
+      `lastCreatedWindowId: ${lastCreatedWindowId ?? 'null'}`,
+      `doorEntityId: ${selectedDoor?.doorId ?? 'null'}`,
+      `windowEntityId: ${selectedWindow?.windowId ?? 'null'}`,
+      `windowWidth: ${selectedWindow ? `${selectedWindow.width} mm` : `${DEFAULT_WINDOW_WIDTH_MM} mm (default)`}`,
+      `windowHeight: ${selectedWindow ? `${selectedWindow.height} mm` : `${DEFAULT_WINDOW_HEIGHT_MM} mm (default)`}`,
+      `windowBottomOffset: ${selectedWindow ? `${selectedWindow.bottomOffset} mm` : `${DEFAULT_WINDOW_BOTTOM_OFFSET_MM} mm (default)`}`,
+      `windowSegmentId: ${selectedWindow?.segmentId ?? 'null'}`,
+      `windowPositionOnSegment: ${selectedWindow ? `${selectedWindow.positionOnSegment.toFixed(0)} mm` : 'null'}`,
       `doorSegmentId: ${selectedDoor?.segmentId ?? 'null'}`,
       `doorPositionOnSegment: ${selectedDoor ? `${selectedDoor.positionOnSegment.toFixed(0)} mm` : 'null'}`,
       `doorWidth: ${selectedDoor ? `${selectedDoor.width} mm` : `${DEFAULT_DOOR_WIDTH_MM} mm (default)`}`,
       `doorHingeSide: ${selectedDoor?.hingeSide ?? 'null'}`,
       `doorSwingSide: ${selectedDoor?.swingSide ?? 'null'}`,
       `lastDoorAction: ${lastDoorAction}`,
+      `lastWindowAction: ${lastWindowAction}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedSegmentId: ${selectedSegment?.segmentId ?? 'null'}`,
       `selectedSegmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
@@ -2160,7 +2547,7 @@ export const CanvasV4DevScreen = () => {
       `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
       `doorIds: [${selectedSegment?.doorIds.join(', ') || 'empty'}]`,
       `windowIds: [${selectedSegment?.windowIds.join(', ') || 'empty'}]`,
-      `selectedCount: ${selectedEntityIds.length + (selectedDoor ? 1 : 0)}`,
+      `selectedCount: ${selectedEntityIds.length + (selectedDoor ? 1 : 0) + (selectedWindow ? 1 : 0)}`,
       `transformMode: ${transformMode}`,
       `selectedBoundingBox: ${selectedBoundingBox ? `(${selectedBoundingBox.minX.toFixed(0)}, ${selectedBoundingBox.minY.toFixed(0)}) - (${selectedBoundingBox.maxX.toFixed(0)}, ${selectedBoundingBox.maxY.toFixed(0)})` : 'null'}`,
       `activeHandleId: ${activeHandleId ?? 'null'}`,
@@ -2212,6 +2599,7 @@ export const CanvasV4DevScreen = () => {
       newSegmentType,
       showLineDimensions,
       doors.length,
+      windows.length,
       entities.length,
       lastActionType,
       lastRedoAction,
@@ -2225,6 +2613,9 @@ export const CanvasV4DevScreen = () => {
       lastHitTestEntityId,
       lastMoveAction,
       lastDoorAction,
+      lastWindowAction,
+      lastCreatedDoorId,
+      lastCreatedWindowId,
       lineStartPoint,
       moveDeltaMm.x,
       moveDeltaMm.y,
@@ -2240,6 +2631,7 @@ export const CanvasV4DevScreen = () => {
       selectedBoundingBox,
       selectedLineLength,
       selectedDoor,
+      selectedWindow,
       selectedEntityIds,
       selectedSegment,
       selectionBox?.active,
@@ -2286,10 +2678,10 @@ export const CanvasV4DevScreen = () => {
         </View>
 
         <View style={styles.toolRow}>
-          {(['select', 'line', 'polyline', 'door'] as ToolMode[]).map((mode) => (
+          {(['select', 'line', 'polyline', 'door', 'window'] as ToolMode[]).map((mode) => (
             <Pressable key={mode} style={[styles.toolButton, currentToolMode === mode ? styles.toolButtonActive : null]} onPress={() => setToolMode(mode)}>
               <Text style={[styles.toolButtonText, currentToolMode === mode ? styles.toolButtonTextActive : null]}>
-                {mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : mode === 'door' ? 'Дверь' : 'Выбор'}
+                {mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : mode === 'door' ? 'Дверь' : mode === 'window' ? 'Окно' : 'Выбор'}
               </Text>
             </Pressable>
           ))}
@@ -2310,8 +2702,22 @@ export const CanvasV4DevScreen = () => {
               </Pressable>
             </>
           ) : null}
-          <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 || selectedDoorId ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0 && !selectedDoorId}>
-            <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 || selectedDoorId ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
+          {selectedWindow ? (
+            <View style={styles.windowWidthControl}>
+              <Text style={styles.windowWidthLabel}>Ширина окна</Text>
+              <TextInput
+                style={styles.windowWidthInput}
+                value={windowWidthInput}
+                onChangeText={setWindowWidthInput}
+                onSubmitEditing={updateSelectedWindowWidth}
+                onBlur={updateSelectedWindowWidth}
+                keyboardType="numeric"
+                selectTextOnFocus
+              />
+            </View>
+          ) : null}
+          <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 || selectedDoorId || selectedWindowId ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0 && !selectedDoorId && !selectedWindowId}>
+            <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 || selectedDoorId || selectedWindowId ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
           </Pressable>
           <Pressable style={[styles.toolButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
             <Text style={[styles.toolButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶ Отменить</Text>
@@ -2487,6 +2893,91 @@ export const CanvasV4DevScreen = () => {
                       styles.doorHingeMarker,
                       isSelected ? styles.doorHingeMarkerSelected : null,
                       { left: hingePoint.x - 4, top: hingePoint.y - 4 },
+                    ]}
+                  />
+                </React.Fragment>
+              );
+            })}
+
+            {windows.map((window) => {
+              const segment = entities.find((entity) => entity.segmentId === window.segmentId);
+
+              if (!segment) {
+                return null;
+              }
+
+              const center = getPointOnSegmentAtDistance(segment, window.positionOnSegment);
+              const screenCenter = worldToScreen(center);
+              const segmentGeometry = getLineScreenGeometry(segment.startPoint, segment.endPoint);
+              const widthPx = Math.max(window.width * cameraZoom, 22);
+              const halfWidthPx = widthPx / 2;
+              const symbolOffsetPx = 5;
+              const glassOffsetPx = 2;
+              const isSelected = selectedWindowId === window.windowId;
+
+              return (
+                <React.Fragment key={window.windowId}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.windowOverlayLine,
+                      isSelected ? styles.windowElementSelected : null,
+                      {
+                        width: widthPx,
+                        left: screenCenter.x - halfWidthPx,
+                        top: screenCenter.y - 1,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.windowGlassLine,
+                      isSelected ? styles.windowElementSelected : null,
+                      {
+                        width: widthPx,
+                        left: screenCenter.x - halfWidthPx,
+                        top: screenCenter.y - glassOffsetPx - 1,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.windowGlassLine,
+                      isSelected ? styles.windowElementSelected : null,
+                      {
+                        width: widthPx,
+                        left: screenCenter.x - halfWidthPx,
+                        top: screenCenter.y + glassOffsetPx - 1,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.windowEndCap,
+                      isSelected ? styles.windowElementSelected : null,
+                      {
+                        left: screenCenter.x - halfWidthPx - 1,
+                        top: screenCenter.y - symbolOffsetPx,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.windowEndCap,
+                      isSelected ? styles.windowElementSelected : null,
+                      {
+                        left: screenCenter.x + halfWidthPx - 1,
+                        top: screenCenter.y - symbolOffsetPx,
+                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
+                      },
                     ]}
                   />
                 </React.Fragment>
@@ -2714,6 +3205,33 @@ const styles = StyleSheet.create({
     color: '#1D4ED8',
     fontWeight: '800',
   },
+  windowWidthControl: {
+    minHeight: 38,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#14B8A6',
+    backgroundColor: '#CCFBF1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  windowWidthLabel: {
+    color: '#0F766E',
+    fontWeight: '800',
+  },
+  windowWidthInput: {
+    minWidth: 72,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#5EEAD4',
+    backgroundColor: '#FFFFFF',
+    color: '#0F172A',
+    fontWeight: '800',
+  },
   toolButtonDisabled: {
     opacity: 0.5,
   },
@@ -2830,6 +3348,32 @@ const styles = StyleSheet.create({
   },
   doorHingeMarkerSelected: {
     backgroundColor: '#F97316',
+  },
+  windowOverlayLine: {
+    position: 'absolute',
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(20, 184, 166, 0.16)',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#0F766E',
+  },
+  windowGlassLine: {
+    position: 'absolute',
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: '#14B8A6',
+  },
+  windowEndCap: {
+    position: 'absolute',
+    width: 2,
+    height: 10,
+    borderRadius: 1,
+    backgroundColor: '#0F766E',
+  },
+  windowElementSelected: {
+    backgroundColor: '#F97316',
+    borderColor: '#F97316',
   },
   dimensionLabel: {
     position: 'absolute',
