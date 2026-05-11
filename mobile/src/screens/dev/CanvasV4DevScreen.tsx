@@ -9,6 +9,8 @@ type Point = {
 
 type ToolMode = 'idle' | 'line' | 'polyline' | 'select';
 type WallSegmentType = 'external' | 'internal';
+type WallAlignmentMode = 'inside' | 'center';
+type CornerJoinMode = 'bevel';
 
 type CanvasV4WallSegment = {
   entityId: string;
@@ -21,6 +23,8 @@ type CanvasV4WallSegment = {
   length: number;
   angle: number;
   wallThickness: number;
+  wallAlignmentMode: WallAlignmentMode;
+  cornerJoinMode: CornerJoinMode;
   segmentType: WallSegmentType;
   connectedSegmentIds: string[];
   doorIds: string[];
@@ -143,6 +147,7 @@ const LINE_DIMENSION_LABEL_WIDTH_PX = 68;
 const LINE_DIMENSION_LABEL_HEIGHT_PX = 24;
 const POINT_MATCH_EPSILON = 0.001;
 const DEFAULT_WALL_THICKNESS_MM = 100;
+const DEFAULT_CORNER_JOIN_MODE: CornerJoinMode = 'bevel';
 
 type LineScreenGeometry = {
   length: number;
@@ -151,6 +156,26 @@ type LineScreenGeometry = {
   angleDeg: number;
   screenStart: Point;
   screenEnd: Point;
+};
+
+type WallRenderGeometry = LineScreenGeometry & {
+  alignmentMode: WallAlignmentMode;
+  cornerJoinMode: CornerJoinMode;
+  wallThicknessPx: number;
+  renderCenterX: number;
+  renderCenterY: number;
+  outwardNormalScreen: Point;
+};
+
+type WallJoinNode = {
+  id: string;
+  point: Point;
+  segmentType: WallSegmentType;
+  wallThickness: number;
+  alignmentMode: WallAlignmentMode;
+  cornerJoinMode: CornerJoinMode;
+  segmentIds: string[];
+  outwardNormal: Point | null;
 };
 
 type DimensionLabelPlacementMode = 'line-normal-offset' | 'closed-contour-outside';
@@ -323,6 +348,31 @@ const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, en
 
 const arePointsEqual = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y) <= POINT_MATCH_EPSILON;
 
+const getWallAlignmentMode = (segmentType: WallSegmentType): WallAlignmentMode => (segmentType === 'external' ? 'inside' : 'center');
+
+const addPoints = (a: Point, b: Point): Point => ({ x: a.x + b.x, y: a.y + b.y });
+
+const scaleVector = (vector: Point, scale: number): Point => ({ x: vector.x * scale, y: vector.y * scale });
+
+const normalizeVector = (vector: Point): Point => {
+  const length = Math.hypot(vector.x, vector.y);
+
+  if (length <= 0.000001) {
+    return { x: 0, y: 0 };
+  }
+
+  return { x: vector.x / length, y: vector.y / length };
+};
+
+const getSegmentUnitAndLeftNormal = (startPoint: Point, endPoint: Point) => {
+  const dx = endPoint.x - startPoint.x;
+  const dy = endPoint.y - startPoint.y;
+  const length = Math.max(Math.hypot(dx, dy), 1);
+  const unit = { x: dx / length, y: dy / length };
+
+  return { unit, leftNormal: { x: -unit.y, y: unit.x } };
+};
+
 const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: WallSegmentType = 'internal', polylineId?: string): CanvasV4WallSegment => {
   const metrics = getLineMetrics(startPoint, endPoint);
   const segmentId = `wall-segment-${Date.now()}-${Math.round(Math.random() * 100000)}`;
@@ -338,6 +388,8 @@ const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: Wall
     length: metrics.length,
     angle: metrics.angle,
     wallThickness: DEFAULT_WALL_THICKNESS_MM,
+    wallAlignmentMode: getWallAlignmentMode(segmentType),
+    cornerJoinMode: DEFAULT_CORNER_JOIN_MODE,
     segmentType,
     connectedSegmentIds: [],
     doorIds: [],
@@ -630,6 +682,81 @@ const getClosedPolylineCentroidForEntity = (entity: CanvasV4LineEntity, entities
   return getPolygonCentroid(contourSegments.map((segment) => segment.startPoint));
 };
 
+
+const getEntityEndpoint = (entity: CanvasV4LineEntity, endpointKey: 'startPoint' | 'endPoint') => (endpointKey === 'startPoint' ? entity.startPoint : entity.endPoint);
+
+const getEntityOutwardNormal = (entity: CanvasV4LineEntity, entities: CanvasV4LineEntity[]): Point => {
+  const { leftNormal } = getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint);
+
+  if (entity.segmentType !== 'external') {
+    return leftNormal;
+  }
+
+  const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
+
+  if (!contourCentroid) {
+    return getPreferredOpenLineNormal(leftNormal);
+  }
+
+  const midpoint = {
+    x: (entity.startPoint.x + entity.endPoint.x) / 2,
+    y: (entity.startPoint.y + entity.endPoint.y) / 2,
+  };
+  const leftProbe = addPoints(midpoint, scaleVector(leftNormal, entity.wallThickness));
+  const rightNormal = scaleVector(leftNormal, -1);
+  const rightProbe = addPoints(midpoint, scaleVector(rightNormal, entity.wallThickness));
+  const leftDistance = Math.hypot(leftProbe.x - contourCentroid.x, leftProbe.y - contourCentroid.y);
+  const rightDistance = Math.hypot(rightProbe.x - contourCentroid.x, rightProbe.y - contourCentroid.y);
+
+  return leftDistance >= rightDistance ? leftNormal : rightNormal;
+};
+
+const getWallJoinNodes = (entities: CanvasV4LineEntity[]): WallJoinNode[] => {
+  const endpointGroups = new Map<string, Array<{ entity: CanvasV4LineEntity; endpointKey: 'startPoint' | 'endPoint' }>>();
+
+  entities.forEach((entity) => {
+    (['startPoint', 'endPoint'] as const).forEach((endpointKey) => {
+      const point = getEntityEndpoint(entity, endpointKey);
+      const key = `${point.x.toFixed(3)}:${point.y.toFixed(3)}`;
+      endpointGroups.set(key, [...(endpointGroups.get(key) ?? []), { entity, endpointKey }]);
+    });
+  });
+
+  return Array.from(endpointGroups.entries()).flatMap(([key, endpointGroup]) => {
+    if (endpointGroup.length < 2) {
+      return [];
+    }
+
+    const joinsByType = new Map<WallSegmentType, typeof endpointGroup>();
+    endpointGroup.forEach((endpoint) => {
+      joinsByType.set(endpoint.entity.segmentType, [...(joinsByType.get(endpoint.entity.segmentType) ?? []), endpoint]);
+    });
+
+    return Array.from(joinsByType.entries()).flatMap(([segmentType, typeGroup]) => {
+      if (typeGroup.length < 2) {
+        return [];
+      }
+
+      const firstEntity = typeGroup[0].entity;
+      const point = getEntityEndpoint(firstEntity, typeGroup[0].endpointKey);
+      const outwardNormal = segmentType === 'external'
+        ? normalizeVector(typeGroup.reduce<Point>((sum, endpoint) => addPoints(sum, getEntityOutwardNormal(endpoint.entity, entities)), { x: 0, y: 0 }))
+        : null;
+
+      return [{
+        id: `${key}:${segmentType}`,
+        point,
+        segmentType,
+        wallThickness: Math.max(...typeGroup.map((endpoint) => endpoint.entity.wallThickness)),
+        alignmentMode: getWallAlignmentMode(segmentType),
+        cornerJoinMode: DEFAULT_CORNER_JOIN_MODE,
+        segmentIds: typeGroup.map((endpoint) => endpoint.entity.segmentId).sort(),
+        outwardNormal,
+      }];
+    });
+  });
+};
+
 const normalizeDimensionLabelRotation = (angleDeg: number) => {
   const normalized = ((angleDeg + 180) % 360) - 180;
 
@@ -792,6 +919,53 @@ export const CanvasV4DevScreen = () => {
       return { length, centerX, centerY, angleDeg, screenStart, screenEnd };
     },
     [worldToScreen],
+  );
+
+  const getWallRenderGeometry = useCallback(
+    (entity: CanvasV4LineEntity): WallRenderGeometry => {
+      const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+      const wallThicknessPx = Math.max(entity.wallThickness * cameraZoom, 4);
+      const worldOutwardNormal = getEntityOutwardNormal(entity, entities);
+      const screenOutwardNormal = normalizeVector({ x: worldOutwardNormal.x, y: worldOutwardNormal.y });
+      const alignmentMode = entity.wallAlignmentMode ?? getWallAlignmentMode(entity.segmentType);
+      const offsetPx = alignmentMode === 'inside' ? wallThicknessPx / 2 : 0;
+
+      return {
+        ...geometry,
+        alignmentMode,
+        cornerJoinMode: entity.cornerJoinMode ?? DEFAULT_CORNER_JOIN_MODE,
+        wallThicknessPx,
+        renderCenterX: geometry.centerX + screenOutwardNormal.x * offsetPx,
+        renderCenterY: geometry.centerY + screenOutwardNormal.y * offsetPx,
+        outwardNormalScreen: screenOutwardNormal,
+      };
+    },
+    [cameraZoom, entities, getLineScreenGeometry],
+  );
+
+  const getPreviewWallRenderGeometry = useCallback(
+    (geometry: LineScreenGeometry): WallRenderGeometry => {
+      const wallThicknessPx = Math.max(DEFAULT_WALL_THICKNESS_MM * cameraZoom, 4);
+      const dx = previewLine ? previewLine.endPoint.x - previewLine.startPoint.x : 0;
+      const dy = previewLine ? previewLine.endPoint.y - previewLine.startPoint.y : 0;
+      const worldLength = Math.max(Math.hypot(dx, dy), 1);
+      const leftNormal = { x: -dy / worldLength, y: dx / worldLength };
+      const outwardNormal = newSegmentType === 'external' ? getPreferredOpenLineNormal(leftNormal) : leftNormal;
+      const screenOutwardNormal = normalizeVector(outwardNormal);
+      const alignmentMode = getWallAlignmentMode(newSegmentType);
+      const offsetPx = alignmentMode === 'inside' ? wallThicknessPx / 2 : 0;
+
+      return {
+        ...geometry,
+        alignmentMode,
+        cornerJoinMode: DEFAULT_CORNER_JOIN_MODE,
+        wallThicknessPx,
+        renderCenterX: geometry.centerX + screenOutwardNormal.x * offsetPx,
+        renderCenterY: geometry.centerY + screenOutwardNormal.y * offsetPx,
+        outwardNormalScreen: screenOutwardNormal,
+      };
+    },
+    [cameraZoom, newSegmentType, previewLine],
   );
 
   const getEntityDimensionLabelPlacement = useCallback(
@@ -1518,6 +1692,7 @@ export const CanvasV4DevScreen = () => {
   const previewLineLength = previewLine?.length ?? null;
   const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
   const previewDimensionLabelPlacement = previewGeometry ? getPreviewDimensionLabelPlacement(previewGeometry) : null;
+  const previewWallRenderGeometry = previewGeometry ? getPreviewWallRenderGeometry(previewGeometry) : null;
   const selectedDimensionLabelPlacement = selectedEntities.length === 1
     ? getEntityDimensionLabelPlacement(selectedEntities[0], getLineScreenGeometry(selectedEntities[0].startPoint, selectedEntities[0].endPoint))
     : null;
@@ -1535,8 +1710,11 @@ export const CanvasV4DevScreen = () => {
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedSegmentId: ${selectedSegment?.segmentId ?? 'null'}`,
+      `selectedSegmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
       `segmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
+      `wallAlignmentMode: ${selectedSegment?.wallAlignmentMode ?? getWallAlignmentMode(newSegmentType)}`,
       `wallThickness: ${selectedSegment ? `${selectedSegment.wallThickness} mm` : `${DEFAULT_WALL_THICKNESS_MM} mm (default)`}`,
+      `cornerJoinMode: ${selectedSegment?.cornerJoinMode ?? DEFAULT_CORNER_JOIN_MODE}`,
       `connectedSegmentIds: [${selectedSegment?.connectedSegmentIds.join(', ') || 'empty'}]`,
       `segmentLength: ${selectedSegment ? formatLineLength(selectedSegment.length) : 'null'}`,
       `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
@@ -1634,21 +1812,22 @@ export const CanvasV4DevScreen = () => {
     ? getNormalizedRect(worldToScreen({ x: selectedBoundingBox.minX, y: selectedBoundingBox.minY }), worldToScreen({ x: selectedBoundingBox.maxX, y: selectedBoundingBox.maxY }))
     : null;
   const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
+  const wallJoinNodes = getWallJoinNodes(entities);
 
   return (
     <View style={styles.root}>
-      <AppHeader title="Canvas V4 Dev" />
+      <AppHeader title="Canvas V4 — CAD-lite" />
 
       <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent}>
         <View style={styles.controlsRow}>
           <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)}>
-            <Text style={styles.controlButtonText}>Зум -</Text>
+            <Text style={styles.controlButtonText}>Масштаб -</Text>
           </Pressable>
           <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)}>
-            <Text style={styles.controlButtonText}>Зум +</Text>
+            <Text style={styles.controlButtonText}>Масштаб +</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, styles.resetButton]} onPress={resetView}>
-            <Text style={styles.controlButtonText}>Reset View</Text>
+            <Text style={styles.controlButtonText}>Сброс вида</Text>
             <Text style={styles.controlButtonSubtext}>{((cameraZoom / DEFAULT_ZOOM) * 100).toFixed(0)}%</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, !isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
@@ -1658,7 +1837,7 @@ export const CanvasV4DevScreen = () => {
             <Text style={styles.controlButtonText}>{showLineDimensions ? 'Скрыть размеры' : 'Показать размеры'}</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, isInspectorVisible ? styles.controlButtonActive : null]} onPress={() => setInspectorVisible((current) => !current)}>
-            <Text style={styles.controlButtonText}>{isInspectorVisible ? 'Скрыть Inspector' : 'Inspector'}</Text>
+            <Text style={styles.controlButtonText}>{isInspectorVisible ? 'Скрыть инспектор' : 'Инспектор'}</Text>
           </Pressable>
         </View>
 
@@ -1666,14 +1845,14 @@ export const CanvasV4DevScreen = () => {
           {(['idle', 'line', 'polyline', 'select'] as ToolMode[]).map((mode) => (
             <Pressable key={mode} style={[styles.toolButton, currentToolMode === mode ? styles.toolButtonActive : null]} onPress={() => setToolMode(mode)}>
               <Text style={[styles.toolButtonText, currentToolMode === mode ? styles.toolButtonTextActive : null]}>
-                {mode === 'idle' ? 'Idle' : mode === 'line' ? 'Wall Segment' : mode === 'polyline' ? 'Wall Polyline' : 'Выбор'}
+                {mode === 'idle' ? 'Рука' : mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : 'Выбор'}
               </Text>
             </Pressable>
           ))}
           {(['internal', 'external'] as WallSegmentType[]).map((segmentType) => (
             <Pressable key={segmentType} style={[styles.toolButton, newSegmentType === segmentType ? styles.segmentTypeButtonActive : null]} onPress={() => setNewSegmentType(segmentType)}>
               <Text style={[styles.toolButtonText, newSegmentType === segmentType ? styles.segmentTypeButtonTextActive : null]}>
-                {segmentType === 'internal' ? 'Internal 100 мм' : 'External 100 мм'}
+                {segmentType === 'internal' ? 'Перегородка 100 мм' : 'Наружная 100 мм'}
               </Text>
             </Pressable>
           ))}
@@ -1708,6 +1887,7 @@ export const CanvasV4DevScreen = () => {
 
             {entities.map((entity) => {
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+              const wallRenderGeometry = getWallRenderGeometry(entity);
               const dimensionLabelPlacement = getEntityDimensionLabelPlacement(entity, geometry);
               const isSelected = selectedEntityIdSet.has(entity.entityId);
 
@@ -1721,9 +1901,9 @@ export const CanvasV4DevScreen = () => {
                       isSelected ? styles.wallSegmentSelected : null,
                       {
                         width: Math.max(geometry.length, 1),
-                        height: Math.max(entity.wallThickness * cameraZoom, 4),
-                        left: geometry.centerX - geometry.length / 2,
-                        top: geometry.centerY - Math.max(entity.wallThickness * cameraZoom, 4) / 2,
+                        height: wallRenderGeometry.wallThicknessPx,
+                        left: wallRenderGeometry.renderCenterX - wallRenderGeometry.length / 2,
+                        top: wallRenderGeometry.renderCenterY - wallRenderGeometry.wallThicknessPx / 2,
                         transform: [{ rotate: `${geometry.angleDeg}deg` }],
                       },
                     ]}
@@ -1761,7 +1941,33 @@ export const CanvasV4DevScreen = () => {
               );
             })}
 
-            {previewLine && previewGeometry ? (
+            {wallJoinNodes.map((joinNode) => {
+              const joinScreenPoint = worldToScreen(joinNode.point);
+              const joinSize = Math.max(joinNode.wallThickness * cameraZoom, 4);
+              const joinOffset = joinNode.alignmentMode === 'inside' && joinNode.outwardNormal
+                ? scaleVector(normalizeVector(joinNode.outwardNormal), joinSize / 2)
+                : { x: 0, y: 0 };
+              const joinCenter = addPoints(joinScreenPoint, joinOffset);
+
+              return (
+                <View
+                  key={joinNode.id}
+                  pointerEvents="none"
+                  style={[
+                    styles.wallCornerJoin,
+                    joinNode.segmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
+                    {
+                      width: joinSize,
+                      height: joinSize,
+                      left: joinCenter.x - joinSize / 2,
+                      top: joinCenter.y - joinSize / 2,
+                    },
+                  ]}
+                />
+              );
+            })}
+
+            {previewLine && previewGeometry && previewWallRenderGeometry ? (
               <React.Fragment>
                 <View
                   pointerEvents="none"
@@ -1769,10 +1975,10 @@ export const CanvasV4DevScreen = () => {
                     styles.previewWallSegment,
                     newSegmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
                     {
-                      width: Math.max(previewGeometry.length, 1),
-                      height: Math.max(DEFAULT_WALL_THICKNESS_MM * cameraZoom, 4),
-                      left: previewGeometry.centerX - previewGeometry.length / 2,
-                      top: previewGeometry.centerY - Math.max(DEFAULT_WALL_THICKNESS_MM * cameraZoom, 4) / 2,
+                      width: Math.max(previewWallRenderGeometry.length, 1),
+                      height: previewWallRenderGeometry.wallThicknessPx,
+                      left: previewWallRenderGeometry.renderCenterX - previewWallRenderGeometry.length / 2,
+                      top: previewWallRenderGeometry.renderCenterY - previewWallRenderGeometry.wallThicknessPx / 2,
                       transform: [{ rotate: `${previewGeometry.angleDeg}deg` }],
                     },
                   ]}
@@ -1851,7 +2057,7 @@ export const CanvasV4DevScreen = () => {
 
             {isInspectorVisible ? (
               <View style={styles.inspectorPanel} pointerEvents="none">
-                <Text style={styles.inspectorTitle}>Dev Inspector</Text>
+                <Text style={styles.inspectorTitle}>Dev-инспектор</Text>
                 {inspectorLines.map((line) => (
                   <Text key={line} style={styles.inspectorLine}>{line}</Text>
                 ))}
@@ -1861,8 +2067,8 @@ export const CanvasV4DevScreen = () => {
         </View>
 
         <View style={styles.metaPanel}>
-          <Text style={styles.metaTitle}>Canvas V4 CAD-lite wall segment sandbox</Text>
-          <Text style={styles.metaText}>Чистая dev-сцена с базовыми WallSegment, endpoint connectivity и будущими door/window attachment ids — без Room Engine, Surface Scene, split, wall graph и SmetMaster logic. ЛКМ/тап — действие инструмента, drag — pan, wheel/кнопки — zoom.</Text>
+          <Text style={styles.metaTitle}>Canvas V4 CAD-lite: стены</Text>
+          <Text style={styles.metaText}>Чистая dev-сцена с базовыми WallSegment, endpoint connectivity и будущими door/window attachment ids — без Room Engine, Surface Scene, split, wall graph и SmetMaster logic. ЛКМ/тап — действие инструмента, перетаскивание — панорамирование, колесо/кнопки — зум.</Text>
         </View>
       </ScrollView>
     </View>
@@ -2011,6 +2217,11 @@ const styles = StyleSheet.create({
   externalWallSegment: {
     backgroundColor: 'rgba(3, 105, 161, 0.22)',
     borderColor: '#0369A1',
+  },
+  wallCornerJoin: {
+    position: 'absolute',
+    borderRadius: 2,
+    borderWidth: 1,
   },
   wallSegmentSelected: {
     backgroundColor: 'rgba(249, 115, 22, 0.25)',
