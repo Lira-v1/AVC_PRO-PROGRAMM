@@ -20,10 +20,11 @@ type CanvasV4LineEntity = {
   angle: number;
 };
 
-type UndoAction =
-  | { type: 'CREATE_LINE'; entityId: string }
-  | { type: 'CREATE_POLYLINE_SEGMENT'; entityId: string }
-  | { type: 'DELETE_ENTITY'; entity: CanvasV4LineEntity; index: number };
+type HistoryAction =
+  | { type: 'CREATE_LINE'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'CREATE_POLYLINE_SEGMENT'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'DELETE_LINE'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'DELETE_SELECTED_LINES'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
 
@@ -40,14 +41,23 @@ type EndpointSnapTarget = {
   distance: number;
 };
 
+type InteractionMode = 'pan' | 'selection-box';
+
 type DragSession = {
   started: boolean;
   moved: boolean;
   pointerId: number | null;
+  interactionMode: InteractionMode;
   startX: number;
   startY: number;
   lastX: number;
   lastY: number;
+};
+
+type SelectionBoxState = {
+  active: boolean;
+  startPoint: Point;
+  currentPoint: Point;
 };
 
 const GRID_STEP_MM = 100;
@@ -66,6 +76,7 @@ const EMPTY_DRAG_SESSION: DragSession = {
   started: false,
   moved: false,
   pointerId: null,
+  interactionMode: 'pan',
   startX: 0,
   startY: 0,
   lastX: 0,
@@ -198,6 +209,25 @@ const createLineEntity = (startPoint: Point, endPoint: Point, entityType: Canvas
   };
 };
 
+
+const getNormalizedRect = (startPoint: Point, endPoint: Point) => ({
+  minX: Math.min(startPoint.x, endPoint.x),
+  maxX: Math.max(startPoint.x, endPoint.x),
+  minY: Math.min(startPoint.y, endPoint.y),
+  maxY: Math.max(startPoint.y, endPoint.y),
+});
+
+const isLineFullyInsideRect = (entity: CanvasV4LineEntity, rect: ReturnType<typeof getNormalizedRect>) => {
+  const isPointInside = (point: Point) => point.x >= rect.minX && point.x <= rect.maxX && point.y >= rect.minY && point.y <= rect.maxY;
+  return isPointInside(entity.startPoint) && isPointInside(entity.endPoint);
+};
+
+const insertEntityAtIndex = (entities: CanvasV4LineEntity[], entity: CanvasV4LineEntity, index: number) => {
+  const next = entities.filter((item) => item.entityId !== entity.entityId);
+  next.splice(Math.min(index, next.length), 0, entity);
+  return next;
+};
+
 const getDistanceToSegment = (point: Point, startPoint: Point, endPoint: Point) => {
   const dx = endPoint.x - startPoint.x;
   const dy = endPoint.y - startPoint.y;
@@ -233,13 +263,17 @@ export const CanvasV4DevScreen = () => {
   const [isInspectorVisible, setInspectorVisible] = useState(true);
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('idle');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
   const [lineStartPoint, setLineStartPoint] = useState<Point | null>(null);
   const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null);
   const [activePolylineId, setActivePolylineId] = useState<string | null>(null);
   const [pointerWorldPoint, setPointerWorldPoint] = useState<Point | null>(null);
   const [lastActionType, setLastActionType] = useState<string>('INIT_CANVAS_V4');
-  const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
+  const [undoStack, setUndoStack] = useState<HistoryAction[]>([]);
+  const [redoStack, setRedoStack] = useState<HistoryAction[]>([]);
+  const [lastUndoAction, setLastUndoAction] = useState<string>('null');
+  const [lastRedoAction, setLastRedoAction] = useState<string>('null');
+  const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -327,8 +361,11 @@ export const CanvasV4DevScreen = () => {
     return lines;
   }, [isGridVisible, screenToWorld, viewport.height, viewport.width, worldToScreen]);
 
-  const pushUndo = useCallback((action: UndoAction) => {
-    setUndoAction(action);
+  const pushHistoryAction = useCallback((action: HistoryAction) => {
+    setUndoStack((current) => [...current, action]);
+    setRedoStack([]);
+    setLastUndoAction('null');
+    setLastRedoAction('null');
     setLastActionType(action.type);
   }, []);
 
@@ -354,48 +391,111 @@ export const CanvasV4DevScreen = () => {
     setLastActionType('RESET_VIEW');
   }, []);
 
-  const deleteSelectedEntity = useCallback(() => {
-    if (!selectedEntityId) {
+  const deleteSelectedEntities = useCallback(() => {
+    if (selectedEntityIds.length === 0) {
       return;
     }
 
-    setEntities((current) => {
-      const index = current.findIndex((entity) => entity.entityId === selectedEntityId);
+    const selectedSet = new Set(selectedEntityIds);
+    const deletedEntities = entities
+      .map((entity, index) => ({ entity, index }))
+      .filter(({ entity }) => selectedSet.has(entity.entityId));
 
-      if (index === -1) {
-        return current;
-      }
+    if (deletedEntities.length === 0) {
+      return;
+    }
 
-      const entity = current[index];
-      setUndoAction({ type: 'DELETE_ENTITY', entity, index });
-      setLastActionType('DELETE_ENTITY');
-      return current.filter((item) => item.entityId !== selectedEntityId);
-    });
-    setSelectedEntityId(null);
-  }, [selectedEntityId]);
+    const action: HistoryAction =
+      deletedEntities.length === 1
+        ? { type: 'DELETE_LINE', entity: deletedEntities[0].entity, index: deletedEntities[0].index }
+        : { type: 'DELETE_SELECTED_LINES', entities: deletedEntities };
+
+    pushHistoryAction(action);
+    setEntities((current) => current.filter((entity) => !selectedSet.has(entity.entityId)));
+    setSelectedEntityIds([]);
+  }, [entities, pushHistoryAction, selectedEntityIds]);
+
+  const applyHistoryUndo = useCallback((action: HistoryAction) => {
+    if (action.type === 'CREATE_LINE' || action.type === 'CREATE_POLYLINE_SEGMENT') {
+      setEntities((current) => current.filter((entity) => entity.entityId !== action.entity.entityId));
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    if (action.type === 'DELETE_LINE') {
+      setEntities((current) => insertEntityAtIndex(current, action.entity, action.index));
+      setSelectedEntityIds([action.entity.entityId]);
+      return;
+    }
+
+    setEntities((current) =>
+      [...action.entities]
+        .sort((a, b) => a.index - b.index)
+        .reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
+    );
+    setSelectedEntityIds(action.entities.map(({ entity }) => entity.entityId));
+  }, []);
+
+  const applyHistoryRedo = useCallback((action: HistoryAction) => {
+    if (action.type === 'CREATE_LINE' || action.type === 'CREATE_POLYLINE_SEGMENT') {
+      setEntities((current) => insertEntityAtIndex(current, action.entity, action.index));
+      setSelectedEntityIds([action.entity.entityId]);
+      return;
+    }
+
+    if (action.type === 'DELETE_LINE') {
+      setEntities((current) => current.filter((entity) => entity.entityId !== action.entity.entityId));
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    const deletedEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
+    setEntities((current) => current.filter((entity) => !deletedEntityIds.has(entity.entityId)));
+    setSelectedEntityIds([]);
+  }, []);
 
   const undoLastAction = useCallback(() => {
-    if (!undoAction) {
+    const action = undoStack[undoStack.length - 1];
+
+    if (!action) {
       return;
     }
 
-    if (undoAction.type === 'CREATE_LINE' || undoAction.type === 'CREATE_POLYLINE_SEGMENT') {
-      setEntities((current) => current.filter((entity) => entity.entityId !== undoAction.entityId));
-      setSelectedEntityId(null);
+    applyHistoryUndo(action);
+    setUndoStack((current) => current.slice(0, -1));
+    setRedoStack((current) => [...current, action]);
+    setLastUndoAction(action.type);
+    setLastRedoAction('null');
+    setLastActionType(`UNDO_${action.type}`);
+  }, [applyHistoryUndo, undoStack]);
+
+  const redoLastAction = useCallback(() => {
+    const action = redoStack[redoStack.length - 1];
+
+    if (!action) {
+      return;
     }
 
-    if (undoAction.type === 'DELETE_ENTITY') {
-      setEntities((current) => {
-        const next = [...current];
-        next.splice(Math.min(undoAction.index, next.length), 0, undoAction.entity);
-        return next;
-      });
-      setSelectedEntityId(undoAction.entity.entityId);
-    }
+    applyHistoryRedo(action);
+    setRedoStack((current) => current.slice(0, -1));
+    setUndoStack((current) => [...current, action]);
+    setLastRedoAction(action.type);
+    setLastUndoAction('null');
+    setLastActionType(`REDO_${action.type}`);
+  }, [applyHistoryRedo, redoStack]);
 
-    setUndoAction(null);
-    setLastActionType(`UNDO_${undoAction.type}`);
-  }, [undoAction]);
+  const selectEntitiesInsideBox = useCallback(
+    (startPoint: Point, endPoint: Point) => {
+      const worldStart = screenToWorld(startPoint);
+      const worldEnd = screenToWorld(endPoint);
+      const worldRect = getNormalizedRect(worldStart, worldEnd);
+      const nextSelectedIds = entities.filter((entity) => isLineFullyInsideRect(entity, worldRect)).map((entity) => entity.entityId);
+
+      setSelectedEntityIds(nextSelectedIds);
+      setLastActionType(nextSelectedIds.length > 0 ? 'SELECTION_BOX_SELECT' : 'SELECTION_BOX_CLEAR');
+    },
+    [entities, screenToWorld],
+  );
 
   const finishClick = useCallback(
     (screenPoint: Point) => {
@@ -406,17 +506,17 @@ export const CanvasV4DevScreen = () => {
       if (currentToolMode === 'line') {
         if (!lineStartPoint) {
           setLineStartPoint(clickSnap.point);
-          setSelectedEntityId(null);
+          setSelectedEntityIds([]);
           setLastActionType('SET_LINE_START');
           return;
         }
 
         const endPoint = clickSnap.point;
         const entity = createLineEntity(lineStartPoint, endPoint, 'line');
+        pushHistoryAction({ type: 'CREATE_LINE', entity, index: entities.length });
         setEntities((current) => [...current, entity]);
         setLineStartPoint(null);
-        setSelectedEntityId(entity.entityId);
-        pushUndo({ type: 'CREATE_LINE', entityId: entity.entityId });
+        setSelectedEntityIds([entity.entityId]);
         return;
       }
 
@@ -424,31 +524,31 @@ export const CanvasV4DevScreen = () => {
         if (!polylineLastPoint) {
           setPolylineLastPoint(clickSnap.point);
           setActivePolylineId(`polyline-${Date.now()}`);
-          setSelectedEntityId(null);
+          setSelectedEntityIds([]);
           setLastActionType('SET_POLYLINE_START');
           return;
         }
 
         const endPoint = clickSnap.point;
         const entity = createLineEntity(polylineLastPoint, endPoint, 'polyline-segment', activePolylineId ?? undefined);
+        pushHistoryAction({ type: 'CREATE_POLYLINE_SEGMENT', entity, index: entities.length });
         setEntities((current) => [...current, entity]);
         setPolylineLastPoint(endPoint);
-        setSelectedEntityId(entity.entityId);
-        pushUndo({ type: 'CREATE_POLYLINE_SEGMENT', entityId: entity.entityId });
+        setSelectedEntityIds([entity.entityId]);
         return;
       }
 
       if (currentToolMode === 'select') {
-        const hitEntityId = findEntityAtWorldPoint(clickSnap.point);
-        setSelectedEntityId(hitEntityId);
+        const hitEntityId = findEntityAtWorldPoint(rawWorldPoint);
+        setSelectedEntityIds(hitEntityId ? [hitEntityId] : []);
         setLastActionType(hitEntityId ? 'SELECT_ENTITY' : 'CLEAR_SELECTION');
         return;
       }
 
-      setSelectedEntityId(null);
+      setSelectedEntityIds([]);
       setLastActionType('IDLE_TAP');
     },
-    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, polylineLastPoint, pushUndo, screenToWorld],
+    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, polylineLastPoint, pushHistoryAction, screenToWorld],
   );
 
   const setToolMode = useCallback((mode: ToolMode) => {
@@ -457,6 +557,7 @@ export const CanvasV4DevScreen = () => {
     setPolylineLastPoint(null);
     setActivePolylineId(null);
     setPointerWorldPoint(null);
+    setSelectionBox(null);
     setLastActionType(`SET_TOOL_${mode.toUpperCase()}`);
   }, []);
 
@@ -467,18 +568,24 @@ export const CanvasV4DevScreen = () => {
 
   const beginInteraction = useCallback(
     (screenPoint: Point, pointerId?: number) => {
+      const rawWorldPoint = screenToWorld(screenPoint);
+      const hitEntityId = currentToolMode === 'select' ? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const interactionMode: InteractionMode = currentToolMode === 'select' && !hitEntityId ? 'selection-box' : 'pan';
+
       dragSessionRef.current = {
         started: true,
         moved: false,
         pointerId: pointerId ?? null,
+        interactionMode,
         startX: screenPoint.x,
         startY: screenPoint.y,
         lastX: screenPoint.x,
         lastY: screenPoint.y,
       };
-      setPointerWorldPoint(screenToWorld(screenPoint));
+      setPointerWorldPoint(rawWorldPoint);
+      setSelectionBox(null);
     },
-    [screenToWorld],
+    [currentToolMode, findEntityAtWorldPoint, screenToWorld],
   );
 
   const moveInteraction = useCallback(
@@ -503,10 +610,22 @@ export const CanvasV4DevScreen = () => {
       };
       setPointerWorldPoint(screenToWorld(screenPoint));
 
-      if (moved) {
-        setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }));
-        setLastActionType('PAN_CHANGE');
+      if (!moved) {
+        return;
       }
+
+      if (session.interactionMode === 'selection-box') {
+        setSelectionBox({
+          active: true,
+          startPoint: { x: session.startX, y: session.startY },
+          currentPoint: screenPoint,
+        });
+        setLastActionType('SELECTION_BOX_DRAG');
+        return;
+      }
+
+      setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }));
+      setLastActionType('PAN_CHANGE');
     },
     [screenToWorld],
   );
@@ -521,13 +640,16 @@ export const CanvasV4DevScreen = () => {
 
       setPointerWorldPoint(screenToWorld(screenPoint));
 
-      if (!session.moved) {
+      if (session.interactionMode === 'selection-box' && session.moved) {
+        selectEntitiesInsideBox({ x: session.startX, y: session.startY }, screenPoint);
+      } else if (!session.moved) {
         finishClick(screenPoint);
       }
 
+      setSelectionBox(null);
       dragSessionRef.current = EMPTY_DRAG_SESSION;
     },
-    [finishClick, screenToWorld],
+    [finishClick, screenToWorld, selectEntitiesInsideBox],
   );
 
   const responderHandlers = useMemo(
@@ -581,25 +703,40 @@ export const CanvasV4DevScreen = () => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
-        deleteSelectedEntity();
+        deleteSelectedEntities();
       }
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
         event.preventDefault();
-        undoLastAction();
+        if (event.shiftKey) {
+          redoLastAction();
+        } else {
+          undoLastAction();
+        }
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        redoLastAction();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deleteSelectedEntity, undoLastAction]);
+  }, [deleteSelectedEntities, redoLastAction, undoLastAction]);
 
   const inspectorLines = useMemo(
     () => [
       `currentToolMode: ${currentToolMode}`,
       `entitiesCount: ${entities.length}`,
-      `selectedEntityId: ${selectedEntityId ?? 'null'}`,
+      `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
+      `selectedCount: ${selectedEntityIds.length}`,
+      `undoStackSize: ${undoStack.length}`,
+      `redoStackSize: ${redoStack.length}`,
+      `lastUndoAction: ${lastUndoAction}`,
+      `lastRedoAction: ${lastRedoAction}`,
+      `selectionBoxActive: ${selectionBox?.active ? 'true' : 'false'}`,
       `lastActionType: ${lastActionType}`,
       `cameraZoom: ${cameraZoom.toFixed(3)}`,
       `displayZoom: ${((cameraZoom / DEFAULT_ZOOM) * 100).toFixed(0)}%`,
@@ -613,12 +750,33 @@ export const CanvasV4DevScreen = () => {
       `previewLineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
       `previewLineLength: ${previewLine ? `${previewLine.length.toFixed(0)} mm` : 'null'}`,
     ],
-    [activeSnap.activeSnapDistance, activeSnap.activeSnapTargetId, activeSnap.activeSnapType, cameraZoom, currentToolMode, entities.length, lastActionType, lineStartPoint, pan.x, pan.y, polylineLastPoint, previewLine, selectedEntityId],
+    [
+      activeSnap.activeSnapDistance,
+      activeSnap.activeSnapTargetId,
+      activeSnap.activeSnapType,
+      cameraZoom,
+      currentToolMode,
+      entities.length,
+      lastActionType,
+      lastRedoAction,
+      lastUndoAction,
+      lineStartPoint,
+      pan.x,
+      pan.y,
+      polylineLastPoint,
+      previewLine,
+      redoStack.length,
+      selectedEntityIds,
+      selectionBox?.active,
+      undoStack.length,
+    ],
   );
 
   const canvasHeight = Math.max(Math.min(windowHeight * 0.62, 720), 420);
   const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
   const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
+  const selectedEntityIdSet = new Set(selectedEntityIds);
+  const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
 
   return (
     <View style={styles.root}>
@@ -652,11 +810,14 @@ export const CanvasV4DevScreen = () => {
               </Text>
             </Pressable>
           ))}
-          <Pressable style={[styles.toolButton, selectedEntityId ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntity} disabled={!selectedEntityId}>
-            <Text style={[styles.toolButtonText, selectedEntityId ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
+          <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0}>
+            <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
           </Pressable>
-          <Pressable style={[styles.toolButton, undoAction ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={!undoAction}>
-            <Text style={[styles.toolButtonText, undoAction ? styles.undoButtonText : styles.toolButtonDisabledText]}>Undo</Text>
+          <Pressable style={[styles.toolButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
+            <Text style={[styles.toolButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶ Отменить</Text>
+          </Pressable>
+          <Pressable style={[styles.toolButton, redoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={redoLastAction} disabled={redoStack.length === 0}>
+            <Text style={[styles.toolButtonText, redoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↷ Повторить</Text>
           </Pressable>
         </View>
 
@@ -680,7 +841,7 @@ export const CanvasV4DevScreen = () => {
 
             {entities.map((entity) => {
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-              const isSelected = selectedEntityId === entity.entityId;
+              const isSelected = selectedEntityIdSet.has(entity.entityId);
 
               return (
                 <View
@@ -719,6 +880,21 @@ export const CanvasV4DevScreen = () => {
             {lineStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, { left: worldToScreen(lineStartPoint).x - 5, top: worldToScreen(lineStartPoint).y - 5 }]} /> : null}
             {polylineLastPoint ? <View pointerEvents="none" style={[styles.anchorPoint, styles.polylineAnchor, { left: worldToScreen(polylineLastPoint).x - 5, top: worldToScreen(polylineLastPoint).y - 5 }]} /> : null}
             {endpointSnapScreenPoint ? <View pointerEvents="none" style={[styles.endpointSnapMarker, { left: endpointSnapScreenPoint.x - 8, top: endpointSnapScreenPoint.y - 8 }]} /> : null}
+
+            {selectionBoxRect ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.selectionBox,
+                  {
+                    left: selectionBoxRect.minX,
+                    top: selectionBoxRect.minY,
+                    width: Math.max(selectionBoxRect.maxX - selectionBoxRect.minX, 1),
+                    height: Math.max(selectionBoxRect.maxY - selectionBoxRect.minY, 1),
+                  },
+                ]}
+              />
+            ) : null}
 
             {isInspectorVisible ? (
               <View style={styles.inspectorPanel} pointerEvents="box-none">
@@ -909,6 +1085,13 @@ const styles = StyleSheet.create({
     shadowColor: '#FACC15',
     shadowOpacity: 0.45,
     shadowRadius: 6,
+  },
+  selectionBox: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#2563EB',
+    backgroundColor: 'rgba(37, 99, 235, 0.12)',
   },
   inspectorPanel: {
     position: 'absolute',
