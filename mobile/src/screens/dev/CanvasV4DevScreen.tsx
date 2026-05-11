@@ -60,6 +60,7 @@ type EndpointSnapTarget = {
 };
 
 type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection';
+type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'empty-canvas';
 type SelectionMode = 'single' | 'box' | 'move';
 type LastInteractionType =
   | 'init'
@@ -830,7 +831,7 @@ export const CanvasV4DevScreen = () => {
   const [isGridVisible, setGridVisible] = useState(true);
   const [showLineDimensions, setShowLineDimensions] = useState(true);
   const [isInspectorVisible, setInspectorVisible] = useState(false);
-  const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('idle');
+  const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('select');
   const [newSegmentType, setNewSegmentType] = useState<WallSegmentType>('internal');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
   const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
@@ -856,6 +857,8 @@ export const CanvasV4DevScreen = () => {
   const [isResizing, setIsResizing] = useState(false);
   const [resizeAxis, setResizeAxis] = useState<ResizeAxis>('none');
   const [resizeScale, setResizeScale] = useState({ x: 1, y: 1 });
+  const [hitTestTargetType, setHitTestTargetType] = useState<HitTestTargetType>('empty-canvas');
+  const [lastHitTestEntityId, setLastHitTestEntityId] = useState<string | null>(null);
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -1248,6 +1251,8 @@ export const CanvasV4DevScreen = () => {
       if (!isDrawingTool) {
         const hitEntityId = findEntityAtWorldPoint(rawWorldPoint);
         const now = Date.now();
+        setHitTestTargetType(hitEntityId && selectedEntityIds.includes(hitEntityId) ? 'selected-geometry' : hitEntityId ? 'wall-geometry' : 'empty-canvas');
+        setLastHitTestEntityId(hitEntityId);
 
         if (hitEntityId) {
           setSelectedEntityIds([hitEntityId]);
@@ -1278,7 +1283,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld],
+    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds],
   );
 
   const setToolMode = useCallback((mode: ToolMode) => {
@@ -1312,8 +1317,19 @@ export const CanvasV4DevScreen = () => {
       const transformHandle = isNavigationSelectionMode ? findTransformHandleAtScreenPoint(screenPoint) : null;
       const isLineResize = !!transformHandle && selectedEntities.length === 1;
       const isSelectionResize = !!transformHandle && selectedEntities.length > 1;
-      const hitEntityId = isNavigationSelectionMode && !transformHandle ? findEntityAtWorldPoint(rawWorldPoint) : null;
-      const shouldMoveSelection = isNavigationSelectionMode && !!hitEntityId && selectedSet.has(hitEntityId);
+      const tolerance = HIT_TOLERANCE_PX / cameraZoom;
+      const hitSelectedEntityId = isNavigationSelectionMode && !transformHandle
+        ? [...selectedEntities].reverse().find((entity) => getDistanceToSegment(rawWorldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null
+        : null;
+      const hitEntityId = isNavigationSelectionMode && !transformHandle ? hitSelectedEntityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const shouldMoveSelection = isNavigationSelectionMode && !!hitSelectedEntityId && selectedSet.has(hitSelectedEntityId);
+      const hitTargetType: HitTestTargetType = transformHandle
+        ? 'resize-handle'
+        : hitSelectedEntityId
+          ? 'selected-geometry'
+          : hitEntityId
+            ? 'wall-geometry'
+            : 'empty-canvas';
       const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitEntityId;
       const initialInteractionMode: InteractionMode = isLineResize
         ? 'resize-line'
@@ -1350,6 +1366,8 @@ export const CanvasV4DevScreen = () => {
         isPanningCanvas: false,
       };
       setPointerWorldPoint(rawWorldPoint);
+      setHitTestTargetType(hitTargetType);
+      setLastHitTestEntityId(hitEntityId);
       setInteractionMode(initialInteractionMode);
       setIsPanningCanvas(false);
       setSelectionBox(null);
@@ -1361,7 +1379,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis(transformHandle?.axis ?? 'none');
       setResizeScale({ x: 1, y: 1 });
     },
-    [currentToolMode, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, screenToWorld, selectedBoundingBox, selectedEntities, selectedEntityIds],
+    [cameraZoom, currentToolMode, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, screenToWorld, selectedBoundingBox, selectedEntities, selectedEntityIds],
   );
 
   const moveInteraction = useCallback(
@@ -1707,6 +1725,11 @@ export const CanvasV4DevScreen = () => {
       `isSelectionBoxActive: ${selectionBox?.active ? 'true' : 'false'}`,
       `lastInteractionType: ${lastInteractionType}`,
       `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
+      'dimensionLabelsInteractive: false',
+      `hitTestTargetType: ${hitTestTargetType}`,
+      `lastHitTestEntityId: ${lastHitTestEntityId ?? 'null'}`,
+      'compassVisible: true',
+      'compassMode: visual-only',
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedSegmentId: ${selectedSegment?.segmentId ?? 'null'}`,
@@ -1776,10 +1799,12 @@ export const CanvasV4DevScreen = () => {
       lastRedoAction,
       lastUndoAction,
       inspectedDimensionLabelPlacement,
+      hitTestTargetType,
       interactionMode,
       isPanningCanvas,
       isMovingSelection,
       lastInteractionType,
+      lastHitTestEntityId,
       lastMoveAction,
       lineStartPoint,
       moveDeltaMm.x,
@@ -1842,10 +1867,10 @@ export const CanvasV4DevScreen = () => {
         </View>
 
         <View style={styles.toolRow}>
-          {(['idle', 'line', 'polyline', 'select'] as ToolMode[]).map((mode) => (
+          {(['select', 'line', 'polyline'] as ToolMode[]).map((mode) => (
             <Pressable key={mode} style={[styles.toolButton, currentToolMode === mode ? styles.toolButtonActive : null]} onPress={() => setToolMode(mode)}>
               <Text style={[styles.toolButtonText, currentToolMode === mode ? styles.toolButtonTextActive : null]}>
-                {mode === 'idle' ? 'Рука' : mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : 'Выбор'}
+                {mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : 'Выбор'}
               </Text>
             </Pressable>
           ))}
@@ -1926,7 +1951,6 @@ export const CanvasV4DevScreen = () => {
                       pointerEvents="none"
                       style={[
                         styles.dimensionLabel,
-                        isSelected ? styles.dimensionLabelSelected : null,
                         {
                           left: dimensionLabelPlacement.left,
                           top: dimensionLabelPlacement.top,
@@ -1934,7 +1958,7 @@ export const CanvasV4DevScreen = () => {
                         },
                       ]}
                     >
-                      <Text style={[styles.dimensionLabelText, isSelected ? styles.dimensionLabelTextSelected : null]}>{formatLineLength(entity.length)}</Text>
+                      <Text style={styles.dimensionLabelText}>{formatLineLength(entity.length)}</Text>
                     </View>
                   ) : null}
                 </React.Fragment>
@@ -2054,6 +2078,16 @@ export const CanvasV4DevScreen = () => {
                 ]}
               />
             ) : null}
+
+            <View style={styles.compassOverlay} pointerEvents="none">
+              <Text style={[styles.compassLabel, styles.compassNorth]}>С</Text>
+              <Text style={[styles.compassLabel, styles.compassSouth]}>Ю</Text>
+              <Text style={[styles.compassLabel, styles.compassWest]}>З</Text>
+              <Text style={[styles.compassLabel, styles.compassEast]}>В</Text>
+              <View style={styles.compassVerticalAxis} />
+              <View style={styles.compassHorizontalAxis} />
+              <View style={styles.compassNeedle} />
+            </View>
 
             {isInspectorVisible ? (
               <View style={styles.inspectorPanel} pointerEvents="none">
@@ -2338,6 +2372,73 @@ const styles = StyleSheet.create({
   transformHandleActive: {
     backgroundColor: '#22C55E',
     shadowColor: '#22C55E',
+  },
+  compassOverlay: {
+    position: 'absolute',
+    left: 14,
+    bottom: 14,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255, 255, 255, 0.86)',
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.28)',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+  },
+  compassLabel: {
+    position: 'absolute',
+    color: '#1D4ED8',
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  compassNorth: {
+    top: 5,
+    left: 0,
+    right: 0,
+  },
+  compassSouth: {
+    bottom: 5,
+    left: 0,
+    right: 0,
+  },
+  compassWest: {
+    left: 8,
+    top: 27,
+  },
+  compassEast: {
+    right: 8,
+    top: 27,
+  },
+  compassVerticalAxis: {
+    position: 'absolute',
+    left: 35,
+    top: 18,
+    width: 2,
+    height: 36,
+    borderRadius: 2,
+    backgroundColor: 'rgba(37, 99, 235, 0.42)',
+  },
+  compassHorizontalAxis: {
+    position: 'absolute',
+    left: 18,
+    top: 35,
+    width: 36,
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: 'rgba(37, 99, 235, 0.3)',
+  },
+  compassNeedle: {
+    position: 'absolute',
+    left: 31,
+    top: 17,
+    width: 10,
+    height: 22,
+    borderTopLeftRadius: 5,
+    borderTopRightRadius: 5,
+    backgroundColor: '#2563EB',
   },
   inspectorPanel: {
     position: 'absolute',
