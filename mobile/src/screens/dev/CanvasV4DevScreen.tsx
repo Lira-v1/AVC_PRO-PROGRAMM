@@ -9,6 +9,7 @@ type Point = {
 
 type ToolMode = 'idle' | 'line' | 'polyline' | 'select' | 'door' | 'window';
 type WallSegmentType = 'external' | 'internal';
+type DimensionDisplayMode = 'minimal' | 'architectural' | 'full';
 type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
 
@@ -181,9 +182,16 @@ const TRANSFORM_HANDLE_HIT_RADIUS_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
 const ANGLE_HELPER_TOLERANCE_DEG = 6;
 const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
-const LINE_DIMENSION_LABEL_OFFSET_PX = 22;
-const LINE_DIMENSION_LABEL_WIDTH_PX = 68;
-const LINE_DIMENSION_LABEL_HEIGHT_PX = 24;
+const DIMENSION_BASE_OFFSET_PX = 34;
+const DIMENSION_INTERNAL_OFFSET_PX = 18;
+const DIMENSION_COLLISION_STEP_PX = 16;
+const DIMENSION_MAX_COLLISION_PASSES = 5;
+const DIMENSION_EXTENSION_GAP_PX = 5;
+const DIMENSION_EXTENSION_OVERHANG_PX = 7;
+const DIMENSION_TICK_LENGTH_PX = 12;
+const DIMENSION_LABEL_GAP_PX = 9;
+const LINE_DIMENSION_LABEL_WIDTH_PX = 62;
+const LINE_DIMENSION_LABEL_HEIGHT_PX = 18;
 const POINT_MATCH_EPSILON = 0.001;
 const DEFAULT_WALL_THICKNESS_MM = 100;
 const WALL_THICKNESS_VISUAL = false;
@@ -236,6 +244,30 @@ type DimensionLabelPlacement = {
   rotationDeg: number;
   offsetPx: number;
   placementMode: DimensionLabelPlacementMode;
+  lineStart: Point;
+  lineEnd: Point;
+  extensionStartA: Point;
+  extensionEndA: Point;
+  extensionStartB: Point;
+  extensionEndB: Point;
+  tickStart: Point;
+  tickEnd: Point;
+  tickAngleDeg: number;
+};
+
+type DimensionScreenItem = {
+  id: string;
+  entity: CanvasV4LineEntity;
+  placement: DimensionLabelPlacement;
+  label: string;
+  isSelected: boolean;
+};
+
+type ScreenRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 };
 
 const formatLineLength = (lengthMm: number) => `${(lengthMm / 1000).toFixed(2)} м`;
@@ -978,7 +1010,40 @@ const getPreferredOpenLineNormal = (normal: Point) => {
   return normal.y > 0 ? { x: -normal.x, y: -normal.y } : normal;
 };
 
-const getDimensionLabelPlacement = (geometry: LineScreenGeometry, contourCentroidScreenPoint: Point | null): DimensionLabelPlacement => {
+const getScreenLineStyle = (startPoint: Point, endPoint: Point, thickness = 1) => {
+  const length = Math.hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y);
+  const centerX = (startPoint.x + endPoint.x) / 2;
+  const centerY = (startPoint.y + endPoint.y) / 2;
+  const angleDeg = (Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * 180) / Math.PI;
+
+  return {
+    width: Math.max(length, 1),
+    height: thickness,
+    left: centerX - length / 2,
+    top: centerY - thickness / 2,
+    transform: [{ rotate: `${angleDeg}deg` }],
+  };
+};
+
+const rectsOverlap = (a: ScreenRect, b: ScreenRect, padding = 0) => !(
+  a.right + padding < b.left
+  || a.left - padding > b.right
+  || a.bottom + padding < b.top
+  || a.top - padding > b.bottom
+);
+
+const getDimensionLabelRect = (placement: Pick<DimensionLabelPlacement, 'left' | 'top'>): ScreenRect => ({
+  left: placement.left,
+  top: placement.top,
+  right: placement.left + LINE_DIMENSION_LABEL_WIDTH_PX,
+  bottom: placement.top + LINE_DIMENSION_LABEL_HEIGHT_PX,
+});
+
+const getDimensionPlacement = (
+  geometry: LineScreenGeometry,
+  contourCentroidScreenPoint: Point | null,
+  baseOffsetPx: number,
+): DimensionLabelPlacement => {
   const dx = geometry.screenEnd.x - geometry.screenStart.x;
   const dy = geometry.screenEnd.y - geometry.screenStart.y;
   const length = Math.max(Math.hypot(dx, dy), 1);
@@ -991,12 +1056,12 @@ const getDimensionLabelPlacement = (geometry: LineScreenGeometry, contourCentroi
   if (contourCentroidScreenPoint) {
     const midpoint = { x: geometry.centerX, y: geometry.centerY };
     const candidatePoint = {
-      x: midpoint.x + leftNormal.x * LINE_DIMENSION_LABEL_OFFSET_PX,
-      y: midpoint.y + leftNormal.y * LINE_DIMENSION_LABEL_OFFSET_PX,
+      x: midpoint.x + leftNormal.x * baseOffsetPx,
+      y: midpoint.y + leftNormal.y * baseOffsetPx,
     };
     const mirroredPoint = {
-      x: midpoint.x - leftNormal.x * LINE_DIMENSION_LABEL_OFFSET_PX,
-      y: midpoint.y - leftNormal.y * LINE_DIMENSION_LABEL_OFFSET_PX,
+      x: midpoint.x - leftNormal.x * baseOffsetPx,
+      y: midpoint.y - leftNormal.y * baseOffsetPx,
     };
     const candidateDistance = Math.hypot(candidatePoint.x - contourCentroidScreenPoint.x, candidatePoint.y - contourCentroidScreenPoint.y);
     const mirroredDistance = Math.hypot(mirroredPoint.x - contourCentroidScreenPoint.x, mirroredPoint.y - contourCentroidScreenPoint.y);
@@ -1005,15 +1070,50 @@ const getDimensionLabelPlacement = (geometry: LineScreenGeometry, contourCentroi
     placementMode = 'closed-contour-outside';
   }
 
-  const anchorX = geometry.centerX + offsetNormal.x * LINE_DIMENSION_LABEL_OFFSET_PX;
-  const anchorY = geometry.centerY + offsetNormal.y * LINE_DIMENSION_LABEL_OFFSET_PX;
+  const extensionStartA = {
+    x: geometry.screenStart.x + offsetNormal.x * DIMENSION_EXTENSION_GAP_PX,
+    y: geometry.screenStart.y + offsetNormal.y * DIMENSION_EXTENSION_GAP_PX,
+  };
+  const extensionEndA = {
+    x: geometry.screenStart.x + offsetNormal.x * (baseOffsetPx + DIMENSION_EXTENSION_OVERHANG_PX),
+    y: geometry.screenStart.y + offsetNormal.y * (baseOffsetPx + DIMENSION_EXTENSION_OVERHANG_PX),
+  };
+  const extensionStartB = {
+    x: geometry.screenEnd.x + offsetNormal.x * DIMENSION_EXTENSION_GAP_PX,
+    y: geometry.screenEnd.y + offsetNormal.y * DIMENSION_EXTENSION_GAP_PX,
+  };
+  const extensionEndB = {
+    x: geometry.screenEnd.x + offsetNormal.x * (baseOffsetPx + DIMENSION_EXTENSION_OVERHANG_PX),
+    y: geometry.screenEnd.y + offsetNormal.y * (baseOffsetPx + DIMENSION_EXTENSION_OVERHANG_PX),
+  };
+  const lineStart = {
+    x: geometry.screenStart.x + offsetNormal.x * baseOffsetPx,
+    y: geometry.screenStart.y + offsetNormal.y * baseOffsetPx,
+  };
+  const lineEnd = {
+    x: geometry.screenEnd.x + offsetNormal.x * baseOffsetPx,
+    y: geometry.screenEnd.y + offsetNormal.y * baseOffsetPx,
+  };
+  const labelAnchor = {
+    x: geometry.centerX + offsetNormal.x * (baseOffsetPx + DIMENSION_LABEL_GAP_PX),
+    y: geometry.centerY + offsetNormal.y * (baseOffsetPx + DIMENSION_LABEL_GAP_PX),
+  };
 
   return {
-    left: anchorX - LINE_DIMENSION_LABEL_WIDTH_PX / 2,
-    top: anchorY - LINE_DIMENSION_LABEL_HEIGHT_PX / 2,
+    left: labelAnchor.x - LINE_DIMENSION_LABEL_WIDTH_PX / 2,
+    top: labelAnchor.y - LINE_DIMENSION_LABEL_HEIGHT_PX / 2,
     rotationDeg: normalizeDimensionLabelRotation(geometry.angleDeg),
-    offsetPx: LINE_DIMENSION_LABEL_OFFSET_PX,
+    offsetPx: baseOffsetPx,
     placementMode,
+    lineStart,
+    lineEnd,
+    extensionStartA,
+    extensionEndA,
+    extensionStartB,
+    extensionEndB,
+    tickStart: lineStart,
+    tickEnd: lineEnd,
+    tickAngleDeg: normalizeDimensionLabelRotation(geometry.angleDeg + 45),
   };
 };
 
@@ -1028,6 +1128,7 @@ export const CanvasV4DevScreen = () => {
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isGridVisible, setGridVisible] = useState(true);
   const [showLineDimensions, setShowLineDimensions] = useState(true);
+  const [dimensionDisplayMode, setDimensionDisplayMode] = useState<DimensionDisplayMode>('minimal');
   const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('select');
   const [newSegmentType] = useState<WallSegmentType>('internal');
@@ -1181,15 +1282,124 @@ export const CanvasV4DevScreen = () => {
   const getEntityDimensionLabelPlacement = useCallback(
     (entity: CanvasV4LineEntity, geometry: LineScreenGeometry) => {
       const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
-      return getDimensionLabelPlacement(geometry, contourCentroid ? worldToScreen(contourCentroid) : null);
+      return getDimensionPlacement(geometry, contourCentroid ? worldToScreen(contourCentroid) : null, entity.segmentType === 'external' ? DIMENSION_BASE_OFFSET_PX : DIMENSION_INTERNAL_OFFSET_PX);
     },
     [entities, worldToScreen],
   );
 
   const getPreviewDimensionLabelPlacement = useCallback(
-    (geometry: LineScreenGeometry) => getDimensionLabelPlacement(geometry, null),
+    (geometry: LineScreenGeometry) => getDimensionPlacement(geometry, null, DIMENSION_INTERNAL_OFFSET_PX),
     [],
   );
+
+  const visibleDimensions = useMemo<DimensionScreenItem[]>(() => {
+    if (!showLineDimensions) {
+      return [];
+    }
+
+    const selectedDimensionEntityIds = new Set(selectedEntityIds);
+    const openingRects: ScreenRect[] = [...doors.map((door) => {
+      const segment = entities.find((entity) => entity.segmentId === door.segmentId);
+
+      if (!segment) {
+        return null;
+      }
+
+      const center = worldToScreen(getPointOnSegmentAtDistance(segment, door.positionOnSegment));
+      const size = Math.max(door.width * cameraZoom, 26);
+
+      return {
+        left: center.x - size / 2,
+        top: center.y - 18,
+        right: center.x + size / 2,
+        bottom: center.y + 18,
+      };
+    }), ...windows.map((window) => {
+      const segment = entities.find((entity) => entity.segmentId === window.segmentId);
+
+      if (!segment) {
+        return null;
+      }
+
+      const center = worldToScreen(getPointOnSegmentAtDistance(segment, window.positionOnSegment));
+      const size = Math.max(window.width * cameraZoom, 26);
+
+      return {
+        left: center.x - size / 2,
+        top: center.y - 14,
+        right: center.x + size / 2,
+        bottom: center.y + 14,
+      };
+    })].filter((rect): rect is ScreenRect => Boolean(rect));
+
+    const placedLabelRects: ScreenRect[] = [];
+
+    return entities.flatMap((entity) => {
+      const hasOpening = entity.doorIds.length > 0 || entity.windowIds.length > 0;
+      const isSelected = selectedDimensionEntityIds.has(entity.entityId);
+      const isPrimaryExternal = entity.segmentType === 'external';
+      const isMajorInternal = entity.segmentType === 'internal' && (entity.length >= 1000 || isSelected || hasOpening);
+      const isVisibleInMode = dimensionDisplayMode === 'full'
+        || (dimensionDisplayMode === 'architectural' && (isPrimaryExternal || isMajorInternal))
+        || (dimensionDisplayMode === 'minimal' && isPrimaryExternal);
+
+      if (!isVisibleInMode) {
+        return [];
+      }
+
+      const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+      const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
+      const contourCentroidScreenPoint = contourCentroid ? worldToScreen(contourCentroid) : null;
+      const baseOffset = entity.segmentType === 'external'
+        ? DIMENSION_BASE_OFFSET_PX + (dimensionDisplayMode === 'full' ? 8 : 0)
+        : DIMENSION_INTERNAL_OFFSET_PX;
+      let placement = getDimensionPlacement(geometry, contourCentroidScreenPoint, baseOffset);
+      let collisionAvoidancePasses = 0;
+
+      while (
+        collisionAvoidancePasses < DIMENSION_MAX_COLLISION_PASSES
+        && [...openingRects, ...placedLabelRects].some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
+      ) {
+        collisionAvoidancePasses += 1;
+        placement = getDimensionPlacement(geometry, contourCentroidScreenPoint, baseOffset + collisionAvoidancePasses * DIMENSION_COLLISION_STEP_PX);
+      }
+
+      placedLabelRects.push(getDimensionLabelRect(placement));
+
+      return [{
+        id: `${entity.entityId}:dimension`,
+        entity,
+        placement,
+        label: formatLineLength(entity.length),
+        isSelected,
+      }];
+    });
+  }, [cameraZoom, dimensionDisplayMode, doors, entities, getLineScreenGeometry, selectedEntityIds, showLineDimensions, windows, worldToScreen]);
+
+  const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.entity.segmentType === 'external' ? DIMENSION_BASE_OFFSET_PX : DIMENSION_INTERNAL_OFFSET_PX));
+  const dimensionOffsetPx = visibleDimensions.length > 0
+    ? Math.max(...visibleDimensions.map((dimension) => dimension.placement.offsetPx))
+    : 0;
+
+  const cycleDimensionDisplayMode = useCallback(() => {
+    setDimensionDisplayMode((current) => {
+      if (current === 'minimal') {
+        return 'architectural';
+      }
+
+      if (current === 'architectural') {
+        return 'full';
+      }
+
+      return 'minimal';
+    });
+  }, []);
+
+  const dimensionDisplayModeLabel = dimensionDisplayMode === 'minimal'
+    ? 'Minimal'
+    : dimensionDisplayMode === 'architectural'
+      ? 'Architectural'
+      : 'Full';
 
   const gridLines = useMemo(() => {
     if (!isGridVisible || viewport.width <= 1 || viewport.height <= 1) {
@@ -2507,6 +2717,10 @@ export const CanvasV4DevScreen = () => {
       `isSelectionBoxActive: ${selectionBox?.active ? 'true' : 'false'}`,
       `lastInteractionType: ${lastInteractionType}`,
       `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
+      `dimensionDisplayMode: ${dimensionDisplayMode}`,
+      `visibleDimensionsCount: ${visibleDimensions.length}`,
+      `dimensionCollisionAvoidance: ${dimensionCollisionAvoidance ? 'true' : 'false'}`,
+      `dimensionOffsetPx: ${dimensionOffsetPx.toFixed(0)} px`,
       'dimensionLabelsInteractive: false',
       `hitTestTargetType: ${hitTestTargetType}`,
       `lastHitTestEntityId: ${lastHitTestEntityId ?? 'null'}`,
@@ -2596,6 +2810,10 @@ export const CanvasV4DevScreen = () => {
       activeSnap.gridSnappedEndPoint,
       cameraZoom,
       currentToolMode,
+      dimensionCollisionAvoidance,
+      dimensionDisplayMode,
+      dimensionOffsetPx,
+      visibleDimensions.length,
       newSegmentType,
       showLineDimensions,
       doors.length,
@@ -2680,6 +2898,9 @@ export const CanvasV4DevScreen = () => {
           <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : null]} onPress={() => setShowLineDimensions((current) => !current)}>
             <Text style={styles.controlButtonText}>Размеры</Text>
           </Pressable>
+          <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : styles.toolButtonDisabled]} onPress={cycleDimensionDisplayMode} disabled={!showLineDimensions}>
+            <Text style={[styles.controlButtonText, showLineDimensions ? null : styles.toolButtonDisabledText]}>{dimensionDisplayModeLabel}</Text>
+          </Pressable>
           <Pressable style={[styles.controlButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
             <Text style={[styles.controlButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶</Text>
           </Pressable>
@@ -2740,7 +2961,6 @@ export const CanvasV4DevScreen = () => {
 
             {entities.map((entity) => {
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-              const dimensionLabelPlacement = getEntityDimensionLabelPlacement(entity, geometry);
               const isSelected = selectedEntityIdSet.has(entity.entityId);
 
               return (
@@ -2759,24 +2979,53 @@ export const CanvasV4DevScreen = () => {
                       },
                     ]}
                   />
-                  {showLineDimensions ? (
-                    <View
-                      pointerEvents="none"
-                      style={[
-                        styles.dimensionLabel,
-                        {
-                          left: dimensionLabelPlacement.left,
-                          top: dimensionLabelPlacement.top,
-                          transform: [{ rotate: `${dimensionLabelPlacement.rotationDeg}deg` }],
-                        },
-                      ]}
-                    >
-                      <Text style={styles.dimensionLabelText}>{formatLineLength(entity.length)}</Text>
-                    </View>
-                  ) : null}
                 </React.Fragment>
               );
             })}
+
+            {visibleDimensions.map((dimension) => (
+              <React.Fragment key={dimension.id}>
+                <View pointerEvents="none" style={[styles.dimensionLine, getScreenLineStyle(dimension.placement.lineStart, dimension.placement.lineEnd)]} />
+                <View pointerEvents="none" style={[styles.dimensionExtensionLine, getScreenLineStyle(dimension.placement.extensionStartA, dimension.placement.extensionEndA)]} />
+                <View pointerEvents="none" style={[styles.dimensionExtensionLine, getScreenLineStyle(dimension.placement.extensionStartB, dimension.placement.extensionEndB)]} />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.dimensionTick,
+                    {
+                      left: dimension.placement.tickStart.x - DIMENSION_TICK_LENGTH_PX / 2,
+                      top: dimension.placement.tickStart.y - 0.5,
+                      transform: [{ rotate: `${dimension.placement.tickAngleDeg}deg` }],
+                    },
+                  ]}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.dimensionTick,
+                    {
+                      left: dimension.placement.tickEnd.x - DIMENSION_TICK_LENGTH_PX / 2,
+                      top: dimension.placement.tickEnd.y - 0.5,
+                      transform: [{ rotate: `${dimension.placement.tickAngleDeg}deg` }],
+                    },
+                  ]}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.dimensionLabel,
+                    dimension.isSelected ? styles.dimensionLabelSelected : null,
+                    {
+                      left: dimension.placement.left,
+                      top: dimension.placement.top,
+                      transform: [{ rotate: `${dimension.placement.rotationDeg}deg` }],
+                    },
+                  ]}
+                >
+                  <Text style={[styles.dimensionLabelText, dimension.isSelected ? styles.dimensionLabelTextSelected : null]}>{dimension.label}</Text>
+                </View>
+              </React.Fragment>
+            ))}
 
             {doors.map((door) => {
               const segment = entities.find((entity) => entity.segmentId === door.segmentId);
@@ -2992,7 +3241,7 @@ export const CanvasV4DevScreen = () => {
                     },
                   ]}
                 />
-                {showLineDimensions && previewDimensionLabelPlacement ? (
+                {showLineDimensions && dimensionDisplayMode === 'full' && previewDimensionLabelPlacement ? (
                   <View
                     pointerEvents="none"
                     style={[
@@ -3475,34 +3724,35 @@ const styles = StyleSheet.create({
     backgroundColor: '#F97316',
     borderColor: '#F97316',
   },
+  dimensionLine: {
+    position: 'absolute',
+    backgroundColor: 'rgba(51, 65, 85, 0.72)',
+  },
+  dimensionExtensionLine: {
+    position: 'absolute',
+    backgroundColor: 'rgba(51, 65, 85, 0.46)',
+  },
+  dimensionTick: {
+    position: 'absolute',
+    width: DIMENSION_TICK_LENGTH_PX,
+    height: 1,
+    backgroundColor: 'rgba(51, 65, 85, 0.78)',
+  },
   dimensionLabel: {
     position: 'absolute',
     width: LINE_DIMENSION_LABEL_WIDTH_PX,
     minWidth: LINE_DIMENSION_LABEL_WIDTH_PX,
     minHeight: LINE_DIMENSION_LABEL_HEIGHT_PX,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.55)',
     alignItems: 'center',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    justifyContent: 'center',
   },
-  dimensionLabelSelected: {
-    backgroundColor: 'rgba(255, 247, 237, 0.96)',
-    borderColor: '#FB923C',
-  },
-  previewDimensionLabel: {
-    backgroundColor: 'rgba(240, 253, 244, 0.96)',
-    borderColor: '#22C55E',
-  },
+  dimensionLabelSelected: {},
+  previewDimensionLabel: {},
   dimensionLabelText: {
-    color: '#334155',
-    fontSize: 11,
-    fontWeight: '800',
+    color: 'rgba(30, 41, 59, 0.86)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.1,
   },
   dimensionLabelTextSelected: {
     color: '#C2410C',
