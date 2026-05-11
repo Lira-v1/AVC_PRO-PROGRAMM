@@ -12,6 +12,8 @@ type WallSegmentType = 'external' | 'internal';
 type DimensionDisplayMode = 'minimal' | 'architectural' | 'full';
 type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
+type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
+type SegmentSpatialRole = 'external-like' | 'internal-like' | 'unknown';
 
 type CanvasV4WallSegment = {
   entityId: string;
@@ -186,6 +188,10 @@ const DIMENSION_BASE_OFFSET_PX = 34;
 const DIMENSION_INTERNAL_OFFSET_PX = 18;
 const DIMENSION_COLLISION_STEP_PX = 16;
 const DIMENSION_MAX_COLLISION_PASSES = 5;
+const DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM = 1200;
+const DIMENSION_SPATIAL_PROJECTION_PADDING_MM = 120;
+const DIMENSION_AXIS_TOLERANCE_DEG = 12;
+const DIMENSION_BOUNDARY_EPSILON_MM = 4;
 const DIMENSION_EXTENSION_GAP_PX = 5;
 const DIMENSION_EXTENSION_OVERHANG_PX = 7;
 const DIMENSION_TICK_LENGTH_PX = 12;
@@ -247,6 +253,25 @@ type ClosedContourInfo = {
   centroid: Point;
 };
 
+type DimensionNeighborInfo = {
+  hasAbove: boolean;
+  hasBelow: boolean;
+  hasLeft: boolean;
+  hasRight: boolean;
+  nearestAboveMm: number | null;
+  nearestBelowMm: number | null;
+  nearestLeftMm: number | null;
+  nearestRightMm: number | null;
+};
+
+type DimensionSpatialAnalysis = {
+  side: DimensionSide;
+  role: SegmentSpatialRole;
+  neighborInfo: DimensionNeighborInfo;
+  isHorizontalLike: boolean;
+  isVerticalLike: boolean;
+};
+
 type DimensionLabelPlacement = {
   left: number;
   top: number;
@@ -262,6 +287,9 @@ type DimensionLabelPlacement = {
   tickStart: Point;
   tickEnd: Point;
   tickAngleDeg: number;
+  side: DimensionSide;
+  spatialRole: SegmentSpatialRole;
+  neighborInfo: DimensionNeighborInfo;
 };
 
 type DimensionScreenItem = {
@@ -1042,6 +1070,208 @@ const getPreferredOpenLineNormal = (normal: Point) => {
   return normal.y > 0 ? { x: -normal.x, y: -normal.y } : normal;
 };
 
+const EMPTY_DIMENSION_NEIGHBOR_INFO: DimensionNeighborInfo = {
+  hasAbove: false,
+  hasBelow: false,
+  hasLeft: false,
+  hasRight: false,
+  nearestAboveMm: null,
+  nearestBelowMm: null,
+  nearestLeftMm: null,
+  nearestRightMm: null,
+};
+
+const getDefaultDimensionSpatialAnalysis = (normal: Point): DimensionSpatialAnalysis => {
+  let side: DimensionSide;
+
+  if (Math.abs(normal.x) > Math.abs(normal.y)) {
+    side = normal.x < 0 ? 'left' : 'right';
+  } else {
+    side = normal.y < 0 ? 'top' : 'bottom';
+  }
+
+  return {
+    side,
+    role: 'unknown',
+    neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
+    isHorizontalLike: side === 'top' || side === 'bottom',
+    isVerticalLike: side === 'left' || side === 'right',
+  };
+};
+
+const getDimensionSideNormal = (side: DimensionSide): Point => {
+  switch (side) {
+    case 'top':
+      return { x: 0, y: -1 };
+    case 'bottom':
+      return { x: 0, y: 1 };
+    case 'left':
+      return { x: -1, y: 0 };
+    case 'right':
+      return { x: 1, y: 0 };
+    default:
+      return { x: 0, y: -1 };
+  }
+};
+
+const getEntityBoundingBox = (entity: CanvasV4LineEntity): BoundingBox => ({
+  minX: Math.min(entity.startPoint.x, entity.endPoint.x),
+  maxX: Math.max(entity.startPoint.x, entity.endPoint.x),
+  minY: Math.min(entity.startPoint.y, entity.endPoint.y),
+  maxY: Math.max(entity.startPoint.y, entity.endPoint.y),
+});
+
+const getDimensionProjectBoundingBox = (entities: CanvasV4LineEntity[]): BoundingBox | null => {
+  if (entities.length === 0) {
+    return null;
+  }
+
+  return entities.reduce<BoundingBox>((box, entity) => {
+    const entityBox = getEntityBoundingBox(entity);
+
+    return {
+      minX: Math.min(box.minX, entityBox.minX),
+      maxX: Math.max(box.maxX, entityBox.maxX),
+      minY: Math.min(box.minY, entityBox.minY),
+      maxY: Math.max(box.maxY, entityBox.maxY),
+    };
+  }, getEntityBoundingBox(entities[0]));
+};
+
+const rangesOverlap = (aMin: number, aMax: number, bMin: number, bMax: number, padding = 0) => aMax + padding >= bMin && bMax + padding >= aMin;
+
+const getNearestNeighborInfo = (entity: CanvasV4LineEntity, entities: CanvasV4LineEntity[]): DimensionNeighborInfo => {
+  const entityBox = getEntityBoundingBox(entity);
+  const centerX = (entityBox.minX + entityBox.maxX) / 2;
+  const centerY = (entityBox.minY + entityBox.maxY) / 2;
+  let nearestAboveMm: number | null = null;
+  let nearestBelowMm: number | null = null;
+  let nearestLeftMm: number | null = null;
+  let nearestRightMm: number | null = null;
+
+  entities.forEach((candidate) => {
+    if (candidate.entityId === entity.entityId) {
+      return;
+    }
+
+    const candidateBox = getEntityBoundingBox(candidate);
+    const candidateCenterX = (candidateBox.minX + candidateBox.maxX) / 2;
+    const candidateCenterY = (candidateBox.minY + candidateBox.maxY) / 2;
+
+    if (rangesOverlap(entityBox.minX, entityBox.maxX, candidateBox.minX, candidateBox.maxX, DIMENSION_SPATIAL_PROJECTION_PADDING_MM)) {
+      if (candidateCenterY < centerY) {
+        const distance = Math.max(0, entityBox.minY - candidateBox.maxY);
+        nearestAboveMm = nearestAboveMm === null ? distance : Math.min(nearestAboveMm, distance);
+      }
+
+      if (candidateCenterY > centerY) {
+        const distance = Math.max(0, candidateBox.minY - entityBox.maxY);
+        nearestBelowMm = nearestBelowMm === null ? distance : Math.min(nearestBelowMm, distance);
+      }
+    }
+
+    if (rangesOverlap(entityBox.minY, entityBox.maxY, candidateBox.minY, candidateBox.maxY, DIMENSION_SPATIAL_PROJECTION_PADDING_MM)) {
+      if (candidateCenterX < centerX) {
+        const distance = Math.max(0, entityBox.minX - candidateBox.maxX);
+        nearestLeftMm = nearestLeftMm === null ? distance : Math.min(nearestLeftMm, distance);
+      }
+
+      if (candidateCenterX > centerX) {
+        const distance = Math.max(0, candidateBox.minX - entityBox.maxX);
+        nearestRightMm = nearestRightMm === null ? distance : Math.min(nearestRightMm, distance);
+      }
+    }
+  });
+
+  return {
+    hasAbove: nearestAboveMm !== null && nearestAboveMm <= DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM,
+    hasBelow: nearestBelowMm !== null && nearestBelowMm <= DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM,
+    hasLeft: nearestLeftMm !== null && nearestLeftMm <= DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM,
+    hasRight: nearestRightMm !== null && nearestRightMm <= DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM,
+    nearestAboveMm,
+    nearestBelowMm,
+    nearestLeftMm,
+    nearestRightMm,
+  };
+};
+
+const getDimensionSpatialAnalysis = (entity: CanvasV4LineEntity, entities: CanvasV4LineEntity[], closedContourOutwardNormal: Point | null): DimensionSpatialAnalysis => {
+  const angle = normalizeAngle(entity.angle);
+  const isHorizontalLike = angularDistance(angle, 0) <= DIMENSION_AXIS_TOLERANCE_DEG || angularDistance(angle, 180) <= DIMENSION_AXIS_TOLERANCE_DEG;
+  const isVerticalLike = angularDistance(angle, 90) <= DIMENSION_AXIS_TOLERANCE_DEG || angularDistance(angle, 270) <= DIMENSION_AXIS_TOLERANCE_DEG;
+  const fallbackNormal = closedContourOutwardNormal ?? getPreferredOpenLineNormal(getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint).leftNormal);
+  const fallback = getDefaultDimensionSpatialAnalysis(fallbackNormal);
+  const projectBox = getDimensionProjectBoundingBox(entities);
+
+  if (!projectBox || (!isHorizontalLike && !isVerticalLike)) {
+    return {
+      ...fallback,
+      neighborInfo: getNearestNeighborInfo(entity, entities),
+      isHorizontalLike,
+      isVerticalLike,
+    };
+  }
+
+  const entityBox = getEntityBoundingBox(entity);
+  const neighborInfo = getNearestNeighborInfo(entity, entities);
+  const touchesTopBoundary = Math.abs(entityBox.minY - projectBox.minY) <= DIMENSION_BOUNDARY_EPSILON_MM;
+  const touchesBottomBoundary = Math.abs(entityBox.maxY - projectBox.maxY) <= DIMENSION_BOUNDARY_EPSILON_MM;
+  const touchesLeftBoundary = Math.abs(entityBox.minX - projectBox.minX) <= DIMENSION_BOUNDARY_EPSILON_MM;
+  const touchesRightBoundary = Math.abs(entityBox.maxX - projectBox.maxX) <= DIMENSION_BOUNDARY_EPSILON_MM;
+  let side = fallback.side;
+
+  if (isHorizontalLike) {
+    if (touchesTopBoundary) {
+      side = 'top';
+    } else if (touchesBottomBoundary) {
+      side = 'bottom';
+    } else if (!neighborInfo.hasAbove && neighborInfo.hasBelow) {
+      side = 'top';
+    } else if (neighborInfo.hasAbove && !neighborInfo.hasBelow) {
+      side = 'bottom';
+    } else if (closedContourOutwardNormal) {
+      side = closedContourOutwardNormal.y < 0 ? 'top' : 'bottom';
+    } else {
+      side = fallback.side === 'bottom' ? 'bottom' : 'top';
+    }
+  }
+
+  if (isVerticalLike) {
+    if (touchesLeftBoundary) {
+      side = 'left';
+    } else if (touchesRightBoundary) {
+      side = 'right';
+    } else if (!neighborInfo.hasLeft && neighborInfo.hasRight) {
+      side = 'left';
+    } else if (neighborInfo.hasLeft && !neighborInfo.hasRight) {
+      side = 'right';
+    } else if (closedContourOutwardNormal) {
+      side = closedContourOutwardNormal.x < 0 ? 'left' : 'right';
+    } else {
+      side = fallback.side === 'left' ? 'left' : 'right';
+    }
+  }
+
+  const hasBothHorizontalSides = neighborInfo.hasAbove && neighborInfo.hasBelow;
+  const hasBothVerticalSides = neighborInfo.hasLeft && neighborInfo.hasRight;
+  const isInsideProjectBox = entityBox.minX > projectBox.minX + DIMENSION_BOUNDARY_EPSILON_MM
+    && entityBox.maxX < projectBox.maxX - DIMENSION_BOUNDARY_EPSILON_MM
+    && entityBox.minY > projectBox.minY + DIMENSION_BOUNDARY_EPSILON_MM
+    && entityBox.maxY < projectBox.maxY - DIMENSION_BOUNDARY_EPSILON_MM;
+  const role: SegmentSpatialRole = (isHorizontalLike && (touchesTopBoundary || touchesBottomBoundary || !neighborInfo.hasAbove || !neighborInfo.hasBelow))
+    || (isVerticalLike && (touchesLeftBoundary || touchesRightBoundary || !neighborInfo.hasLeft || !neighborInfo.hasRight))
+    ? 'external-like'
+    : (isInsideProjectBox && ((isHorizontalLike && hasBothHorizontalSides) || (isVerticalLike && hasBothVerticalSides)) ? 'internal-like' : 'unknown');
+
+  return {
+    side,
+    role,
+    neighborInfo,
+    isHorizontalLike,
+    isVerticalLike,
+  };
+};
+
 const getScreenLineStyle = (startPoint: Point, endPoint: Point, thickness = 1) => {
   const length = Math.hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y);
   const centerX = (startPoint.x + endPoint.x) / 2;
@@ -1071,10 +1301,28 @@ const getDimensionLabelRect = (placement: Pick<DimensionLabelPlacement, 'left' |
   bottom: placement.top + LINE_DIMENSION_LABEL_HEIGHT_PX,
 });
 
+const getLineScreenRect = (startPoint: Point, endPoint: Point, padding = 4): ScreenRect => ({
+  left: Math.min(startPoint.x, endPoint.x) - padding,
+  top: Math.min(startPoint.y, endPoint.y) - padding,
+  right: Math.max(startPoint.x, endPoint.x) + padding,
+  bottom: Math.max(startPoint.y, endPoint.y) + padding,
+});
+
+const formatNeighborDistance = (value: number | null) => (value === null ? 'null' : `${value.toFixed(0)}mm`);
+
+const formatDimensionNeighborInfo = (neighborInfo?: DimensionNeighborInfo) => {
+  if (!neighborInfo) {
+    return 'null';
+  }
+
+  return `top:${neighborInfo.hasAbove ? 'near' : 'free'}(${formatNeighborDistance(neighborInfo.nearestAboveMm)}), bottom:${neighborInfo.hasBelow ? 'near' : 'free'}(${formatNeighborDistance(neighborInfo.nearestBelowMm)}), left:${neighborInfo.hasLeft ? 'near' : 'free'}(${formatNeighborDistance(neighborInfo.nearestLeftMm)}), right:${neighborInfo.hasRight ? 'near' : 'free'}(${formatNeighborDistance(neighborInfo.nearestRightMm)})`;
+};
+
 const getDimensionPlacement = (
   geometry: LineScreenGeometry,
   closedContourOutwardNormalScreen: Point | null,
   baseOffsetPx: number,
+  spatialAnalysis?: DimensionSpatialAnalysis,
 ): DimensionLabelPlacement => {
   const dx = geometry.screenEnd.x - geometry.screenStart.x;
   const dy = geometry.screenEnd.y - geometry.screenStart.y;
@@ -1085,7 +1333,10 @@ const getDimensionPlacement = (
   let offsetNormal = getPreferredOpenLineNormal(leftNormal);
   let placementMode: DimensionLabelPlacementMode = 'line-normal-offset';
 
-  if (closedContourOutwardNormalScreen) {
+  if (spatialAnalysis) {
+    offsetNormal = getDimensionSideNormal(spatialAnalysis.side);
+    placementMode = 'closed-contour-outside';
+  } else if (closedContourOutwardNormalScreen) {
     offsetNormal = normalizeVector(closedContourOutwardNormalScreen);
     placementMode = 'closed-contour-outside';
   }
@@ -1134,6 +1385,9 @@ const getDimensionPlacement = (
     tickStart: lineStart,
     tickEnd: lineEnd,
     tickAngleDeg: normalizeDimensionLabelRotation(geometry.angleDeg + 45),
+    side: spatialAnalysis?.side ?? getDefaultDimensionSpatialAnalysis(offsetNormal).side,
+    spatialRole: spatialAnalysis?.role ?? 'unknown',
+    neighborInfo: spatialAnalysis?.neighborInfo ?? EMPTY_DIMENSION_NEIGHBOR_INFO,
   };
 };
 
@@ -1303,7 +1557,9 @@ export const CanvasV4DevScreen = () => {
     (entity: CanvasV4LineEntity, geometry: LineScreenGeometry) => {
       const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
       const outwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
-      return getDimensionPlacement(geometry, outwardNormal, entity.segmentType === 'external' ? DIMENSION_BASE_OFFSET_PX : DIMENSION_INTERNAL_OFFSET_PX);
+      const spatialAnalysis = getDimensionSpatialAnalysis(entity, entities, outwardNormal);
+      const baseOffset = spatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX;
+      return getDimensionPlacement(geometry, outwardNormal, baseOffset, spatialAnalysis);
     },
     [entities],
   );
@@ -1354,38 +1610,67 @@ export const CanvasV4DevScreen = () => {
     })].filter((rect): rect is ScreenRect => Boolean(rect));
 
     const placedLabelRects: ScreenRect[] = [];
+    const placedLineRects: ScreenRect[] = [];
 
     return entities.flatMap((entity) => {
+      const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
+      const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
+      const spatialAnalysis = getDimensionSpatialAnalysis(entity, entities, closedContourOutwardNormal);
       const hasOpening = entity.doorIds.length > 0 || entity.windowIds.length > 0;
       const isSelected = selectedDimensionEntityIds.has(entity.entityId);
       const isPrimaryExternal = entity.segmentType === 'external';
       const isMajorInternal = entity.segmentType === 'internal' && (entity.length >= 1000 || isSelected || hasOpening);
+      const isSuppressedDuplicate = dimensionDisplayMode !== 'full' && spatialAnalysis.role !== 'external-like' && entities.some((candidate) => {
+        if (candidate.entityId === entity.entityId || candidate.length <= entity.length) {
+          return false;
+        }
+
+        const candidateContourInfo = getClosedPolylineInfoForEntity(candidate, entities);
+        const candidateOutwardNormal = candidateContourInfo ? getClosedContourOutwardNormal(candidate, candidateContourInfo) : null;
+        const candidateSpatialAnalysis = getDimensionSpatialAnalysis(candidate, entities, candidateOutwardNormal);
+
+        if (candidateSpatialAnalysis.role !== 'external-like') {
+          return false;
+        }
+
+        const entityBox = getEntityBoundingBox(entity);
+        const candidateBox = getEntityBoundingBox(candidate);
+        const sameHorizontalAxis = spatialAnalysis.isHorizontalLike && candidateSpatialAnalysis.isHorizontalLike
+          && Math.abs((entityBox.minY + entityBox.maxY) / 2 - (candidateBox.minY + candidateBox.maxY) / 2) <= DIMENSION_SPATIAL_PROJECTION_PADDING_MM;
+        const sameVerticalAxis = spatialAnalysis.isVerticalLike && candidateSpatialAnalysis.isVerticalLike
+          && Math.abs((entityBox.minX + entityBox.maxX) / 2 - (candidateBox.minX + candidateBox.maxX) / 2) <= DIMENSION_SPATIAL_PROJECTION_PADDING_MM;
+
+        return (sameHorizontalAxis && rangesOverlap(entityBox.minX, entityBox.maxX, candidateBox.minX, candidateBox.maxX, DIMENSION_SPATIAL_PROJECTION_PADDING_MM))
+          || (sameVerticalAxis && rangesOverlap(entityBox.minY, entityBox.maxY, candidateBox.minY, candidateBox.maxY, DIMENSION_SPATIAL_PROJECTION_PADDING_MM));
+      });
       const isVisibleInMode = dimensionDisplayMode === 'full'
         || (dimensionDisplayMode === 'architectural' && (isPrimaryExternal || isMajorInternal))
         || (dimensionDisplayMode === 'minimal' && isPrimaryExternal);
 
-      if (!isVisibleInMode) {
+      if (!isVisibleInMode || isSuppressedDuplicate) {
         return [];
       }
 
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-      const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
-      const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
-      const baseOffset = entity.segmentType === 'external'
-        ? DIMENSION_BASE_OFFSET_PX + (dimensionDisplayMode === 'full' ? 8 : 0)
-        : DIMENSION_INTERNAL_OFFSET_PX;
-      let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset);
+      const baseOffset = spatialAnalysis.role === 'internal-like'
+        ? DIMENSION_INTERNAL_OFFSET_PX
+        : DIMENSION_BASE_OFFSET_PX + (dimensionDisplayMode === 'full' ? 8 : 0);
+      let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset, spatialAnalysis);
       let collisionAvoidancePasses = 0;
 
       while (
         collisionAvoidancePasses < DIMENSION_MAX_COLLISION_PASSES
-        && [...openingRects, ...placedLabelRects].some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
+        && (
+          [...openingRects, ...placedLabelRects].some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
+          || [...openingRects, ...placedLineRects].some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6))
+        )
       ) {
         collisionAvoidancePasses += 1;
-        placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset + collisionAvoidancePasses * DIMENSION_COLLISION_STEP_PX);
+        placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset + collisionAvoidancePasses * DIMENSION_COLLISION_STEP_PX, spatialAnalysis);
       }
 
       placedLabelRects.push(getDimensionLabelRect(placement));
+      placedLineRects.push(getLineScreenRect(placement.lineStart, placement.lineEnd, 3));
 
       return [{
         id: `${entity.entityId}:dimension`,
@@ -1397,7 +1682,7 @@ export const CanvasV4DevScreen = () => {
     });
   }, [cameraZoom, dimensionDisplayMode, doors, entities, getLineScreenGeometry, selectedEntityIds, showLineDimensions, windows, worldToScreen]);
 
-  const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.entity.segmentType === 'external' ? DIMENSION_BASE_OFFSET_PX : DIMENSION_INTERNAL_OFFSET_PX));
+  const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.placement.spatialRole === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX));
   const dimensionOffsetPx = visibleDimensions.length > 0
     ? Math.max(...visibleDimensions.map((dimension) => dimension.placement.offsetPx))
     : 0;
@@ -2739,6 +3024,7 @@ export const CanvasV4DevScreen = () => {
       `lastInteractionType: ${lastInteractionType}`,
       `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
       `dimensionDisplayMode: ${dimensionDisplayMode}`,
+      'dimensionPlacementEngine: spatial-v1',
       `visibleDimensionsCount: ${visibleDimensions.length}`,
       `dimensionCollisionAvoidance: ${dimensionCollisionAvoidance ? 'true' : 'false'}`,
       `dimensionOffsetPx: ${dimensionOffsetPx.toFixed(0)} px`,
@@ -2746,7 +3032,7 @@ export const CanvasV4DevScreen = () => {
       `hitTestTargetType: ${hitTestTargetType}`,
       `lastHitTestEntityId: ${lastHitTestEntityId ?? 'null'}`,
       'compassVisible: true',
-      'compassMode: visual-only',
+      'compassMode: visual + dimension spatial baseline',
       `entitiesCount: ${entities.length}`,
       `doorsCount: ${doors.length}`,
       `windowsCount: ${windows.length}`,
@@ -2819,6 +3105,10 @@ export const CanvasV4DevScreen = () => {
       `selectedLineLength: ${selectedLineLength === null ? 'null' : formatLineLength(selectedLineLength)}`,
       `dimensionLabelRotation: ${inspectedDimensionLabelPlacement ? `${inspectedDimensionLabelPlacement.rotationDeg.toFixed(0)}°` : 'null'}`,
       `dimensionLabelOffset: ${inspectedDimensionLabelPlacement ? `${inspectedDimensionLabelPlacement.offsetPx.toFixed(0)} px` : 'null'}`,
+      `segmentSpatialRole: ${inspectedDimensionLabelPlacement?.spatialRole ?? 'unknown'}`,
+      `dimensionSide: ${inspectedDimensionLabelPlacement?.side ?? 'null'}`,
+      `dimensionOffset: ${inspectedDimensionLabelPlacement ? `${inspectedDimensionLabelPlacement.offsetPx.toFixed(0)} px` : 'null'}`,
+      `dimensionNeighborInfo: ${formatDimensionNeighborInfo(inspectedDimensionLabelPlacement?.neighborInfo)}`,
       `dimensionLabelPlacementMode: ${inspectedDimensionLabelPlacement?.placementMode ?? 'null'}`,
     ],
     [
