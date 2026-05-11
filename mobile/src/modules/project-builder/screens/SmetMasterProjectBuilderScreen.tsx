@@ -29,7 +29,7 @@ type MainStackParamList = {
   Services: undefined;
   Emergency: undefined;
   Estimate: undefined;
-  Commercial: undefined;
+  IndustrialEngineering: undefined;
   Maintenance: undefined;
   Vacancies: undefined;
   Orders: undefined;

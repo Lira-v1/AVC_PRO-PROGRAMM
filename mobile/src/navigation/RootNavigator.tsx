@@ -12,6 +12,15 @@ import { ChatMasterScreen } from '../screens/ChatMasterScreen';
 import { CanvasV3DevScreen } from '../screens/dev/CanvasV3DevScreen';
 import { CanvasV4DevScreen } from '../screens/dev/CanvasV4DevScreen';
 import { SmetMasterProjectBuilderScreen } from '../modules/project-builder';
+import {
+  BoilerRoomsScreen,
+  IndustrialEngineeringScreen,
+  IndustrialMaintenanceScreen,
+  KIPScreen,
+  PumpStationsScreen,
+  RefrigerationScreen,
+  VentilationScreen,
+} from '../screens/IndustrialEngineeringScreen';
 import { DrawerMenuProvider, useDrawerMenu } from './DrawerMenuContext';
 
 type MainStackParamList = {
@@ -19,7 +28,13 @@ type MainStackParamList = {
   Services: undefined;
   Emergency: undefined;
   Estimate: undefined;
-  Commercial: undefined;
+  IndustrialEngineering: undefined;
+  IndustrialMaintenance: undefined;
+  PumpStations: undefined;
+  BoilerRooms: undefined;
+  KIP: undefined;
+  Ventilation: undefined;
+  Refrigeration: undefined;
   Maintenance: undefined;
   Vacancies: undefined;
   Orders: undefined;
@@ -111,7 +126,13 @@ const MainNavigator = ({ setDrawerOpen }: { setDrawerOpen: React.Dispatch<React.
       <MainStack.Screen name="Services" component={ServicesScreen} />
       <MainStack.Screen name="Emergency" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Экстренный мастер' } }} />} />
       <MainStack.Screen name="Estimate" component={SmetMasterProjectBuilderScreen} />
-      <MainStack.Screen name="Commercial" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Коммерция' } }} />} />
+      <MainStack.Screen name="IndustrialEngineering" component={IndustrialEngineeringScreen} />
+      <MainStack.Screen name="IndustrialMaintenance" component={IndustrialMaintenanceScreen} />
+      <MainStack.Screen name="PumpStations" component={PumpStationsScreen} />
+      <MainStack.Screen name="BoilerRooms" component={BoilerRoomsScreen} />
+      <MainStack.Screen name="KIP" component={KIPScreen} />
+      <MainStack.Screen name="Ventilation" component={VentilationScreen} />
+      <MainStack.Screen name="Refrigeration" component={RefrigerationScreen} />
       <MainStack.Screen name="Maintenance" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Обслуживание' } }} />} />
       <MainStack.Screen name="Vacancies" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Вакансии' } }} />} />
       <MainStack.Screen name="Orders" children={() => <PlatformPlaceholderScreen route={{ params: { title: 'Мои заявки' } }} />} />
