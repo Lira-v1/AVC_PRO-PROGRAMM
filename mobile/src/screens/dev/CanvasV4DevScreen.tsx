@@ -55,8 +55,23 @@ type EndpointSnapTarget = {
   distance: number;
 };
 
-type InteractionMode = 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection';
+type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection';
 type SelectionMode = 'single' | 'box' | 'move';
+type LastInteractionType =
+  | 'init'
+  | 'tap-select'
+  | 'tap-empty'
+  | 'double-tap-clear'
+  | 'pan-canvas'
+  | 'selection-box'
+  | 'move-selection'
+  | 'resize-line'
+  | 'resize-selection'
+  | 'draw-line'
+  | 'draw-polyline'
+  | 'tool-change'
+  | 'zoom'
+  | 'reset-view';
 type TransformMode = 'idle' | 'resize-line' | 'resize-selection';
 type ResizeAxis = 'none' | 'x' | 'y' | 'xy';
 type TransformHandleId =
@@ -95,6 +110,9 @@ type DragSession = {
   resizeOriginalBoundingBox: BoundingBox | null;
   resizeAnchorPoint: Point | null;
   resizeActivePoint: Point | null;
+  startTime: number;
+  canStartSelectionBox: boolean;
+  isPanningCanvas: boolean;
 };
 
 type SelectionBoxState = {
@@ -110,6 +128,9 @@ const MAX_ZOOM = 0.6;
 const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
 const DRAG_THRESHOLD_PX = 3;
+const SELECTION_BOX_HOLD_DELAY_MS = 180;
+const DOUBLE_TAP_DELAY_MS = 300;
+const DOUBLE_TAP_DISTANCE_PX = 18;
 const HIT_TOLERANCE_PX = 12;
 const ENDPOINT_SNAP_THRESHOLD_PX = 14;
 const TRANSFORM_HANDLE_SIZE_PX = 14;
@@ -148,7 +169,7 @@ const EMPTY_DRAG_SESSION: DragSession = {
   started: false,
   moved: false,
   pointerId: null,
-  interactionMode: 'pan',
+  interactionMode: 'idle',
   startX: 0,
   startY: 0,
   lastX: 0,
@@ -161,6 +182,9 @@ const EMPTY_DRAG_SESSION: DragSession = {
   resizeOriginalBoundingBox: null,
   resizeAnchorPoint: null,
   resizeActivePoint: null,
+  startTime: 0,
+  canStartSelectionBox: false,
+  isPanningCanvas: false,
 };
 
 const normalizeAngle = (angle: number) => {
@@ -670,6 +694,7 @@ const getDimensionLabelPlacement = (geometry: LineScreenGeometry, contourCentroi
 export const CanvasV4DevScreen = () => {
   const canvasRef = useRef<View | null>(null);
   const dragSessionRef = useRef<DragSession>(EMPTY_DRAG_SESSION);
+  const lastTapRef = useRef<{ time: number; point: Point; wasEmpty: boolean } | null>(null);
   const { height: windowHeight } = useWindowDimensions();
 
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
@@ -692,6 +717,9 @@ export const CanvasV4DevScreen = () => {
   const [lastUndoAction, setLastUndoAction] = useState<string>('null');
   const [lastRedoAction, setLastRedoAction] = useState<string>('null');
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('idle');
+  const [isPanningCanvas, setIsPanningCanvas] = useState(false);
+  const [lastInteractionType, setLastInteractionType] = useState<LastInteractionType>('init');
   const [isMovingSelection, setIsMovingSelection] = useState(false);
   const [moveDeltaMm, setMoveDeltaMm] = useState<Point>({ x: 0, y: 0 });
   const [lastMoveAction, setLastMoveAction] = useState<string>('null');
@@ -863,12 +891,14 @@ export const CanvasV4DevScreen = () => {
   const applyZoom = useCallback((factor: number) => {
     setCameraZoom((current) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current * factor)));
     setLastActionType('ZOOM_CHANGE');
+    setLastInteractionType('zoom');
   }, []);
 
   const resetView = useCallback(() => {
     setCameraZoom(DEFAULT_ZOOM);
     setPan({ x: 0, y: 0 });
     setLastActionType('RESET_VIEW');
+    setLastInteractionType('reset-view');
   }, []);
 
   const deleteSelectedEntities = useCallback(() => {
@@ -990,6 +1020,7 @@ export const CanvasV4DevScreen = () => {
       setSelectedEntityIds(nextSelectedIds);
       setSelectionMode('box');
       setLastActionType(nextSelectedIds.length > 0 ? 'SELECTION_BOX_SELECT' : 'SELECTION_BOX_CLEAR');
+      setLastInteractionType('selection-box');
     },
     [entities, screenToWorld],
   );
@@ -997,10 +1028,13 @@ export const CanvasV4DevScreen = () => {
   const finishClick = useCallback(
     (screenPoint: Point) => {
       const rawWorldPoint = screenToWorld(screenPoint);
+      const isDrawingTool = currentToolMode === 'line' || currentToolMode === 'polyline';
       const clickSnap = resolveCanvasV4Snap(entities, rawWorldPoint, endpointSnapThreshold, currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null);
       setPointerWorldPoint(rawWorldPoint);
 
       if (currentToolMode === 'line') {
+        setLastInteractionType('draw-line');
+
         if (!lineStartPoint) {
           setLineStartPoint(clickSnap.point);
           setSelectedEntityIds([]);
@@ -1018,6 +1052,8 @@ export const CanvasV4DevScreen = () => {
       }
 
       if (currentToolMode === 'polyline') {
+        setLastInteractionType('draw-polyline');
+
         if (!polylineLastPoint) {
           setPolylineLastPoint(clickSnap.point);
           setActivePolylineId(`polyline-${Date.now()}`);
@@ -1035,17 +1071,38 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
-      if (currentToolMode === 'select') {
+      if (!isDrawingTool) {
         const hitEntityId = findEntityAtWorldPoint(rawWorldPoint);
-        setSelectedEntityIds(hitEntityId ? [hitEntityId] : []);
-        setSelectionMode('single');
-        setLastActionType(hitEntityId ? 'SELECT_ENTITY' : 'CLEAR_SELECTION');
-        return;
-      }
+        const now = Date.now();
 
-      setSelectedEntityIds([]);
-      setSelectionMode('single');
-      setLastActionType('IDLE_TAP');
+        if (hitEntityId) {
+          setSelectedEntityIds([hitEntityId]);
+          setSelectionMode('single');
+          setLastActionType('SELECT_ENTITY');
+          setLastInteractionType('tap-select');
+          lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
+          return;
+        }
+
+        const previousTap = lastTapRef.current;
+        const isDoubleTapEmpty =
+          !!previousTap?.wasEmpty &&
+          now - previousTap.time <= DOUBLE_TAP_DELAY_MS &&
+          Math.hypot(screenPoint.x - previousTap.point.x, screenPoint.y - previousTap.point.y) <= DOUBLE_TAP_DISTANCE_PX;
+
+        if (isDoubleTapEmpty) {
+          setSelectedEntityIds([]);
+          setSelectionMode('single');
+          setLastActionType('DOUBLE_TAP_CLEAR_SELECTION');
+          setLastInteractionType('double-tap-clear');
+          lastTapRef.current = null;
+          return;
+        }
+
+        setLastActionType('EMPTY_TAP_KEEP_SELECTION');
+        setLastInteractionType('tap-empty');
+        lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
+      }
     },
     [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld],
   );
@@ -1057,6 +1114,9 @@ export const CanvasV4DevScreen = () => {
     setActivePolylineId(null);
     setPointerWorldPoint(null);
     setSelectionBox(null);
+    setInteractionMode('idle');
+    setIsPanningCanvas(false);
+    setLastInteractionType('tool-change');
     setTransformMode('idle');
     setActiveHandleId(null);
     setIsResizing(false);
@@ -1074,20 +1134,20 @@ export const CanvasV4DevScreen = () => {
     (screenPoint: Point, pointerId?: number) => {
       const rawWorldPoint = screenToWorld(screenPoint);
       const selectedSet = new Set(selectedEntityIds);
-      const transformHandle = currentToolMode === 'select' ? findTransformHandleAtScreenPoint(screenPoint) : null;
+      const isNavigationSelectionMode = currentToolMode !== 'line' && currentToolMode !== 'polyline';
+      const transformHandle = isNavigationSelectionMode ? findTransformHandleAtScreenPoint(screenPoint) : null;
       const isLineResize = !!transformHandle && selectedEntities.length === 1;
       const isSelectionResize = !!transformHandle && selectedEntities.length > 1;
-      const hitEntityId = currentToolMode === 'select' && !transformHandle ? findEntityAtWorldPoint(rawWorldPoint) : null;
-      const shouldMoveSelection = currentToolMode === 'select' && !!hitEntityId && selectedSet.has(hitEntityId);
-      const interactionMode: InteractionMode = isLineResize
+      const hitEntityId = isNavigationSelectionMode && !transformHandle ? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const shouldMoveSelection = isNavigationSelectionMode && !!hitEntityId && selectedSet.has(hitEntityId);
+      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitEntityId;
+      const initialInteractionMode: InteractionMode = isLineResize
         ? 'resize-line'
         : isSelectionResize
           ? 'resize-selection'
           : shouldMoveSelection
             ? 'move-selection'
-            : currentToolMode === 'select' && !hitEntityId
-              ? 'selection-box'
-              : 'pan';
+            : 'pan';
       const moveOriginalEntities = shouldMoveSelection ? selectedEntities : [];
       const resizeOriginalEntities = isLineResize || isSelectionResize ? selectedEntities : [];
       const resizeOriginalBoundingBox = isSelectionResize ? selectedBoundingBox : null;
@@ -1098,7 +1158,7 @@ export const CanvasV4DevScreen = () => {
         started: true,
         moved: false,
         pointerId: pointerId ?? null,
-        interactionMode,
+        interactionMode: initialInteractionMode,
         startX: screenPoint.x,
         startY: screenPoint.y,
         lastX: screenPoint.x,
@@ -1111,8 +1171,13 @@ export const CanvasV4DevScreen = () => {
         resizeOriginalBoundingBox,
         resizeAnchorPoint,
         resizeActivePoint,
+        startTime: Date.now(),
+        canStartSelectionBox,
+        isPanningCanvas: false,
       };
       setPointerWorldPoint(rawWorldPoint);
+      setInteractionMode(initialInteractionMode);
+      setIsPanningCanvas(false);
       setSelectionBox(null);
       setIsMovingSelection(false);
       setMoveDeltaMm({ x: 0, y: 0 });
@@ -1138,12 +1203,20 @@ export const CanvasV4DevScreen = () => {
       const totalDx = screenPoint.x - session.startX;
       const totalDy = screenPoint.y - session.startY;
       const moved = session.moved || Math.hypot(totalDx, totalDy) >= DRAG_THRESHOLD_PX;
+      const shouldStartSelectionBox =
+        moved &&
+        session.canStartSelectionBox &&
+        !session.isPanningCanvas &&
+        Date.now() - session.startTime >= SELECTION_BOX_HOLD_DELAY_MS;
+      const nextInteractionMode: InteractionMode = shouldStartSelectionBox ? 'selection-box' : session.interactionMode;
 
       dragSessionRef.current = {
         ...session,
         moved,
+        interactionMode: nextInteractionMode,
         lastX: screenPoint.x,
         lastY: screenPoint.y,
+        isPanningCanvas: session.isPanningCanvas || (moved && nextInteractionMode === 'pan'),
       };
       setPointerWorldPoint(screenToWorld(screenPoint));
 
@@ -1151,7 +1224,9 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
-      if (session.interactionMode === 'selection-box') {
+      setInteractionMode(nextInteractionMode);
+
+      if (nextInteractionMode === 'selection-box') {
         setSelectionBox({
           active: true,
           startPoint: { x: session.startX, y: session.startY },
@@ -1159,6 +1234,7 @@ export const CanvasV4DevScreen = () => {
         });
         setSelectionMode('box');
         setLastActionType('SELECTION_BOX_DRAG');
+        setLastInteractionType('selection-box');
         return;
       }
 
@@ -1182,6 +1258,7 @@ export const CanvasV4DevScreen = () => {
           setResizeAxis('xy');
           setResizeScale({ x: 1, y: 1 });
           setLastActionType('RESIZE_WALL_SEGMENT_DRAG');
+          setLastInteractionType('resize-line');
         }
 
         return;
@@ -1221,6 +1298,7 @@ export const CanvasV4DevScreen = () => {
           setResizeAxis(session.resizeAxis);
           setResizeScale({ x: scaleX, y: scaleY });
           setLastActionType('RESIZE_WALL_SELECTION_DRAG');
+          setLastInteractionType('resize-selection');
         }
 
         return;
@@ -1235,11 +1313,14 @@ export const CanvasV4DevScreen = () => {
         setMoveDeltaMm(moveDelta);
         setSelectionMode('move');
         setLastActionType('MOVE_SELECTION_DRAG');
+        setLastInteractionType('move-selection');
         return;
       }
 
       setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }));
+      setIsPanningCanvas(true);
       setLastActionType('PAN_CHANGE');
+      setLastInteractionType('pan-canvas');
     },
     [cameraZoom, endpointSnapThreshold, entities, screenToWorld],
   );
@@ -1347,6 +1428,8 @@ export const CanvasV4DevScreen = () => {
       }
 
       setSelectionBox(null);
+      setInteractionMode('idle');
+      setIsPanningCanvas(false);
       setIsMovingSelection(false);
       setIsResizing(false);
       setTransformMode('idle');
@@ -1443,6 +1526,11 @@ export const CanvasV4DevScreen = () => {
   const inspectorLines = useMemo(
     () => [
       `currentToolMode: ${currentToolMode}`,
+      `interactionMode: ${interactionMode}`,
+      `isPanningCanvas: ${isPanningCanvas ? 'true' : 'false'}`,
+      `isDraggingSelection: ${isMovingSelection ? 'true' : 'false'}`,
+      `isSelectionBoxActive: ${selectionBox?.active ? 'true' : 'false'}`,
+      `lastInteractionType: ${lastInteractionType}`,
       `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
@@ -1510,7 +1598,10 @@ export const CanvasV4DevScreen = () => {
       lastRedoAction,
       lastUndoAction,
       inspectedDimensionLabelPlacement,
+      interactionMode,
+      isPanningCanvas,
       isMovingSelection,
+      lastInteractionType,
       lastMoveAction,
       lineStartPoint,
       moveDeltaMm.x,
