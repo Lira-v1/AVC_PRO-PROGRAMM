@@ -13,7 +13,7 @@ export type HomeCategory = {
     | 'Services'
     | 'Emergency'
     | 'Estimate'
-    | 'Commercial'
+    | 'IndustrialEngineering'
     | 'Maintenance'
     | 'Vacancies'
     | 'Orders'
@@ -32,7 +32,7 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
       { id: 'services', title: 'Вызвать мастера', route: 'Services' },
       { id: 'emergency', title: 'Экстренный мастер', route: 'Emergency' },
       { id: 'estimate', title: 'Сметмастер', route: 'Estimate' },
-      { id: 'commercial', title: 'Коммерция', route: 'Commercial' },
+      { id: 'industrial-engineering', title: 'Индустриальная инженерия', route: 'IndustrialEngineering' },
       { id: 'maintenance', title: 'Обслуживание', route: 'Maintenance' },
       { id: 'vacancies', title: 'Вакансии', route: 'Vacancies' },
       { id: 'orders', title: 'Мои заявки', route: 'Orders' },
