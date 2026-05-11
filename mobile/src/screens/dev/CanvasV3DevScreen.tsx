@@ -108,9 +108,14 @@ const getInspectorStateSections = (debugState: CanvasDebugState, surfaceCount: n
       `activeRoomId: ${debugState.activeRoomId ?? 'null'}`,
       `activeSurfaceId: ${debugState.activeSurfaceId ?? 'null'}`,
       `activeWallId: ${debugState.activeWallId ?? 'null'}`,
+      `activeSegmentId: ${debugState.activeSegmentId ?? 'null'}`,
+      `lastCanvasAction: ${debugState.lastCanvasAction}`,
+      `isSceneUpdating: ${debugState.isSceneUpdating ? 'true' : 'false'}`,
+      `activePipelineStage: ${debugState.activePipelineStage}`,
       `isDraggingRoom: ${debugState.isDraggingRoom ? 'true' : 'false'}`,
       `isResizingRoom: ${debugState.isResizingRoom ? 'true' : 'false'}`,
       `isWallDrawingMode: ${debugState.isWallDrawingMode ? 'true' : 'false'}`,
+      `isSegmentDrawingMode: ${debugState.isSegmentDrawingMode ? 'true' : 'false'}`,
       `activeResizeHandleId: ${debugState.activeResizeHandleId ?? 'null'}`,
       `activeRoomRotationDeg: ${debugState.activeRoomRotationDeg ?? 'null'}`,
     ],
@@ -130,17 +135,21 @@ const getInspectorStateSections = (debugState: CanvasDebugState, surfaceCount: n
     ],
     snapState: debugState.snapPreview
       ? [
+        `snapState: ${debugState.snapState}`,
         'snapActive: true',
         `snapTargetType: ${debugState.snapPreview.targetRoomId ? 'room' : 'grid'}`,
         `snapTargetId: ${debugState.snapPreview.targetRoomId ?? 'null'}`,
         `snapDistance: ${snapDistance?.toFixed(2) ?? 'null'}`,
       ]
-      : ['snapActive: false', 'snapTargetType: null', 'snapTargetId: null', 'snapDistance: null'],
+      : [`snapState: ${debugState.snapState}`, 'snapActive: false', 'snapTargetType: null', 'snapTargetId: null', 'snapDistance: null'],
     sceneState: [
       `roomIds: ${debugState.roomIds.length ? debugState.roomIds.join(', ') : 'none'}`,
+      `roomsCount: ${debugState.roomsCount}`,
+      `segmentsCount: ${debugState.segmentsCount}`,
       `wallSegmentsCount: ${debugState.wallSegmentsCount}`,
       `surfaceCount: ${surfaceCount}`,
-      'objectCount: null',
+      `surfacesCount: ${debugState.surfacesCount}`,
+      `objectCount: ${debugState.objectsCount}`,
     ],
   };
 };
@@ -573,7 +582,7 @@ export const CanvasV3DevScreen = () => {
   const roomGeometries = engineRef.current.getRooms().map((room) => engineRef.current.getRoomScreenGeometry(room));
   const contourShapes = engineRef.current.getContourShapesScreen();
   const currentContourPoints = engineRef.current.getCurrentContourPointsScreen();
-  const wallSegments = engineRef.current.getWallGraphSegments();
+  const segments = engineRef.current.getSegments();
   const isContourSnapToStart = engineRef.current.isContourSnapToStartActive();
   const surfaceWorldGeometries = engineRef.current.getRoomSurfaceSceneWorldGeometry();
   const surfaceGeometries = engineRef.current.getRoomSurfaceSceneScreenGeometry();
@@ -790,7 +799,7 @@ export const CanvasV3DevScreen = () => {
 
     const nextDrawingState = !engineRef.current.getIsDrawingMode();
     engineRef.current.setDrawingMode(nextDrawingState);
-    pushActionHistory(nextDrawingState ? 'START_WALL_DRAW' : 'END_WALL_DRAW');
+    pushActionHistory(nextDrawingState ? 'START_SEGMENT_DRAW' : 'END_SEGMENT_DRAW');
     pushActionHistory('TOOL_CHANGE');
     setToolsMenuOpen(false);
     refreshState();
@@ -945,7 +954,7 @@ export const CanvasV3DevScreen = () => {
               />
             ))}
 
-            {wallSegments.map((segment) => {
+            {segments.map((segment) => {
               const startPoint = engineRef.current.worldToScreen(segment.startPoint);
               const endPoint = engineRef.current.worldToScreen(segment.endPoint);
               const edgeLength = Math.hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y);
@@ -955,7 +964,7 @@ export const CanvasV3DevScreen = () => {
 
               return (
                 <View
-                  key={`wall-segment-${segment.wallId}`}
+                  key={`segment-${segment.segmentId}`}
                   pointerEvents="none"
                   style={[
                     styles.wallSegmentLine,
@@ -1523,7 +1532,7 @@ export const CanvasV3DevScreen = () => {
                         <Text style={styles.toolsMenuItemText}>🧱 Добавить комнату</Text>
                       </Pressable>
                       <Pressable style={styles.toolsMenuItem} onPress={handleToggleDrawingMode}>
-                        <Text style={styles.toolsMenuItemText}>{snapshot.wallDrawingMode ? '🧱 Построить стену: выкл' : '🧱 Построить стену: вкл'}</Text>
+                        <Text style={styles.toolsMenuItemText}>{snapshot.wallDrawingMode ? '／ Сегмент: выкл' : '／ Сегмент: вкл'}</Text>
                       </Pressable>
                       <Pressable
                         style={[styles.toolsMenuItem, styles.toolsMenuItemPlaceholder]}

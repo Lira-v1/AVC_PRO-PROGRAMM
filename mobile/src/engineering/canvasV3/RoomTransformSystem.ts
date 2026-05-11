@@ -11,7 +11,6 @@ const DEFAULT_CORNER_SNAP_RELEASE_THRESHOLD_MM = 22;
 const DEFAULT_CORNER_SNAP_PRIORITY_BONUS_MM = 2;
 const SNAP_SOFT_INFLUENCE_MIN = 0.2;
 const SNAP_SOFT_INFLUENCE_MAX = 0.62;
-const SNAP_HARD_LOCK_DISTANCE_MM = 1.4;
 const SNAP_PREVIEW_MULTIPLIER = 1.6;
 const OVERLAP_EPSILON_MM = 0.001;
 
@@ -404,10 +403,6 @@ export class RoomTransformSystem {
   }
 
   private applySoftSnap(rawValue: number, snappedValue: number, distance: number, threshold: number): number {
-    if (distance <= SNAP_HARD_LOCK_DISTANCE_MM) {
-      return snappedValue;
-    }
-
     const normalized = Math.max(0, Math.min(1, 1 - distance / Math.max(threshold, OVERLAP_EPSILON_MM)));
     const influence = SNAP_SOFT_INFLUENCE_MIN + (SNAP_SOFT_INFLUENCE_MAX - SNAP_SOFT_INFLUENCE_MIN) * normalized;
 
@@ -415,14 +410,12 @@ export class RoomTransformSystem {
   }
 
   private resolveDragPosition(room: RoomModel, centerX: number, centerY: number): SnapResult {
-    const isHoldingRoomSnap = Boolean(this.snapTargetRoomId);
-    const cornerThreshold = isHoldingRoomSnap ? this.cornerSnapReleaseThresholdMm : this.cornerSnapEnterThresholdMm;
-    const sideThreshold = isHoldingRoomSnap ? this.roomSnapReleaseThresholdMm : this.roomSnapEnterThresholdMm;
-    const roomTargetScope = this.snapTargetRoomId ?? undefined;
+    const cornerThreshold = this.cornerSnapEnterThresholdMm;
+    const sideThreshold = this.roomSnapEnterThresholdMm;
 
-    const roomCornerCandidate = this.getRoomCornerSnapCandidate(room, centerX, centerY, cornerThreshold, roomTargetScope);
+    const roomCornerCandidate = this.getRoomCornerSnapCandidate(room, centerX, centerY, cornerThreshold);
     const gridCornerCandidate = this.getGridCornerSnapCandidate(room, centerX, centerY, cornerThreshold);
-    const sideCandidate = this.getSideSnapCandidate(room, centerX, centerY, sideThreshold, roomTargetScope);
+    const sideCandidate = this.getSideSnapCandidate(room, centerX, centerY, sideThreshold);
 
     const bestCornerCandidate =
       roomCornerCandidate && gridCornerCandidate

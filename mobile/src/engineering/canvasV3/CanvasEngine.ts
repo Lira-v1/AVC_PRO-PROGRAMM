@@ -3,6 +3,9 @@ import { CoordinateSystem } from './CoordinateSystem';
 import { GridSystem } from './GridSystem';
 import {
   CanvasMode,
+  CanvasActionType,
+  CanvasPipelineStage,
+  CanvasSnapState,
   CanvasToolMode,
   CanvasDebugState,
   CanvasSnapshot,
@@ -13,6 +16,7 @@ import {
   DimensionLineScreenGeometry,
   DimensionLineWorldGeometry,
   DimensionUnit,
+  Segment,
   RoomModel,
   RoomSettings,
   RoomResizeHandleId,
@@ -260,7 +264,7 @@ export class CanvasEngine {
   private savedMainCameraState: CameraState | null = null;
   private savedRoomSurfaceSceneCameraState: CameraState | null = null;
   private isDrawingMode = false;
-  private currentToolMode: CanvasToolMode = 'select';
+  private currentToolMode: CanvasToolMode = 'idle';
   private currentContourPoints: WorldPoint[] = [];
   private contourShapes: ContourShapeWorldGeometry[] = [];
   private isContourClosed = false;
@@ -272,11 +276,16 @@ export class CanvasEngine {
   private splitNewRoomIds: string[] = [];
   private wallNodes: WallNode[] = [];
   private wallSegments: WallSegment[] = [];
+  private segments: Segment[] = [];
   private closedRegions: ClosedRegion[] = [];
   private lastCreatedWallId: string | null = null;
   private lastCreatedNodeId: string | null = null;
   private lastDetectedRoomId: string | null = null;
   private wallGraphUpdated = false;
+  private lastCanvasAction: CanvasActionType = 'NONE';
+  private snapState: CanvasSnapState = 'inactive';
+  private isSceneUpdating = false;
+  private activePipelineStage: CanvasPipelineStage = 'idle';
   private autoRoomByRegionId = new Map<string, string>();
 
   private getRoomFallbackNameById(roomId: string): string {
@@ -371,8 +380,24 @@ export class CanvasEngine {
     this.rooms.push(nextRoom);
     this.setRooms(this.rooms);
     this.selectRoom(roomId);
+    this.lastCanvasAction = 'CREATE_ROOM';
 
     return normalizeRoomModel(nextRoom);
+  }
+
+  private getNextSegmentId(): string {
+    const maxNumericId = this.segments.reduce((maxValue, segment) => {
+      const match = segment.segmentId.match(/^segment-(\d+)$/);
+      const parsed = match ? Number.parseInt(match[1], 10) : Number.NaN;
+
+      if (Number.isNaN(parsed)) {
+        return maxValue;
+      }
+
+      return Math.max(maxValue, parsed);
+    }, 0);
+
+    return `segment-${maxNumericId + 1}`;
   }
 
   private getNextWallId(): string {
@@ -724,7 +749,8 @@ export class CanvasEngine {
     }
 
     this.isDrawingMode = next;
-    this.currentToolMode = next ? 'wall' : 'select';
+    this.currentToolMode = next ? 'segment' : 'idle';
+    this.lastCanvasAction = 'TOOL_CHANGE';
     this.transform.endDrag();
     this.resize.endResize();
 
@@ -742,6 +768,36 @@ export class CanvasEngine {
 
   getCurrentToolMode(): CanvasToolMode {
     return this.currentToolMode;
+  }
+
+  setCurrentToolMode(nextMode: CanvasToolMode): CanvasToolMode {
+    if (this.mode !== 'main' && nextMode !== 'surface' && nextMode !== 'unfold') {
+      return this.currentToolMode;
+    }
+
+    this.currentToolMode = nextMode;
+    this.isDrawingMode = nextMode === 'segment';
+    this.lastCanvasAction = 'TOOL_CHANGE';
+    this.transform.endDrag();
+    this.resize.endResize();
+
+    if (nextMode !== 'segment') {
+      this.resetDrawingSession();
+    }
+
+    return this.currentToolMode;
+  }
+
+  private setPipelineStage(stage: CanvasPipelineStage) {
+    this.activePipelineStage = stage;
+    this.isSceneUpdating = stage === 'geometry-update' || stage === 'scene-update';
+  }
+
+  private completePipeline(action: CanvasActionType = this.lastCanvasAction) {
+    this.lastCanvasAction = action;
+    this.setPipelineStage('inspector-update');
+    this.isSceneUpdating = false;
+    this.activePipelineStage = 'idle';
   }
 
   private resetDrawingSession() {
@@ -974,18 +1030,22 @@ export class CanvasEngine {
     this.wallGraphUpdated = true;
   }
 
-  addWallPointAtScreenPoint(point: ScreenPoint): WallSegment[] {
-    if (!this.isDrawingMode || this.mode !== 'main') {
+  addSegmentAtScreenPoint(point: ScreenPoint): Segment[] {
+    if (!this.isDrawingMode || this.mode !== 'main' || this.currentToolMode !== 'segment') {
       return [];
     }
 
+    this.setPipelineStage('pointer-input');
     const worldPoint = this.snapToGrid(this.screenToWorld(point));
     const startPoint = this.currentContourPoints[0];
+    this.setPipelineStage('tool-mode');
 
     if (!startPoint) {
       this.currentContourPoints = [worldPoint];
       this.lastPointerWorldPoint = { ...worldPoint };
       this.currentSegmentAngle = null;
+      this.snapState = 'preview';
+      this.completePipeline('TOOL_CHANGE');
       return [];
     }
 
@@ -993,33 +1053,52 @@ export class CanvasEngine {
     const segmentLength = distance(startPoint, snappedEndPoint);
 
     if (segmentLength <= SPLIT_INTERSECTION_EPSILON_MM) {
+      this.completePipeline('NONE');
       return [];
     }
 
+    this.setPipelineStage('geometry-update');
     const segmentAngle = (Math.atan2(snappedEndPoint.y - startPoint.y, snappedEndPoint.x - startPoint.x) * 180) / Math.PI;
-    const created: WallSegment = {
-      wallId: this.getNextWallId(),
-      startNodeId: '',
-      endNodeId: '',
+    const created: Segment = {
+      segmentId: this.getNextSegmentId(),
       startPoint: { ...startPoint },
       endPoint: { ...snappedEndPoint },
       length: segmentLength,
       angle: segmentAngle,
-      roomIds: [],
-      surfaceIds: [],
-      isExternal: true,
-      isInternal: false,
+      segmentType: 'line',
     };
 
-    this.wallSegments.push(created);
-    this.lastCreatedWallId = created.wallId;
+    this.segments.push(created);
+    this.lastCreatedWallId = created.segmentId;
     this.currentContourPoints = [];
     this.lastPointerWorldPoint = { ...snappedEndPoint };
     this.currentSegmentAngle = segmentAngle;
     this.isContourClosed = false;
+    this.isContourConvertedToRoom = false;
     this.wallGraphUpdated = false;
+    this.snapState = 'soft';
+    this.setPipelineStage('scene-update');
+    this.completePipeline('CREATE_SEGMENT');
 
     return [created];
+  }
+
+  addWallPointAtScreenPoint(point: ScreenPoint): WallSegment[] {
+    const createdSegments = this.addSegmentAtScreenPoint(point);
+
+    return createdSegments.map((segment) => ({
+      wallId: segment.segmentId,
+      startNodeId: '',
+      endNodeId: '',
+      startPoint: { ...segment.startPoint },
+      endPoint: { ...segment.endPoint },
+      length: segment.length,
+      angle: segment.angle,
+      roomIds: [],
+      surfaceIds: [],
+      isExternal: true,
+      isInternal: false,
+    }));
   }
 
   private registerSplitDebugState(sourceRoomId: string, newRoomIds: string[]) {
@@ -1313,7 +1392,7 @@ export class CanvasEngine {
       return null;
     }
 
-    if (this.currentToolMode === 'wall') {
+    if (this.currentToolMode === 'segment') {
       this.addWallPointAtScreenPoint(point);
       return null;
     }
@@ -1425,14 +1504,39 @@ export class CanvasEngine {
     }));
   }
 
-  getWallGraphSegments(): WallSegment[] {
-    return this.wallSegments.map((segment) => ({
+  getSegments(): Segment[] {
+    return this.segments.map((segment) => ({
       ...segment,
       startPoint: { ...segment.startPoint },
       endPoint: { ...segment.endPoint },
-      roomIds: [...segment.roomIds],
-      surfaceIds: [...segment.surfaceIds],
     }));
+  }
+
+  getWallGraphSegments(): WallSegment[] {
+    const independentSegments = this.segments.map((segment) => ({
+      wallId: segment.segmentId,
+      startNodeId: '',
+      endNodeId: '',
+      startPoint: { ...segment.startPoint },
+      endPoint: { ...segment.endPoint },
+      length: segment.length,
+      angle: segment.angle,
+      roomIds: [],
+      surfaceIds: [],
+      isExternal: true,
+      isInternal: false,
+    }));
+
+    return [
+      ...independentSegments,
+      ...this.wallSegments.map((segment) => ({
+        ...segment,
+        startPoint: { ...segment.startPoint },
+        endPoint: { ...segment.endPoint },
+        roomIds: [...segment.roomIds],
+        surfaceIds: [...segment.surfaceIds],
+      })),
+    ];
   }
 
   getWallClosedRegions(): ClosedRegion[] {
@@ -1600,6 +1704,8 @@ export class CanvasEngine {
     }
 
     const activeRoomId = this.selection.selectRoom(roomId);
+    this.currentToolMode = 'room';
+    this.lastCanvasAction = 'SELECT_ROOM';
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
     this.rotate.setActiveRoomId(activeRoomId);
@@ -1612,6 +1718,7 @@ export class CanvasEngine {
     }
 
     const activeRoomId = this.selection.clearSelection();
+    this.currentToolMode = 'idle';
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
     this.rotate.setActiveRoomId(activeRoomId);
@@ -1622,7 +1729,7 @@ export class CanvasEngine {
     const worldPoint = this.screenToWorld(screenPoint);
 
     if (this.isDrawingMode && this.currentContourPoints.length > 0) {
-      if (this.currentToolMode === 'wall') {
+      if (this.currentToolMode === 'segment') {
         const anchor = this.currentContourPoints[0] ?? this.snapToGrid(worldPoint);
         const snappedPoint = this.snapWallPointToDirection(anchor, this.snapToGrid(worldPoint));
         this.currentSegmentAngle = (Math.atan2(snappedPoint.y - anchor.y, snappedPoint.x - anchor.x) * 180) / Math.PI;
@@ -1656,6 +1763,8 @@ export class CanvasEngine {
 
     const worldPoint = this.updateLastPointer(point);
     const activeRoomId = this.selection.selectRoomAt(worldPoint);
+    this.currentToolMode = activeRoomId ? 'room' : 'idle';
+    this.lastCanvasAction = activeRoomId ? 'SELECT_ROOM' : this.lastCanvasAction;
     this.transform.setActiveRoomId(activeRoomId);
     this.resize.setActiveRoomId(activeRoomId);
     this.rotate.setActiveRoomId(activeRoomId);
@@ -1687,6 +1796,10 @@ export class CanvasEngine {
 
     const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
     const room = this.transform.dragByWorldDelta(worldDelta);
+    if (room) {
+      this.lastCanvasAction = 'MOVE_ROOM';
+      this.snapState = this.transform.getSnapPreview() ? 'preview' : 'inactive';
+    }
 
     return room ? { ...room } : null;
   }
@@ -1702,6 +1815,9 @@ export class CanvasEngine {
 
     const worldDelta = CoordinateSystem.screenDeltaToWorldDelta(this.camera, screenDelta);
     const room = this.resize.resizeByWorldDelta(worldDelta);
+    if (room) {
+      this.lastCanvasAction = 'RESIZE_ROOM';
+    }
 
     return room ? { ...room } : null;
   }
@@ -1719,6 +1835,9 @@ export class CanvasEngine {
     this.resize.endResize();
 
     const room = this.rotate.rotateActiveRoom(stepDeg);
+    if (room) {
+      this.lastCanvasAction = 'ROTATE_ROOM';
+    }
 
     return room ? { ...room } : null;
   }
@@ -1729,10 +1848,12 @@ export class CanvasEngine {
 
   panBy(deltaX: number, deltaY: number) {
     this.camera.panByScreenDelta(deltaX, deltaY);
+    this.lastCanvasAction = 'PAN';
   }
 
   zoomBy(factor: number) {
     this.camera.zoomBy(factor);
+    this.lastCanvasAction = 'ZOOM';
   }
 
   resetView() {
@@ -1923,6 +2044,7 @@ export class CanvasEngine {
       worldAtScreenCenter: this.screenToWorld(screenCenter),
       activeSurfaceId: this.activeSurfaceId,
       activeWallId: this.lastCreatedWallId,
+      activeSegmentId: this.lastCreatedWallId,
       activeRoomId: this.getActiveRoomId(),
       snappedRoomId: this.transform.getSnappedRoomId(),
       snapTargetRoomId: this.transform.getSnapTargetRoomId(),
@@ -1933,11 +2055,15 @@ export class CanvasEngine {
       activeRoomRotationDeg: this.getActiveRoom()?.rotationDeg ?? null,
       roomIds: this.rooms.map((room) => room.roomId),
       roomsCount: this.rooms.length,
+      segmentsCount: this.segments.length,
+      surfacesCount: this.getSceneSurfacesCount(),
+      objectsCount: 0,
       roomPositions: this.rooms.map((room) => ({ roomId: room.roomId, centerX: room.centerX, centerY: room.centerY })),
       isDrawingMode: this.isDrawingMode,
       currentToolMode: this.currentToolMode,
-      wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
-      isWallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
+      wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'segment',
+      isWallDrawingMode: this.isDrawingMode && this.currentToolMode === 'segment',
+      isSegmentDrawingMode: this.isDrawingMode && this.currentToolMode === 'segment',
       isOrthogonalDrawingMode: this.isDrawingMode,
       currentSegmentAngle: this.currentSegmentAngle,
       currentContourPointsCount: this.currentContourPoints.length,
@@ -1956,13 +2082,17 @@ export class CanvasEngine {
       isRoomSplitOperation: this.isRoomSplitOperation,
       splitSourceRoomId: this.splitSourceRoomId,
       newRoomIds: [...this.splitNewRoomIds],
-      wallSegmentsCount: this.wallSegments.length,
+      wallSegmentsCount: this.segments.length,
       wallNodesCount: this.wallNodes.length,
       closedRegionsCount: this.closedRegions.length,
       lastCreatedWallId: this.lastCreatedWallId,
       lastCreatedNodeId: this.lastCreatedNodeId,
       lastDetectedRoomId: this.lastDetectedRoomId,
       wallGraphUpdated: this.wallGraphUpdated,
+      lastCanvasAction: this.lastCanvasAction,
+      snapState: this.snapState,
+      isSceneUpdating: this.isSceneUpdating,
+      activePipelineStage: this.activePipelineStage,
     };
   }
 
@@ -1980,6 +2110,10 @@ export class CanvasEngine {
 
   getRoomGeometry(room: RoomModel): RoomWorldGeometry {
     return RoomGeometry.fromModel(room);
+  }
+
+  private getSceneSurfacesCount(): number {
+    return this.rooms.reduce((total, room) => total + this.getRoomWallSurfaceWorldGeometry(room.roomId).length + 2, 0);
   }
 
   getRoomWallSurfaceWorldGeometry(roomId: string): RoomSurfaceWorldGeometry[] {
@@ -2055,6 +2189,8 @@ export class CanvasEngine {
 
     this.savedMainCameraState = this.camera.getState();
     this.mode = 'room-surface-scene';
+    this.currentToolMode = 'unfold';
+    this.lastCanvasAction = 'OPEN_ROOM';
     this.surfaceSceneRoomId = roomId;
     this.activeSurfaceId = null;
     this.savedRoomSurfaceSceneCameraState = null;
@@ -2073,6 +2209,7 @@ export class CanvasEngine {
     }
 
     this.mode = 'main';
+    this.currentToolMode = 'idle';
     this.surfaceSceneRoomId = null;
     this.activeSurfaceId = null;
     this.savedMainCameraState = null;
@@ -2092,6 +2229,8 @@ export class CanvasEngine {
 
     this.savedRoomSurfaceSceneCameraState = this.camera.getState();
     this.mode = 'surface-scene';
+    this.currentToolMode = 'surface';
+    this.lastCanvasAction = 'OPEN_SURFACE';
     this.fitSurfaceSceneToViewport();
 
     return this.getActiveSurfaceSceneWorldGeometry()[0] ?? null;
@@ -2105,6 +2244,7 @@ export class CanvasEngine {
     const restoreState = this.savedRoomSurfaceSceneCameraState;
 
     this.mode = 'room-surface-scene';
+    this.currentToolMode = 'unfold';
     this.savedRoomSurfaceSceneCameraState = null;
 
     if (restoreState) {
@@ -2147,6 +2287,7 @@ export class CanvasEngine {
     }
 
     this.activeSurfaceId = hitSurface.surfaceId;
+    this.currentToolMode = 'surface';
     return this.activeSurfaceId;
   }
 
@@ -2402,16 +2543,23 @@ export class CanvasEngine {
       activeRoomId: this.getActiveRoomId(),
       roomIds: this.rooms.map((room) => room.roomId),
       roomsCount: this.rooms.length,
+      segmentsCount: this.segments.length,
+      surfacesCount: this.getSceneSurfacesCount(),
+      objectsCount: 0,
       mode: this.mode,
       surfaceSceneRoomId: this.surfaceSceneRoomId,
       activeSurfaceId: this.activeSurfaceId,
       isSurfaceSceneMode: this.mode === 'surface-scene',
       isDrawingMode: this.isDrawingMode,
       currentToolMode: this.currentToolMode,
-      wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'wall',
+      wallDrawingMode: this.isDrawingMode && this.currentToolMode === 'segment',
       currentContourPointsCount: this.currentContourPoints.length,
       isContourClosed: this.isContourClosed,
       lastCreatedShapeId: this.lastCreatedShapeId,
+      lastCanvasAction: this.lastCanvasAction,
+      snapState: this.snapState,
+      isSceneUpdating: this.isSceneUpdating,
+      activePipelineStage: this.activePipelineStage,
     };
   }
 }
