@@ -8,26 +8,35 @@ type Point = {
 };
 
 type ToolMode = 'idle' | 'line' | 'polyline' | 'select';
+type WallSegmentType = 'external' | 'internal';
 
-type CanvasV4LineEntity = {
+type CanvasV4WallSegment = {
   entityId: string;
+  segmentId: string;
   lineId: string;
-  entityType: 'line' | 'polyline-segment';
+  entityType: 'wall-segment';
   polylineId?: string;
   startPoint: Point;
   endPoint: Point;
   length: number;
   angle: number;
+  wallThickness: number;
+  segmentType: WallSegmentType;
+  connectedSegmentIds: string[];
+  doorIds: string[];
+  windowIds: string[];
 };
 
+type CanvasV4LineEntity = CanvasV4WallSegment;
+
 type HistoryAction =
-  | { type: 'CREATE_LINE'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'CREATE_POLYLINE_SEGMENT'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'DELETE_LINE'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'DELETE_SELECTED_LINES'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
-  | { type: 'MOVE_SELECTED_LINES'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; delta: Point }
-  | { type: 'RESIZE_LINE'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string }
-  | { type: 'RESIZE_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string; scaleX: number; scaleY: number };
+  | { type: 'CREATE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'CREATE_POLYLINE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
+  | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; delta: Point }
+  | { type: 'RESIZE_WALL_SEGMENT'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string }
+  | { type: 'RESIZE_WALL_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; handleId: string; scaleX: number; scaleY: number };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
 
@@ -112,6 +121,7 @@ const LINE_DIMENSION_LABEL_OFFSET_PX = 22;
 const LINE_DIMENSION_LABEL_WIDTH_PX = 68;
 const LINE_DIMENSION_LABEL_HEIGHT_PX = 24;
 const POINT_MATCH_EPSILON = 0.001;
+const DEFAULT_WALL_THICKNESS_MM = 100;
 
 type LineScreenGeometry = {
   length: number;
@@ -287,22 +297,58 @@ const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, en
   };
 };
 
-const createLineEntity = (startPoint: Point, endPoint: Point, entityType: CanvasV4LineEntity['entityType'], polylineId?: string): CanvasV4LineEntity => {
+const arePointsEqual = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y) <= POINT_MATCH_EPSILON;
+
+const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: WallSegmentType = 'internal', polylineId?: string): CanvasV4WallSegment => {
   const metrics = getLineMetrics(startPoint, endPoint);
-  const lineId = `line-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+  const segmentId = `wall-segment-${Date.now()}-${Math.round(Math.random() * 100000)}`;
 
   return {
-    entityId: lineId,
-    lineId,
-    entityType,
+    entityId: segmentId,
+    segmentId,
+    lineId: segmentId,
+    entityType: 'wall-segment',
     polylineId,
     startPoint,
     endPoint,
     length: metrics.length,
     angle: metrics.angle,
+    wallThickness: DEFAULT_WALL_THICKNESS_MM,
+    segmentType,
+    connectedSegmentIds: [],
+    doorIds: [],
+    windowIds: [],
   };
 };
 
+
+
+const getEndpointPairs = (entity: CanvasV4LineEntity) => [
+  { segmentId: entity.segmentId, point: entity.startPoint },
+  { segmentId: entity.segmentId, point: entity.endPoint },
+];
+
+const normalizeWallSegmentConnectivity = (entities: CanvasV4LineEntity[]) => {
+  const connectedBySegmentId = new Map(entities.map((entity) => [entity.segmentId, new Set<string>()]));
+
+  entities.forEach((entity, entityIndex) => {
+    entities.slice(entityIndex + 1).forEach((candidate) => {
+      const isConnected = getEndpointPairs(entity).some((endpoint) =>
+        getEndpointPairs(candidate).some((candidateEndpoint) => arePointsEqual(endpoint.point, candidateEndpoint.point)),
+      );
+
+      if (isConnected) {
+        connectedBySegmentId.get(entity.segmentId)?.add(candidate.segmentId);
+        connectedBySegmentId.get(candidate.segmentId)?.add(entity.segmentId);
+      }
+    });
+  });
+
+  return entities.map((entity) => ({
+    ...entity,
+    connectedSegmentIds: Array.from(connectedBySegmentId.get(entity.segmentId) ?? []).sort(),
+  }));
+};
 
 const moveLineEntity = (entity: CanvasV4LineEntity, delta: Point): CanvasV4LineEntity => {
   const startPoint = { x: entity.startPoint.x + delta.x, y: entity.startPoint.y + delta.y };
@@ -506,8 +552,6 @@ const getScreenPoint = (nativeEvent: any): Point => ({
 });
 
 
-const arePointsEqual = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y) <= POINT_MATCH_EPSILON;
-
 const getPolygonCentroid = (points: Point[]): Point | null => {
   if (points.length < 3) {
     return null;
@@ -635,6 +679,7 @@ export const CanvasV4DevScreen = () => {
   const [showLineDimensions, setShowLineDimensions] = useState(true);
   const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('idle');
+  const [newSegmentType, setNewSegmentType] = useState<WallSegmentType>('internal');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
   const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
   const [lineStartPoint, setLineStartPoint] = useState<Point | null>(null);
@@ -783,7 +828,8 @@ export const CanvasV4DevScreen = () => {
   }, [entities, selectedEntityIds]);
 
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
-  const selectedLineLength = selectedEntities.length === 1 ? selectedEntities[0].length : null;
+  const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
+  const selectedLineLength = selectedSegment?.length ?? null;
 
   const transformHandles = useMemo(() => {
     if (selectedEntities.length === 1) {
@@ -841,64 +887,66 @@ export const CanvasV4DevScreen = () => {
 
     const action: HistoryAction =
       deletedEntities.length === 1
-        ? { type: 'DELETE_LINE', entity: deletedEntities[0].entity, index: deletedEntities[0].index }
-        : { type: 'DELETE_SELECTED_LINES', entities: deletedEntities };
+        ? { type: 'DELETE_WALL_SEGMENT', entity: deletedEntities[0].entity, index: deletedEntities[0].index }
+        : { type: 'DELETE_SELECTED_WALL_SEGMENTS', entities: deletedEntities };
 
     pushHistoryAction(action);
-    setEntities((current) => current.filter((entity) => !selectedSet.has(entity.entityId)));
+    setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !selectedSet.has(entity.entityId))));
     setSelectedEntityIds([]);
   }, [entities, pushHistoryAction, selectedEntityIds]);
 
   const applyHistoryUndo = useCallback((action: HistoryAction) => {
-    if (action.type === 'CREATE_LINE' || action.type === 'CREATE_POLYLINE_SEGMENT') {
-      setEntities((current) => current.filter((entity) => entity.entityId !== action.entity.entityId));
+    if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
+      setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => entity.entityId !== action.entity.entityId)));
       setSelectedEntityIds([]);
       return;
     }
 
-    if (action.type === 'DELETE_LINE') {
-      setEntities((current) => insertEntityAtIndex(current, action.entity, action.index));
+    if (action.type === 'DELETE_WALL_SEGMENT') {
+      setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
       setSelectedEntityIds([action.entity.entityId]);
       return;
     }
 
-    if (action.type === 'DELETE_SELECTED_LINES') {
+    if (action.type === 'DELETE_SELECTED_WALL_SEGMENTS') {
       setEntities((current) =>
-        [...action.entities]
-          .sort((a, b) => a.index - b.index)
-          .reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
+        normalizeWallSegmentConnectivity(
+          [...action.entities]
+            .sort((a, b) => a.index - b.index)
+            .reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
+        ),
       );
       setSelectedEntityIds(action.entities.map(({ entity }) => entity.entityId));
       return;
     }
 
     const beforeById = new Map(action.beforeEntities.map((entity) => [entity.entityId, entity]));
-    setEntities((current) => current.map((entity) => beforeById.get(entity.entityId) ?? entity));
+    setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => beforeById.get(entity.entityId) ?? entity)));
     setSelectedEntityIds(action.beforeEntities.map((entity) => entity.entityId));
   }, []);
 
   const applyHistoryRedo = useCallback((action: HistoryAction) => {
-    if (action.type === 'CREATE_LINE' || action.type === 'CREATE_POLYLINE_SEGMENT') {
-      setEntities((current) => insertEntityAtIndex(current, action.entity, action.index));
+    if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
+      setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
       setSelectedEntityIds([action.entity.entityId]);
       return;
     }
 
-    if (action.type === 'DELETE_LINE') {
-      setEntities((current) => current.filter((entity) => entity.entityId !== action.entity.entityId));
+    if (action.type === 'DELETE_WALL_SEGMENT') {
+      setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => entity.entityId !== action.entity.entityId)));
       setSelectedEntityIds([]);
       return;
     }
 
-    if (action.type === 'DELETE_SELECTED_LINES') {
+    if (action.type === 'DELETE_SELECTED_WALL_SEGMENTS') {
       const deletedEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
-      setEntities((current) => current.filter((entity) => !deletedEntityIds.has(entity.entityId)));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !deletedEntityIds.has(entity.entityId))));
       setSelectedEntityIds([]);
       return;
     }
 
     const afterById = new Map(action.afterEntities.map((entity) => [entity.entityId, entity]));
-    setEntities((current) => current.map((entity) => afterById.get(entity.entityId) ?? entity));
+    setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => afterById.get(entity.entityId) ?? entity)));
     setSelectedEntityIds(action.afterEntities.map((entity) => entity.entityId));
   }, []);
 
@@ -961,9 +1009,9 @@ export const CanvasV4DevScreen = () => {
         }
 
         const endPoint = clickSnap.point;
-        const entity = createLineEntity(lineStartPoint, endPoint, 'line');
-        pushHistoryAction({ type: 'CREATE_LINE', entity, index: entities.length });
-        setEntities((current) => [...current, entity]);
+        const entity = createWallSegment(lineStartPoint, endPoint, newSegmentType);
+        pushHistoryAction({ type: 'CREATE_WALL_SEGMENT', entity, index: entities.length });
+        setEntities((current) => normalizeWallSegmentConnectivity([...current, entity]));
         setLineStartPoint(null);
         setSelectedEntityIds([entity.entityId]);
         return;
@@ -979,9 +1027,9 @@ export const CanvasV4DevScreen = () => {
         }
 
         const endPoint = clickSnap.point;
-        const entity = createLineEntity(polylineLastPoint, endPoint, 'polyline-segment', activePolylineId ?? undefined);
-        pushHistoryAction({ type: 'CREATE_POLYLINE_SEGMENT', entity, index: entities.length });
-        setEntities((current) => [...current, entity]);
+        const entity = createWallSegment(polylineLastPoint, endPoint, newSegmentType, activePolylineId ?? undefined);
+        pushHistoryAction({ type: 'CREATE_POLYLINE_WALL_SEGMENT', entity, index: entities.length });
+        setEntities((current) => normalizeWallSegmentConnectivity([...current, entity]));
         setPolylineLastPoint(endPoint);
         setSelectedEntityIds([entity.entityId]);
         return;
@@ -999,7 +1047,7 @@ export const CanvasV4DevScreen = () => {
       setSelectionMode('single');
       setLastActionType('IDLE_TAP');
     },
-    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, polylineLastPoint, pushHistoryAction, screenToWorld],
+    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld],
   );
 
   const setToolMode = useCallback((mode: ToolMode) => {
@@ -1128,12 +1176,12 @@ export const CanvasV4DevScreen = () => {
             ? updateLineEntityGeometry(originalEntity, resizeSnap.point, originalEntity.endPoint)
             : updateLineEntityGeometry(originalEntity, originalEntity.startPoint, resizeSnap.point);
 
-          setEntities((current) => current.map((entity) => (entity.entityId === resizedEntity.entityId ? resizedEntity : entity)));
+          setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => (entity.entityId === resizedEntity.entityId ? resizedEntity : entity))));
           setIsResizing(true);
           setTransformMode('resize-line');
           setResizeAxis('xy');
           setResizeScale({ x: 1, y: 1 });
-          setLastActionType('RESIZE_LINE_DRAG');
+          setLastActionType('RESIZE_WALL_SEGMENT_DRAG');
         }
 
         return;
@@ -1167,12 +1215,12 @@ export const CanvasV4DevScreen = () => {
             ]),
           );
 
-          setEntities((current) => current.map((entity) => resizedById.get(entity.entityId) ?? entity));
+          setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => resizedById.get(entity.entityId) ?? entity)));
           setIsResizing(true);
           setTransformMode('resize-selection');
           setResizeAxis(session.resizeAxis);
           setResizeScale({ x: scaleX, y: scaleY });
-          setLastActionType('RESIZE_SELECTION_DRAG');
+          setLastActionType('RESIZE_WALL_SELECTION_DRAG');
         }
 
         return;
@@ -1182,7 +1230,7 @@ export const CanvasV4DevScreen = () => {
         const moveDelta = { x: totalDx / cameraZoom, y: totalDy / cameraZoom };
         const movedById = new Map(session.moveOriginalEntities.map((entity) => [entity.entityId, moveLineEntity(entity, moveDelta)]));
 
-        setEntities((current) => current.map((entity) => movedById.get(entity.entityId) ?? entity));
+        setEntities((current) => normalizeWallSegmentConnectivity(current.map((entity) => movedById.get(entity.entityId) ?? entity)));
         setIsMovingSelection(true);
         setMoveDeltaMm(moveDelta);
         setSelectionMode('move');
@@ -1225,7 +1273,7 @@ export const CanvasV4DevScreen = () => {
 
           if (geometryChanged) {
             pushHistoryAction({
-              type: 'RESIZE_LINE',
+              type: 'RESIZE_WALL_SEGMENT',
               beforeEntities: [originalEntity],
               afterEntities: [resizedEntity],
               handleId: session.resizeHandleId,
@@ -1267,7 +1315,7 @@ export const CanvasV4DevScreen = () => {
 
           if (geometryChanged) {
             pushHistoryAction({
-              type: 'RESIZE_SELECTION',
+              type: 'RESIZE_WALL_SELECTION',
               beforeEntities: session.resizeOriginalEntities,
               afterEntities,
               handleId: session.resizeHandleId,
@@ -1284,13 +1332,13 @@ export const CanvasV4DevScreen = () => {
 
         if (afterEntities.length > 0 && Math.hypot(moveDelta.x, moveDelta.y) > 0.000001) {
           pushHistoryAction({
-            type: 'MOVE_SELECTED_LINES',
+            type: 'MOVE_SELECTED_WALL_SEGMENTS',
             beforeEntities: session.moveOriginalEntities,
             afterEntities,
             delta: moveDelta,
           });
           setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
-          setLastMoveAction('MOVE_SELECTED_LINES');
+          setLastMoveAction('MOVE_SELECTED_WALL_SEGMENTS');
         }
       } else if (session.interactionMode === 'selection-box' && session.moved) {
         selectEntitiesInsideBox({ x: session.startX, y: session.startY }, screenPoint);
@@ -1398,6 +1446,14 @@ export const CanvasV4DevScreen = () => {
       `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
+      `selectedSegmentId: ${selectedSegment?.segmentId ?? 'null'}`,
+      `segmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
+      `wallThickness: ${selectedSegment ? `${selectedSegment.wallThickness} mm` : `${DEFAULT_WALL_THICKNESS_MM} mm (default)`}`,
+      `connectedSegmentIds: [${selectedSegment?.connectedSegmentIds.join(', ') || 'empty'}]`,
+      `segmentLength: ${selectedSegment ? formatLineLength(selectedSegment.length) : 'null'}`,
+      `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
+      `doorIds: [${selectedSegment?.doorIds.join(', ') || 'empty'}]`,
+      `windowIds: [${selectedSegment?.windowIds.join(', ') || 'empty'}]`,
       `selectedCount: ${selectedEntityIds.length}`,
       `transformMode: ${transformMode}`,
       `selectedBoundingBox: ${selectedBoundingBox ? `(${selectedBoundingBox.minX.toFixed(0)}, ${selectedBoundingBox.minY.toFixed(0)}) - (${selectedBoundingBox.maxX.toFixed(0)}, ${selectedBoundingBox.maxY.toFixed(0)})` : 'null'}`,
@@ -1447,6 +1503,7 @@ export const CanvasV4DevScreen = () => {
       activeSnap.gridSnappedEndPoint,
       cameraZoom,
       currentToolMode,
+      newSegmentType,
       showLineDimensions,
       entities.length,
       lastActionType,
@@ -1470,6 +1527,7 @@ export const CanvasV4DevScreen = () => {
       selectedBoundingBox,
       selectedLineLength,
       selectedEntityIds,
+      selectedSegment,
       selectionBox?.active,
       selectionMode,
       transformMode,
@@ -1517,7 +1575,14 @@ export const CanvasV4DevScreen = () => {
           {(['idle', 'line', 'polyline', 'select'] as ToolMode[]).map((mode) => (
             <Pressable key={mode} style={[styles.toolButton, currentToolMode === mode ? styles.toolButtonActive : null]} onPress={() => setToolMode(mode)}>
               <Text style={[styles.toolButtonText, currentToolMode === mode ? styles.toolButtonTextActive : null]}>
-                {mode === 'idle' ? 'Idle' : mode === 'line' ? 'Линия' : mode === 'polyline' ? 'Полилиния' : 'Выбор'}
+                {mode === 'idle' ? 'Idle' : mode === 'line' ? 'Wall Segment' : mode === 'polyline' ? 'Wall Polyline' : 'Выбор'}
+              </Text>
+            </Pressable>
+          ))}
+          {(['internal', 'external'] as WallSegmentType[]).map((segmentType) => (
+            <Pressable key={segmentType} style={[styles.toolButton, newSegmentType === segmentType ? styles.segmentTypeButtonActive : null]} onPress={() => setNewSegmentType(segmentType)}>
+              <Text style={[styles.toolButtonText, newSegmentType === segmentType ? styles.segmentTypeButtonTextActive : null]}>
+                {segmentType === 'internal' ? 'Internal 100 мм' : 'External 100 мм'}
               </Text>
             </Pressable>
           ))}
@@ -1560,13 +1625,27 @@ export const CanvasV4DevScreen = () => {
                   <View
                     pointerEvents="none"
                     style={[
-                      styles.lineEntity,
-                      entity.entityType === 'polyline-segment' ? styles.polylineSegment : null,
-                      isSelected ? styles.lineEntitySelected : null,
+                      styles.wallSegmentBody,
+                      entity.segmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
+                      isSelected ? styles.wallSegmentSelected : null,
+                      {
+                        width: Math.max(geometry.length, 1),
+                        height: Math.max(entity.wallThickness * cameraZoom, 4),
+                        left: geometry.centerX - geometry.length / 2,
+                        top: geometry.centerY - Math.max(entity.wallThickness * cameraZoom, 4) / 2,
+                        transform: [{ rotate: `${geometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.wallSegmentCenterLine,
+                      isSelected ? styles.wallSegmentCenterLineSelected : null,
                       {
                         width: Math.max(geometry.length, 1),
                         left: geometry.centerX - geometry.length / 2,
-                        top: geometry.centerY - (isSelected ? 2 : 1),
+                        top: geometry.centerY - 1,
                         transform: [{ rotate: `${geometry.angleDeg}deg` }],
                       },
                     ]}
@@ -1596,11 +1675,13 @@ export const CanvasV4DevScreen = () => {
                 <View
                   pointerEvents="none"
                   style={[
-                    styles.previewLine,
+                    styles.previewWallSegment,
+                    newSegmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
                     {
                       width: Math.max(previewGeometry.length, 1),
+                      height: Math.max(DEFAULT_WALL_THICKNESS_MM * cameraZoom, 4),
                       left: previewGeometry.centerX - previewGeometry.length / 2,
-                      top: previewGeometry.centerY - 1,
+                      top: previewGeometry.centerY - Math.max(DEFAULT_WALL_THICKNESS_MM * cameraZoom, 4) / 2,
                       transform: [{ rotate: `${previewGeometry.angleDeg}deg` }],
                     },
                   ]}
@@ -1689,8 +1770,8 @@ export const CanvasV4DevScreen = () => {
         </View>
 
         <View style={styles.metaPanel}>
-          <Text style={styles.metaTitle}>Canvas V4 CAD-lite sandbox</Text>
-          <Text style={styles.metaText}>Чистая dev-сцена без Room Engine, Surface Scene, split, wall graph и SmetMaster logic. ЛКМ/тап — действие инструмента, drag — pan, wheel/кнопки — zoom.</Text>
+          <Text style={styles.metaTitle}>Canvas V4 CAD-lite wall segment sandbox</Text>
+          <Text style={styles.metaText}>Чистая dev-сцена с базовыми WallSegment, endpoint connectivity и будущими door/window attachment ids — без Room Engine, Surface Scene, split, wall graph и SmetMaster logic. ЛКМ/тап — действие инструмента, drag — pan, wheel/кнопки — zoom.</Text>
         </View>
       </ScrollView>
     </View>
@@ -1772,6 +1853,13 @@ const styles = StyleSheet.create({
   toolButtonTextActive: {
     color: '#FFFFFF',
   },
+  segmentTypeButtonActive: {
+    borderColor: '#0EA5E9',
+    backgroundColor: '#E0F2FE',
+  },
+  segmentTypeButtonTextActive: {
+    color: '#0369A1',
+  },
   dangerButton: {
     borderColor: '#FCA5A5',
     backgroundColor: '#FEE2E2',
@@ -1819,29 +1907,42 @@ const styles = StyleSheet.create({
     position: 'absolute',
     backgroundColor: 'rgba(15, 23, 42, 0.25)',
   },
-  lineEntity: {
+  wallSegmentBody: {
     position: 'absolute',
-    height: 2,
     borderRadius: 2,
-    backgroundColor: '#0F172A',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
   },
-  polylineSegment: {
-    backgroundColor: '#0369A1',
+  internalWallSegment: {
+    backgroundColor: 'rgba(15, 23, 42, 0.18)',
+    borderColor: '#0F172A',
   },
-  lineEntitySelected: {
-    height: 4,
-    backgroundColor: '#F97316',
+  externalWallSegment: {
+    backgroundColor: 'rgba(3, 105, 161, 0.22)',
+    borderColor: '#0369A1',
+  },
+  wallSegmentSelected: {
+    backgroundColor: 'rgba(249, 115, 22, 0.25)',
+    borderColor: '#F97316',
     shadowColor: '#F97316',
     shadowOpacity: 0.35,
     shadowRadius: 6,
   },
-  previewLine: {
+  wallSegmentCenterLine: {
     position: 'absolute',
     height: 2,
     borderRadius: 2,
-    backgroundColor: '#22C55E',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+  },
+  wallSegmentCenterLineSelected: {
+    backgroundColor: '#F97316',
+  },
+  previewWallSegment: {
+    position: 'absolute',
+    borderRadius: 2,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
     opacity: 0.72,
-    borderStyle: 'dashed',
   },
   dimensionLabel: {
     position: 'absolute',
