@@ -33,14 +33,16 @@ type CanvasV4WallSegment = {
 
 type CanvasV4LineEntity = CanvasV4WallSegment;
 
-type DoorSwingDirection = 'left' | 'right';
+type DoorHingeSide = 'left' | 'right';
+type DoorSwingSide = 'inside' | 'outside';
 
 type CanvasV4Door = {
   doorId: string;
   segmentId: string;
   positionOnSegment: number;
   width: number;
-  swingDirection: DoorSwingDirection;
+  hingeSide: DoorHingeSide;
+  swingSide: DoorSwingSide;
   createdAt: number;
 };
 
@@ -54,7 +56,8 @@ type HistoryAction =
   | { type: 'RESIZE_WALL_SELECTION'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; handleId: string; scaleX: number; scaleY: number }
   | { type: 'CREATE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
   | { type: 'MOVE_DOOR'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
-  | { type: 'FLIP_DOOR_SWING'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
+  | { type: 'CHANGE_DOOR_HINGE_SIDE'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
+  | { type: 'CHANGE_DOOR_SWING_SIDE'; beforeDoor: CanvasV4Door; afterDoor: CanvasV4Door }
   | { type: 'DELETE_DOOR'; door: CanvasV4Door; doorIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
@@ -171,8 +174,8 @@ const WALL_THICKNESS_FROZEN = true;
 const DEFAULT_CORNER_JOIN_MODE: CornerJoinMode = 'bevel';
 const DEFAULT_DOOR_WIDTH_MM = 800;
 const DOOR_HIT_TOLERANCE_PX = 16;
-const DOOR_LEAF_DEPTH_MM = 650;
 const DOOR_SWING_ARC_VISUAL_SCALE = 0.68;
+const DOOR_SWING_ARC_SEGMENTS = 12;
 
 type LineScreenGeometry = {
   length: number;
@@ -699,11 +702,14 @@ const createDoor = (segment: CanvasV4LineEntity, positionOnSegment: number): Can
   segmentId: segment.segmentId,
   positionOnSegment: clampDoorPositionOnSegment(segment, positionOnSegment),
   width: DEFAULT_DOOR_WIDTH_MM,
-  swingDirection: 'right',
+  hingeSide: 'left',
+  swingSide: 'inside',
   createdAt: Date.now(),
 });
 
-const getFlippedDoorSwingDirection = (swingDirection: DoorSwingDirection): DoorSwingDirection => (swingDirection === 'left' ? 'right' : 'left');
+const getToggledDoorHingeSide = (hingeSide: DoorHingeSide): DoorHingeSide => (hingeSide === 'left' ? 'right' : 'left');
+
+const getToggledDoorSwingSide = (swingSide: DoorSwingSide): DoorSwingSide => (swingSide === 'inside' ? 'outside' : 'inside');
 
 const insertDoorAtIndex = (doors: CanvasV4Door[], door: CanvasV4Door, index: number) => {
   const next = doors.filter((item) => item.doorId !== door.doorId);
@@ -1180,7 +1186,7 @@ export const CanvasV4DevScreen = () => {
           const alongDistance = Math.abs(projectPointToSegment(worldPoint, segment).positionOnSegment - door.positionOnSegment);
           const centerDistance = Math.hypot(worldPoint.x - centerPoint.x, worldPoint.y - centerPoint.y);
 
-          return alongDistance <= door.width / 2 + tolerance && centerDistance <= Math.max(door.width / 2, DOOR_LEAF_DEPTH_MM) + tolerance;
+          return alongDistance <= door.width / 2 + tolerance && centerDistance <= door.width + tolerance;
         })?.doorId ?? null;
     },
     [cameraZoom, doors, entities],
@@ -1343,7 +1349,7 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    if (action.type === 'MOVE_DOOR' || action.type === 'FLIP_DOOR_SWING') {
+    if (action.type === 'MOVE_DOOR' || action.type === 'CHANGE_DOOR_HINGE_SIDE' || action.type === 'CHANGE_DOOR_SWING_SIDE') {
       setDoors((current) => current.map((door) => (door.doorId === action.beforeDoor.doorId ? action.beforeDoor : door)));
       setSelectedDoorId(action.beforeDoor.doorId);
       setSelectedEntityIds([]);
@@ -1402,7 +1408,7 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    if (action.type === 'MOVE_DOOR' || action.type === 'FLIP_DOOR_SWING') {
+    if (action.type === 'MOVE_DOOR' || action.type === 'CHANGE_DOOR_HINGE_SIDE' || action.type === 'CHANGE_DOOR_SWING_SIDE') {
       setDoors((current) => current.map((door) => (door.doorId === action.afterDoor.doorId ? action.afterDoor : door)));
       setSelectedDoorId(action.afterDoor.doorId);
       setSelectedEntityIds([]);
@@ -1592,21 +1598,38 @@ export const CanvasV4DevScreen = () => {
     [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds],
   );
 
-  const flipSelectedDoorSwing = useCallback(() => {
+  const changeSelectedDoorHingeSide = useCallback(() => {
     if (!selectedDoor) {
       return;
     }
 
     const afterDoor: CanvasV4Door = {
       ...selectedDoor,
-      swingDirection: getFlippedDoorSwingDirection(selectedDoor.swingDirection),
+      hingeSide: getToggledDoorHingeSide(selectedDoor.hingeSide),
     };
 
-    pushHistoryAction({ type: 'FLIP_DOOR_SWING', beforeDoor: selectedDoor, afterDoor });
+    pushHistoryAction({ type: 'CHANGE_DOOR_HINGE_SIDE', beforeDoor: selectedDoor, afterDoor });
     setDoors((current) => current.map((door) => (door.doorId === afterDoor.doorId ? afterDoor : door)));
     setSelectedDoorId(afterDoor.doorId);
     setSelectedEntityIds([]);
-    setLastDoorAction('FLIP_DOOR_SWING');
+    setLastDoorAction('CHANGE_DOOR_HINGE_SIDE');
+  }, [pushHistoryAction, selectedDoor]);
+
+  const changeSelectedDoorSwingSide = useCallback(() => {
+    if (!selectedDoor) {
+      return;
+    }
+
+    const afterDoor: CanvasV4Door = {
+      ...selectedDoor,
+      swingSide: getToggledDoorSwingSide(selectedDoor.swingSide),
+    };
+
+    pushHistoryAction({ type: 'CHANGE_DOOR_SWING_SIDE', beforeDoor: selectedDoor, afterDoor });
+    setDoors((current) => current.map((door) => (door.doorId === afterDoor.doorId ? afterDoor : door)));
+    setSelectedDoorId(afterDoor.doorId);
+    setSelectedEntityIds([]);
+    setLastDoorAction('CHANGE_DOOR_SWING_SIDE');
   }, [pushHistoryAction, selectedDoor]);
 
   const setToolMode = useCallback((mode: ToolMode) => {
@@ -2117,10 +2140,11 @@ export const CanvasV4DevScreen = () => {
       `entitiesCount: ${entities.length}`,
       `doorsCount: ${doors.length}`,
       `selectedDoorId: ${selectedDoor?.doorId ?? 'null'}`,
-      `activeDoorSegmentId: ${selectedDoor?.segmentId ?? 'null'}`,
+      `doorSegmentId: ${selectedDoor?.segmentId ?? 'null'}`,
       `doorPositionOnSegment: ${selectedDoor ? `${selectedDoor.positionOnSegment.toFixed(0)} mm` : 'null'}`,
       `doorWidth: ${selectedDoor ? `${selectedDoor.width} mm` : `${DEFAULT_DOOR_WIDTH_MM} mm (default)`}`,
-      `doorSwingDirection: ${selectedDoor?.swingDirection ?? 'null'}`,
+      `doorHingeSide: ${selectedDoor?.hingeSide ?? 'null'}`,
+      `doorSwingSide: ${selectedDoor?.swingSide ?? 'null'}`,
       `lastDoorAction: ${lastDoorAction}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedSegmentId: ${selectedSegment?.segmentId ?? 'null'}`,
@@ -2277,9 +2301,14 @@ export const CanvasV4DevScreen = () => {
             </Pressable>
           ))}
           {selectedDoor ? (
-            <Pressable style={[styles.toolButton, styles.doorFlipButton]} onPress={flipSelectedDoorSwing}>
-              <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Повернуть</Text>
-            </Pressable>
+            <>
+              <Pressable style={[styles.toolButton, styles.doorFlipButton]} onPress={changeSelectedDoorHingeSide}>
+                <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Петли</Text>
+              </Pressable>
+              <Pressable style={[styles.toolButton, styles.doorFlipButton]} onPress={changeSelectedDoorSwingSide}>
+                <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Открывание</Text>
+              </Pressable>
+            </>
           ) : null}
           <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 || selectedDoorId ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0 && !selectedDoorId}>
             <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 || selectedDoorId ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
@@ -2361,15 +2390,52 @@ export const CanvasV4DevScreen = () => {
               const screenCenter = worldToScreen(center);
               const segmentGeometry = getLineScreenGeometry(segment.startPoint, segment.endPoint);
               const widthPx = Math.max(door.width * cameraZoom, 18);
-              const leafPx = Math.max(DOOR_LEAF_DEPTH_MM * cameraZoom, 28);
-              const arcPx = Math.max(leafPx * DOOR_SWING_ARC_VISUAL_SCALE, 20);
+              const leafPx = Math.max(door.width * cameraZoom, 28);
+              const arcRadiusPx = Math.max(widthPx * DOOR_SWING_ARC_VISUAL_SCALE, 20);
               const halfWidthPx = widthPx / 2;
               const angleRad = (segmentGeometry.angleDeg * Math.PI) / 180;
               const unit = { x: Math.cos(angleRad), y: Math.sin(angleRad) };
-              const swingSide = door.swingDirection === 'right' ? 1 : -1;
-              const normal = { x: unit.y * swingSide, y: -unit.x * swingSide };
-              const hingePoint = { x: screenCenter.x - unit.x * halfWidthPx, y: screenCenter.y - unit.y * halfWidthPx };
-              const leafCenter = { x: hingePoint.x + normal.x * leafPx / 2, y: hingePoint.y + normal.y * leafPx / 2 };
+              const outwardNormal = normalizeVector(getEntityOutwardNormal(segment, entities));
+              const swingNormal = door.swingSide === 'outside' ? outwardNormal : scaleVector(outwardNormal, -1);
+              const hingeDirection = door.hingeSide === 'left' ? -1 : 1;
+              const hingePoint = { x: screenCenter.x + unit.x * halfWidthPx * hingeDirection, y: screenCenter.y + unit.y * halfWidthPx * hingeDirection };
+              const openingDirection = door.hingeSide === 'left' ? unit : scaleVector(unit, -1);
+              const leafCenter = { x: hingePoint.x + swingNormal.x * leafPx / 2, y: hingePoint.y + swingNormal.y * leafPx / 2 };
+              const leafAngleDeg = (Math.atan2(swingNormal.y, swingNormal.x) * 180) / Math.PI;
+              const arcStartAngle = Math.atan2(openingDirection.y, openingDirection.x);
+              const arcEndAngle = Math.atan2(swingNormal.y, swingNormal.x);
+              let arcDelta = arcEndAngle - arcStartAngle;
+
+              if (arcDelta > Math.PI) {
+                arcDelta -= Math.PI * 2;
+              }
+
+              if (arcDelta < -Math.PI) {
+                arcDelta += Math.PI * 2;
+              }
+
+              const arcSegments = Array.from({ length: DOOR_SWING_ARC_SEGMENTS }, (_, index) => {
+                const startAngle = arcStartAngle + (arcDelta * index) / DOOR_SWING_ARC_SEGMENTS;
+                const endAngle = arcStartAngle + (arcDelta * (index + 1)) / DOOR_SWING_ARC_SEGMENTS;
+                const start = {
+                  x: hingePoint.x + Math.cos(startAngle) * arcRadiusPx,
+                  y: hingePoint.y + Math.sin(startAngle) * arcRadiusPx,
+                };
+                const end = {
+                  x: hingePoint.x + Math.cos(endAngle) * arcRadiusPx,
+                  y: hingePoint.y + Math.sin(endAngle) * arcRadiusPx,
+                };
+                const segmentLength = Math.hypot(end.x - start.x, end.y - start.y);
+                const segmentAngleDeg = (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
+
+                return {
+                  id: `${door.doorId}-arc-${index}`,
+                  length: segmentLength,
+                  centerX: (start.x + end.x) / 2,
+                  centerY: (start.y + end.y) / 2,
+                  angleDeg: segmentAngleDeg,
+                };
+              });
               const isSelected = selectedDoorId === door.doorId;
 
               return (
@@ -2395,28 +2461,26 @@ export const CanvasV4DevScreen = () => {
                         width: leafPx,
                         left: leafCenter.x - leafPx / 2,
                         top: leafCenter.y - 1,
-                        transform: [{ rotate: `${segmentGeometry.angleDeg - 90 * swingSide}deg` }],
+                        transform: [{ rotate: `${leafAngleDeg}deg` }],
                       },
                     ]}
                   />
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.doorSwingArc,
-                      isSelected ? styles.doorElementSelected : null,
-                      {
-                        width: arcPx,
-                        height: arcPx,
-                        left: hingePoint.x,
-                        top: swingSide === 1 ? hingePoint.y - arcPx : hingePoint.y,
-                        borderTopWidth: swingSide === 1 ? 2 : 0,
-                        borderBottomWidth: swingSide === -1 ? 2 : 0,
-                        borderTopRightRadius: swingSide === 1 ? 999 : 0,
-                        borderBottomRightRadius: swingSide === -1 ? 999 : 0,
-                        transform: [{ rotate: `${segmentGeometry.angleDeg}deg` }],
-                      },
-                    ]}
-                  />
+                  {arcSegments.map((arcSegment) => (
+                    <View
+                      key={arcSegment.id}
+                      pointerEvents="none"
+                      style={[
+                        styles.doorSwingArcSegment,
+                        isSelected ? styles.doorElementSelected : null,
+                        {
+                          width: Math.max(arcSegment.length, 1),
+                          left: arcSegment.centerX - arcSegment.length / 2,
+                          top: arcSegment.centerY - 1,
+                          transform: [{ rotate: `${arcSegment.angleDeg}deg` }],
+                        },
+                      ]}
+                    />
+                  ))}
                   <View
                     pointerEvents="none"
                     style={[
@@ -2744,12 +2808,11 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: '#2563EB',
   },
-  doorSwingArc: {
+  doorSwingArcSegment: {
     position: 'absolute',
-    borderTopWidth: 2,
-    borderRightWidth: 2,
-    borderTopRightRadius: 999,
-    borderColor: '#2563EB',
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: '#2563EB',
     opacity: 0.85,
   },
   doorElementSelected: {
