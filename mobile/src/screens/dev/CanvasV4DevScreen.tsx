@@ -24,7 +24,8 @@ type HistoryAction =
   | { type: 'CREATE_LINE'; entity: CanvasV4LineEntity; index: number }
   | { type: 'CREATE_POLYLINE_SEGMENT'; entity: CanvasV4LineEntity; index: number }
   | { type: 'DELETE_LINE'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'DELETE_SELECTED_LINES'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> };
+  | { type: 'DELETE_SELECTED_LINES'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
+  | { type: 'MOVE_SELECTED_LINES'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; delta: Point };
 
 type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
 
@@ -33,6 +34,8 @@ type SnapResult = {
   activeSnapType: SnapType;
   activeSnapTargetId: string | null;
   activeSnapDistance: number | null;
+  gridSnappedEndPoint: Point | null;
+  angleHelperActive: boolean;
 };
 
 type EndpointSnapTarget = {
@@ -41,7 +44,8 @@ type EndpointSnapTarget = {
   distance: number;
 };
 
-type InteractionMode = 'pan' | 'selection-box';
+type InteractionMode = 'pan' | 'selection-box' | 'move-selection';
+type SelectionMode = 'single' | 'box' | 'move';
 
 type DragSession = {
   started: boolean;
@@ -52,6 +56,8 @@ type DragSession = {
   startY: number;
   lastX: number;
   lastY: number;
+  moveEntityIds: string[];
+  moveOriginalEntities: CanvasV4LineEntity[];
 };
 
 type SelectionBoxState = {
@@ -70,6 +76,7 @@ const DRAG_THRESHOLD_PX = 3;
 const HIT_TOLERANCE_PX = 12;
 const ENDPOINT_SNAP_THRESHOLD_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
+const ANGLE_HELPER_TOLERANCE_DEG = 6;
 const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
 
 const EMPTY_DRAG_SESSION: DragSession = {
@@ -81,6 +88,8 @@ const EMPTY_DRAG_SESSION: DragSession = {
   startY: 0,
   lastX: 0,
   lastY: 0,
+  moveEntityIds: [],
+  moveOriginalEntities: [],
 };
 
 const normalizeAngle = (angle: number) => {
@@ -108,32 +117,46 @@ const snapPointToGrid = (point: Point): Point => ({
   y: Math.round(point.y / GRID_STEP_MM) * GRID_STEP_MM,
 });
 
-const snapEndPointToAngle = (startPoint: Point, gridEndPoint: Point): Point => {
+const angularDistance = (angleA: number, angleB: number) => {
+  const diff = Math.abs(normalizeAngle(angleA) - normalizeAngle(angleB));
+  return Math.min(diff, 360 - diff);
+};
+
+const snapEndPointToAngleHelper = (startPoint: Point, gridEndPoint: Point): { point: Point; active: boolean } => {
   const dx = gridEndPoint.x - startPoint.x;
   const dy = gridEndPoint.y - startPoint.y;
 
   if (dx === 0 && dy === 0) {
-    return gridEndPoint;
+    return { point: gridEndPoint, active: false };
   }
 
-  const snappedAngle = normalizeAngle(Math.round((Math.atan2(dy, dx) * 180) / Math.PI / SNAP_ANGLE_STEP_DEG) * SNAP_ANGLE_STEP_DEG);
-  const horizontalSign = Math.cos((snappedAngle * Math.PI) / 180) >= 0 ? 1 : -1;
-  const verticalSign = Math.sin((snappedAngle * Math.PI) / 180) >= 0 ? 1 : -1;
+  const rawAngle = normalizeAngle((Math.atan2(dy, dx) * 180) / Math.PI);
+  const helperAngle = normalizeAngle(Math.round(rawAngle / SNAP_ANGLE_STEP_DEG) * SNAP_ANGLE_STEP_DEG);
 
-  if (snappedAngle === 0 || snappedAngle === 180) {
+  if (angularDistance(rawAngle, helperAngle) > ANGLE_HELPER_TOLERANCE_DEG) {
+    return { point: gridEndPoint, active: false };
+  }
+
+  const horizontalSign = Math.cos((helperAngle * Math.PI) / 180) >= 0 ? 1 : -1;
+  const verticalSign = Math.sin((helperAngle * Math.PI) / 180) >= 0 ? 1 : -1;
+
+  if (helperAngle === 0 || helperAngle === 180) {
     const xSteps = Math.max(1, Math.round(Math.abs(dx) / GRID_STEP_MM));
-    return { x: startPoint.x + horizontalSign * xSteps * GRID_STEP_MM, y: startPoint.y };
+    return { point: { x: startPoint.x + horizontalSign * xSteps * GRID_STEP_MM, y: startPoint.y }, active: true };
   }
 
-  if (snappedAngle === 90 || snappedAngle === 270) {
+  if (helperAngle === 90 || helperAngle === 270) {
     const ySteps = Math.max(1, Math.round(Math.abs(dy) / GRID_STEP_MM));
-    return { x: startPoint.x, y: startPoint.y + verticalSign * ySteps * GRID_STEP_MM };
+    return { point: { x: startPoint.x, y: startPoint.y + verticalSign * ySteps * GRID_STEP_MM }, active: true };
   }
 
-  const diagonalSteps = Math.max(1, Math.round(Math.max(Math.abs(dx), Math.abs(dy)) / GRID_STEP_MM));
+  const diagonalSteps = Math.max(1, Math.round((Math.abs(dx) + Math.abs(dy)) / 2 / GRID_STEP_MM));
   return {
-    x: startPoint.x + horizontalSign * diagonalSteps * GRID_STEP_MM,
-    y: startPoint.y + verticalSign * diagonalSteps * GRID_STEP_MM,
+    point: {
+      x: startPoint.x + horizontalSign * diagonalSteps * GRID_STEP_MM,
+      y: startPoint.y + verticalSign * diagonalSteps * GRID_STEP_MM,
+    },
+    active: true,
   };
 };
 
@@ -169,6 +192,8 @@ const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, en
       activeSnapType: 'endpoint',
       activeSnapTargetId: endpointTarget.targetId,
       activeSnapDistance: endpointTarget.distance,
+      gridSnappedEndPoint: null,
+      angleHelperActive: false,
     };
   }
 
@@ -180,16 +205,20 @@ const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, en
       activeSnapType: 'grid',
       activeSnapTargetId: null,
       activeSnapDistance: Math.hypot(rawPoint.x - gridPoint.x, rawPoint.y - gridPoint.y),
+      gridSnappedEndPoint: gridPoint,
+      angleHelperActive: false,
     };
   }
 
-  const anglePoint = snapEndPointToAngle(startPoint, gridPoint);
+  const angleHelper = snapEndPointToAngleHelper(startPoint, gridPoint);
 
   return {
-    point: anglePoint,
-    activeSnapType: 'angle',
+    point: angleHelper.point,
+    activeSnapType: angleHelper.active ? 'angle' : 'grid',
     activeSnapTargetId: null,
-    activeSnapDistance: Math.hypot(rawPoint.x - anglePoint.x, rawPoint.y - anglePoint.y),
+    activeSnapDistance: Math.hypot(rawPoint.x - angleHelper.point.x, rawPoint.y - angleHelper.point.y),
+    gridSnappedEndPoint: gridPoint,
+    angleHelperActive: angleHelper.active,
   };
 };
 
@@ -210,6 +239,20 @@ const createLineEntity = (startPoint: Point, endPoint: Point, entityType: Canvas
 };
 
 
+const moveLineEntity = (entity: CanvasV4LineEntity, delta: Point): CanvasV4LineEntity => {
+  const startPoint = { x: entity.startPoint.x + delta.x, y: entity.startPoint.y + delta.y };
+  const endPoint = { x: entity.endPoint.x + delta.x, y: entity.endPoint.y + delta.y };
+  const metrics = getLineMetrics(startPoint, endPoint);
+
+  return {
+    ...entity,
+    startPoint,
+    endPoint,
+    length: metrics.length,
+    angle: metrics.angle,
+  };
+};
+
 const getNormalizedRect = (startPoint: Point, endPoint: Point) => ({
   minX: Math.min(startPoint.x, endPoint.x),
   maxX: Math.max(startPoint.x, endPoint.x),
@@ -217,9 +260,58 @@ const getNormalizedRect = (startPoint: Point, endPoint: Point) => ({
   maxY: Math.max(startPoint.y, endPoint.y),
 });
 
-const isLineFullyInsideRect = (entity: CanvasV4LineEntity, rect: ReturnType<typeof getNormalizedRect>) => {
-  const isPointInside = (point: Point) => point.x >= rect.minX && point.x <= rect.maxX && point.y >= rect.minY && point.y <= rect.maxY;
-  return isPointInside(entity.startPoint) && isPointInside(entity.endPoint);
+const isPointInsideRect = (point: Point, rect: ReturnType<typeof getNormalizedRect>) => point.x >= rect.minX && point.x <= rect.maxX && point.y >= rect.minY && point.y <= rect.maxY;
+
+const getOrientation = (a: Point, b: Point, c: Point) => {
+  const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+
+  if (Math.abs(value) < 0.000001) {
+    return 0;
+  }
+
+  return value > 0 ? 1 : 2;
+};
+
+const isPointOnSegment = (a: Point, b: Point, c: Point) =>
+  b.x <= Math.max(a.x, c.x) + 0.000001 &&
+  b.x + 0.000001 >= Math.min(a.x, c.x) &&
+  b.y <= Math.max(a.y, c.y) + 0.000001 &&
+  b.y + 0.000001 >= Math.min(a.y, c.y);
+
+const doSegmentsIntersect = (a: Point, b: Point, c: Point, d: Point) => {
+  const o1 = getOrientation(a, b, c);
+  const o2 = getOrientation(a, b, d);
+  const o3 = getOrientation(c, d, a);
+  const o4 = getOrientation(c, d, b);
+
+  if (o1 !== o2 && o3 !== o4) {
+    return true;
+  }
+
+  return (
+    (o1 === 0 && isPointOnSegment(a, c, b)) ||
+    (o2 === 0 && isPointOnSegment(a, d, b)) ||
+    (o3 === 0 && isPointOnSegment(c, a, d)) ||
+    (o4 === 0 && isPointOnSegment(c, b, d))
+  );
+};
+
+const doesLineIntersectRect = (entity: CanvasV4LineEntity, rect: ReturnType<typeof getNormalizedRect>) => {
+  if (isPointInsideRect(entity.startPoint, rect) || isPointInsideRect(entity.endPoint, rect)) {
+    return true;
+  }
+
+  const topLeft = { x: rect.minX, y: rect.minY };
+  const topRight = { x: rect.maxX, y: rect.minY };
+  const bottomRight = { x: rect.maxX, y: rect.maxY };
+  const bottomLeft = { x: rect.minX, y: rect.maxY };
+
+  return (
+    doSegmentsIntersect(entity.startPoint, entity.endPoint, topLeft, topRight) ||
+    doSegmentsIntersect(entity.startPoint, entity.endPoint, topRight, bottomRight) ||
+    doSegmentsIntersect(entity.startPoint, entity.endPoint, bottomRight, bottomLeft) ||
+    doSegmentsIntersect(entity.startPoint, entity.endPoint, bottomLeft, topLeft)
+  );
 };
 
 const insertEntityAtIndex = (entities: CanvasV4LineEntity[], entity: CanvasV4LineEntity, index: number) => {
@@ -274,6 +366,10 @@ export const CanvasV4DevScreen = () => {
   const [lastUndoAction, setLastUndoAction] = useState<string>('null');
   const [lastRedoAction, setLastRedoAction] = useState<string>('null');
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
+  const [isMovingSelection, setIsMovingSelection] = useState(false);
+  const [moveDeltaMm, setMoveDeltaMm] = useState<Point>({ x: 0, y: 0 });
+  const [lastMoveAction, setLastMoveAction] = useState<string>('null');
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('single');
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -301,6 +397,8 @@ export const CanvasV4DevScreen = () => {
         activeSnapType: 'none',
         activeSnapTargetId: null,
         activeSnapDistance: null,
+        gridSnappedEndPoint: null,
+        angleHelperActive: false,
       };
     }
 
@@ -428,12 +526,19 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    setEntities((current) =>
-      [...action.entities]
-        .sort((a, b) => a.index - b.index)
-        .reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
-    );
-    setSelectedEntityIds(action.entities.map(({ entity }) => entity.entityId));
+    if (action.type === 'DELETE_SELECTED_LINES') {
+      setEntities((current) =>
+        [...action.entities]
+          .sort((a, b) => a.index - b.index)
+          .reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
+      );
+      setSelectedEntityIds(action.entities.map(({ entity }) => entity.entityId));
+      return;
+    }
+
+    const beforeById = new Map(action.beforeEntities.map((entity) => [entity.entityId, entity]));
+    setEntities((current) => current.map((entity) => beforeById.get(entity.entityId) ?? entity));
+    setSelectedEntityIds(action.beforeEntities.map((entity) => entity.entityId));
   }, []);
 
   const applyHistoryRedo = useCallback((action: HistoryAction) => {
@@ -449,9 +554,16 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    const deletedEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
-    setEntities((current) => current.filter((entity) => !deletedEntityIds.has(entity.entityId)));
-    setSelectedEntityIds([]);
+    if (action.type === 'DELETE_SELECTED_LINES') {
+      const deletedEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
+      setEntities((current) => current.filter((entity) => !deletedEntityIds.has(entity.entityId)));
+      setSelectedEntityIds([]);
+      return;
+    }
+
+    const afterById = new Map(action.afterEntities.map((entity) => [entity.entityId, entity]));
+    setEntities((current) => current.map((entity) => afterById.get(entity.entityId) ?? entity));
+    setSelectedEntityIds(action.afterEntities.map((entity) => entity.entityId));
   }, []);
 
   const undoLastAction = useCallback(() => {
@@ -489,9 +601,10 @@ export const CanvasV4DevScreen = () => {
       const worldStart = screenToWorld(startPoint);
       const worldEnd = screenToWorld(endPoint);
       const worldRect = getNormalizedRect(worldStart, worldEnd);
-      const nextSelectedIds = entities.filter((entity) => isLineFullyInsideRect(entity, worldRect)).map((entity) => entity.entityId);
+      const nextSelectedIds = entities.filter((entity) => doesLineIntersectRect(entity, worldRect)).map((entity) => entity.entityId);
 
       setSelectedEntityIds(nextSelectedIds);
+      setSelectionMode('box');
       setLastActionType(nextSelectedIds.length > 0 ? 'SELECTION_BOX_SELECT' : 'SELECTION_BOX_CLEAR');
     },
     [entities, screenToWorld],
@@ -541,11 +654,13 @@ export const CanvasV4DevScreen = () => {
       if (currentToolMode === 'select') {
         const hitEntityId = findEntityAtWorldPoint(rawWorldPoint);
         setSelectedEntityIds(hitEntityId ? [hitEntityId] : []);
+        setSelectionMode('single');
         setLastActionType(hitEntityId ? 'SELECT_ENTITY' : 'CLEAR_SELECTION');
         return;
       }
 
       setSelectedEntityIds([]);
+      setSelectionMode('single');
       setLastActionType('IDLE_TAP');
     },
     [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, polylineLastPoint, pushHistoryAction, screenToWorld],
@@ -570,7 +685,10 @@ export const CanvasV4DevScreen = () => {
     (screenPoint: Point, pointerId?: number) => {
       const rawWorldPoint = screenToWorld(screenPoint);
       const hitEntityId = currentToolMode === 'select' ? findEntityAtWorldPoint(rawWorldPoint) : null;
-      const interactionMode: InteractionMode = currentToolMode === 'select' && !hitEntityId ? 'selection-box' : 'pan';
+      const selectedSet = new Set(selectedEntityIds);
+      const shouldMoveSelection = currentToolMode === 'select' && !!hitEntityId && selectedSet.has(hitEntityId);
+      const interactionMode: InteractionMode = shouldMoveSelection ? 'move-selection' : currentToolMode === 'select' && !hitEntityId ? 'selection-box' : 'pan';
+      const moveOriginalEntities = shouldMoveSelection ? entities.filter((entity) => selectedSet.has(entity.entityId)) : [];
 
       dragSessionRef.current = {
         started: true,
@@ -581,11 +699,15 @@ export const CanvasV4DevScreen = () => {
         startY: screenPoint.y,
         lastX: screenPoint.x,
         lastY: screenPoint.y,
+        moveEntityIds: moveOriginalEntities.map((entity) => entity.entityId),
+        moveOriginalEntities,
       };
       setPointerWorldPoint(rawWorldPoint);
       setSelectionBox(null);
+      setIsMovingSelection(false);
+      setMoveDeltaMm({ x: 0, y: 0 });
     },
-    [currentToolMode, findEntityAtWorldPoint, screenToWorld],
+    [currentToolMode, entities, findEntityAtWorldPoint, screenToWorld, selectedEntityIds],
   );
 
   const moveInteraction = useCallback(
@@ -620,14 +742,27 @@ export const CanvasV4DevScreen = () => {
           startPoint: { x: session.startX, y: session.startY },
           currentPoint: screenPoint,
         });
+        setSelectionMode('box');
         setLastActionType('SELECTION_BOX_DRAG');
+        return;
+      }
+
+      if (session.interactionMode === 'move-selection') {
+        const moveDelta = { x: totalDx / cameraZoom, y: totalDy / cameraZoom };
+        const movedById = new Map(session.moveOriginalEntities.map((entity) => [entity.entityId, moveLineEntity(entity, moveDelta)]));
+
+        setEntities((current) => current.map((entity) => movedById.get(entity.entityId) ?? entity));
+        setIsMovingSelection(true);
+        setMoveDeltaMm(moveDelta);
+        setSelectionMode('move');
+        setLastActionType('MOVE_SELECTION_DRAG');
         return;
       }
 
       setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }));
       setLastActionType('PAN_CHANGE');
     },
-    [screenToWorld],
+    [cameraZoom, screenToWorld],
   );
 
   const endInteraction = useCallback(
@@ -640,16 +775,31 @@ export const CanvasV4DevScreen = () => {
 
       setPointerWorldPoint(screenToWorld(screenPoint));
 
-      if (session.interactionMode === 'selection-box' && session.moved) {
+      if (session.interactionMode === 'move-selection' && session.moved) {
+        const moveDelta = { x: (screenPoint.x - session.startX) / cameraZoom, y: (screenPoint.y - session.startY) / cameraZoom };
+        const afterEntities = session.moveOriginalEntities.map((entity) => moveLineEntity(entity, moveDelta));
+
+        if (afterEntities.length > 0 && Math.hypot(moveDelta.x, moveDelta.y) > 0.000001) {
+          pushHistoryAction({
+            type: 'MOVE_SELECTED_LINES',
+            beforeEntities: session.moveOriginalEntities,
+            afterEntities,
+            delta: moveDelta,
+          });
+          setSelectedEntityIds(afterEntities.map((entity) => entity.entityId));
+          setLastMoveAction('MOVE_SELECTED_LINES');
+        }
+      } else if (session.interactionMode === 'selection-box' && session.moved) {
         selectEntitiesInsideBox({ x: session.startX, y: session.startY }, screenPoint);
       } else if (!session.moved) {
         finishClick(screenPoint);
       }
 
       setSelectionBox(null);
+      setIsMovingSelection(false);
       dragSessionRef.current = EMPTY_DRAG_SESSION;
     },
-    [finishClick, screenToWorld, selectEntitiesInsideBox],
+    [cameraZoom, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox],
   );
 
   const responderHandlers = useMemo(
@@ -726,12 +876,18 @@ export const CanvasV4DevScreen = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [deleteSelectedEntities, redoLastAction, undoLastAction]);
 
+  const activeLineDelta = previewLine ? { x: previewLine.endPoint.x - previewLine.startPoint.x, y: previewLine.endPoint.y - previewLine.startPoint.y } : null;
+
   const inspectorLines = useMemo(
     () => [
       `currentToolMode: ${currentToolMode}`,
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedCount: ${selectedEntityIds.length}`,
+      `isMovingSelection: ${isMovingSelection ? 'true' : 'false'}`,
+      `moveDeltaMm: (${moveDeltaMm.x.toFixed(1)}, ${moveDeltaMm.y.toFixed(1)})`,
+      `lastMoveAction: ${lastMoveAction}`,
+      `selectionMode: ${selectionMode}`,
       `undoStackSize: ${undoStack.length}`,
       `redoStackSize: ${redoStack.length}`,
       `lastUndoAction: ${lastUndoAction}`,
@@ -746,21 +902,33 @@ export const CanvasV4DevScreen = () => {
       `activeSnapType: ${activeSnap.activeSnapType}`,
       `activeSnapTargetId: ${activeSnap.activeSnapTargetId ?? 'null'}`,
       `activeSnapDistance: ${activeSnap.activeSnapDistance === null ? 'null' : `${activeSnap.activeSnapDistance.toFixed(0)} mm`}`,
+      `gridSnappedEndPoint: ${activeSnap.gridSnappedEndPoint ? `(${activeSnap.gridSnappedEndPoint.x.toFixed(0)}, ${activeSnap.gridSnappedEndPoint.y.toFixed(0)})` : 'null'}`,
+      `angleHelperActive: ${activeSnap.angleHelperActive ? 'true' : 'false'}`,
       `isDrawingLine: ${lineStartPoint || polylineLastPoint ? 'true' : 'false'}`,
+      `lineDeltaX: ${activeLineDelta ? `${activeLineDelta.x.toFixed(0)} mm` : 'null'}`,
+      `lineDeltaY: ${activeLineDelta ? `${activeLineDelta.y.toFixed(0)} mm` : 'null'}`,
+      `lineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
       `previewLineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
       `previewLineLength: ${previewLine ? `${previewLine.length.toFixed(0)} mm` : 'null'}`,
     ],
     [
+      activeLineDelta,
       activeSnap.activeSnapDistance,
       activeSnap.activeSnapTargetId,
       activeSnap.activeSnapType,
+      activeSnap.angleHelperActive,
+      activeSnap.gridSnappedEndPoint,
       cameraZoom,
       currentToolMode,
       entities.length,
       lastActionType,
       lastRedoAction,
       lastUndoAction,
+      isMovingSelection,
+      lastMoveAction,
       lineStartPoint,
+      moveDeltaMm.x,
+      moveDeltaMm.y,
       pan.x,
       pan.y,
       polylineLastPoint,
@@ -768,6 +936,7 @@ export const CanvasV4DevScreen = () => {
       redoStack.length,
       selectedEntityIds,
       selectionBox?.active,
+      selectionMode,
       undoStack.length,
     ],
   );
