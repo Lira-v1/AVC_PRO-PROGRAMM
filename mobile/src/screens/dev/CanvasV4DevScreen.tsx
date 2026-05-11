@@ -25,6 +25,21 @@ type UndoAction =
   | { type: 'CREATE_POLYLINE_SEGMENT'; entityId: string }
   | { type: 'DELETE_ENTITY'; entity: CanvasV4LineEntity; index: number };
 
+type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
+
+type SnapResult = {
+  point: Point;
+  activeSnapType: SnapType;
+  activeSnapTargetId: string | null;
+  activeSnapDistance: number | null;
+};
+
+type EndpointSnapTarget = {
+  targetId: string;
+  point: Point;
+  distance: number;
+};
+
 type DragSession = {
   started: boolean;
   moved: boolean;
@@ -43,7 +58,9 @@ const ZOOM_OUT_FACTOR = 0.8;
 const ZOOM_IN_FACTOR = 1.25;
 const DRAG_THRESHOLD_PX = 3;
 const HIT_TOLERANCE_PX = 12;
+const ENDPOINT_SNAP_THRESHOLD_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
+const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
 
 const EMPTY_DRAG_SESSION: DragSession = {
   started: false,
@@ -80,8 +97,7 @@ const snapPointToGrid = (point: Point): Point => ({
   y: Math.round(point.y / GRID_STEP_MM) * GRID_STEP_MM,
 });
 
-const snapEndPoint = (startPoint: Point, rawEndPoint: Point): Point => {
-  const gridEndPoint = snapPointToGrid(rawEndPoint);
+const snapEndPointToAngle = (startPoint: Point, gridEndPoint: Point): Point => {
   const dx = gridEndPoint.x - startPoint.x;
   const dy = gridEndPoint.y - startPoint.y;
 
@@ -107,6 +123,62 @@ const snapEndPoint = (startPoint: Point, rawEndPoint: Point): Point => {
   return {
     x: startPoint.x + horizontalSign * diagonalSteps * GRID_STEP_MM,
     y: startPoint.y + verticalSign * diagonalSteps * GRID_STEP_MM,
+  };
+};
+
+const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint: Point, threshold: number): EndpointSnapTarget | null => {
+  let nearestTarget: EndpointSnapTarget | null = null;
+
+  entities.forEach((entity) => {
+    ([
+      { targetId: `${entity.entityId}:startPoint`, point: entity.startPoint },
+      { targetId: `${entity.entityId}:endPoint`, point: entity.endPoint },
+    ] as Array<{ targetId: string; point: Point }>).forEach((candidate) => {
+      const distance = Math.hypot(rawPoint.x - candidate.point.x, rawPoint.y - candidate.point.y);
+
+      if (distance <= threshold && (!nearestTarget || distance < nearestTarget.distance)) {
+        nearestTarget = {
+          targetId: candidate.targetId,
+          point: candidate.point,
+          distance,
+        };
+      }
+    });
+  });
+
+  return nearestTarget;
+};
+
+const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, endpointThreshold: number, startPoint?: Point | null): SnapResult => {
+  const endpointTarget = findNearestEndpointSnapTarget(entities, rawPoint, endpointThreshold);
+
+  if (endpointTarget) {
+    return {
+      point: endpointTarget.point,
+      activeSnapType: 'endpoint',
+      activeSnapTargetId: endpointTarget.targetId,
+      activeSnapDistance: endpointTarget.distance,
+    };
+  }
+
+  const gridPoint = snapPointToGrid(rawPoint);
+
+  if (!startPoint) {
+    return {
+      point: gridPoint,
+      activeSnapType: 'grid',
+      activeSnapTargetId: null,
+      activeSnapDistance: Math.hypot(rawPoint.x - gridPoint.x, rawPoint.y - gridPoint.y),
+    };
+  }
+
+  const anglePoint = snapEndPointToAngle(startPoint, gridPoint);
+
+  return {
+    point: anglePoint,
+    activeSnapType: 'angle',
+    activeSnapTargetId: null,
+    activeSnapDistance: Math.hypot(rawPoint.x - anglePoint.x, rawPoint.y - anglePoint.y),
   };
 };
 
@@ -185,23 +257,37 @@ export const CanvasV4DevScreen = () => {
     [cameraZoom, pan.x, pan.y, viewport.height, viewport.width],
   );
 
-  const previewLine = useMemo(() => {
-    const startPoint = currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null;
+  const endpointSnapThreshold = ENDPOINT_SNAP_THRESHOLD_PX / cameraZoom;
+  const activeDrawingStartPoint = currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null;
 
-    if (!startPoint || !pointerWorldPoint) {
+  const activeSnap = useMemo<SnapResult>(() => {
+    if (!pointerWorldPoint) {
+      return {
+        point: { x: 0, y: 0 },
+        activeSnapType: 'none',
+        activeSnapTargetId: null,
+        activeSnapDistance: null,
+      };
+    }
+
+    return resolveCanvasV4Snap(entities, pointerWorldPoint, endpointSnapThreshold, activeDrawingStartPoint);
+  }, [activeDrawingStartPoint, endpointSnapThreshold, entities, pointerWorldPoint]);
+
+  const previewLine = useMemo(() => {
+    if (!activeDrawingStartPoint || !pointerWorldPoint) {
       return null;
     }
 
-    const endPoint = snapEndPoint(startPoint, pointerWorldPoint);
-    const metrics = getLineMetrics(startPoint, endPoint);
+    const endPoint = activeSnap.point;
+    const metrics = getLineMetrics(activeDrawingStartPoint, endPoint);
 
     return {
-      startPoint,
+      startPoint: activeDrawingStartPoint,
       endPoint,
       length: metrics.length,
       angle: metrics.angle,
     };
-  }, [currentToolMode, lineStartPoint, pointerWorldPoint, polylineLastPoint]);
+  }, [activeDrawingStartPoint, activeSnap.point, pointerWorldPoint]);
 
   const getLineScreenGeometry = useCallback(
     (startPoint: Point, endPoint: Point) => {
@@ -313,18 +399,19 @@ export const CanvasV4DevScreen = () => {
 
   const finishClick = useCallback(
     (screenPoint: Point) => {
-      const snappedWorldPoint = snapPointToGrid(screenToWorld(screenPoint));
-      setPointerWorldPoint(snappedWorldPoint);
+      const rawWorldPoint = screenToWorld(screenPoint);
+      const clickSnap = resolveCanvasV4Snap(entities, rawWorldPoint, endpointSnapThreshold, currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null);
+      setPointerWorldPoint(rawWorldPoint);
 
       if (currentToolMode === 'line') {
         if (!lineStartPoint) {
-          setLineStartPoint(snappedWorldPoint);
+          setLineStartPoint(clickSnap.point);
           setSelectedEntityId(null);
           setLastActionType('SET_LINE_START');
           return;
         }
 
-        const endPoint = snapEndPoint(lineStartPoint, snappedWorldPoint);
+        const endPoint = clickSnap.point;
         const entity = createLineEntity(lineStartPoint, endPoint, 'line');
         setEntities((current) => [...current, entity]);
         setLineStartPoint(null);
@@ -335,14 +422,14 @@ export const CanvasV4DevScreen = () => {
 
       if (currentToolMode === 'polyline') {
         if (!polylineLastPoint) {
-          setPolylineLastPoint(snappedWorldPoint);
+          setPolylineLastPoint(clickSnap.point);
           setActivePolylineId(`polyline-${Date.now()}`);
           setSelectedEntityId(null);
           setLastActionType('SET_POLYLINE_START');
           return;
         }
 
-        const endPoint = snapEndPoint(polylineLastPoint, snappedWorldPoint);
+        const endPoint = clickSnap.point;
         const entity = createLineEntity(polylineLastPoint, endPoint, 'polyline-segment', activePolylineId ?? undefined);
         setEntities((current) => [...current, entity]);
         setPolylineLastPoint(endPoint);
@@ -352,7 +439,7 @@ export const CanvasV4DevScreen = () => {
       }
 
       if (currentToolMode === 'select') {
-        const hitEntityId = findEntityAtWorldPoint(snappedWorldPoint);
+        const hitEntityId = findEntityAtWorldPoint(clickSnap.point);
         setSelectedEntityId(hitEntityId);
         setLastActionType(hitEntityId ? 'SELECT_ENTITY' : 'CLEAR_SELECTION');
         return;
@@ -361,7 +448,7 @@ export const CanvasV4DevScreen = () => {
       setSelectedEntityId(null);
       setLastActionType('IDLE_TAP');
     },
-    [activePolylineId, currentToolMode, findEntityAtWorldPoint, lineStartPoint, polylineLastPoint, pushUndo, screenToWorld],
+    [activePolylineId, currentToolMode, endpointSnapThreshold, entities, findEntityAtWorldPoint, lineStartPoint, polylineLastPoint, pushUndo, screenToWorld],
   );
 
   const setToolMode = useCallback((mode: ToolMode) => {
@@ -389,7 +476,7 @@ export const CanvasV4DevScreen = () => {
         lastX: screenPoint.x,
         lastY: screenPoint.y,
       };
-      setPointerWorldPoint(snapPointToGrid(screenToWorld(screenPoint)));
+      setPointerWorldPoint(screenToWorld(screenPoint));
     },
     [screenToWorld],
   );
@@ -414,7 +501,7 @@ export const CanvasV4DevScreen = () => {
         lastX: screenPoint.x,
         lastY: screenPoint.y,
       };
-      setPointerWorldPoint(snapPointToGrid(screenToWorld(screenPoint)));
+      setPointerWorldPoint(screenToWorld(screenPoint));
 
       if (moved) {
         setPan((current) => ({ x: current.x + deltaX, y: current.y + deltaY }));
@@ -432,7 +519,7 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
-      setPointerWorldPoint(snapPointToGrid(screenToWorld(screenPoint)));
+      setPointerWorldPoint(screenToWorld(screenPoint));
 
       if (!session.moved) {
         finishClick(screenPoint);
@@ -474,7 +561,7 @@ export const CanvasV4DevScreen = () => {
 
     const onPointerMove = (event: PointerEvent) => {
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-      setPointerWorldPoint(snapPointToGrid(screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top })));
+      setPointerWorldPoint(screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }));
     };
 
     canvasNode.addEventListener('wheel', onWheel, { passive: false });
@@ -518,15 +605,20 @@ export const CanvasV4DevScreen = () => {
       `displayZoom: ${((cameraZoom / DEFAULT_ZOOM) * 100).toFixed(0)}%`,
       `pan: (${pan.x.toFixed(1)}, ${pan.y.toFixed(1)})`,
       `gridStepMm: ${GRID_STEP_MM}`,
+      `snapPriority: ${SNAP_PRIORITY_LABEL}`,
+      `activeSnapType: ${activeSnap.activeSnapType}`,
+      `activeSnapTargetId: ${activeSnap.activeSnapTargetId ?? 'null'}`,
+      `activeSnapDistance: ${activeSnap.activeSnapDistance === null ? 'null' : `${activeSnap.activeSnapDistance.toFixed(0)} mm`}`,
       `isDrawingLine: ${lineStartPoint || polylineLastPoint ? 'true' : 'false'}`,
       `previewLineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
       `previewLineLength: ${previewLine ? `${previewLine.length.toFixed(0)} mm` : 'null'}`,
     ],
-    [cameraZoom, currentToolMode, entities.length, lastActionType, lineStartPoint, pan.x, pan.y, polylineLastPoint, previewLine, selectedEntityId],
+    [activeSnap.activeSnapDistance, activeSnap.activeSnapTargetId, activeSnap.activeSnapType, cameraZoom, currentToolMode, entities.length, lastActionType, lineStartPoint, pan.x, pan.y, polylineLastPoint, previewLine, selectedEntityId],
   );
 
   const canvasHeight = Math.max(Math.min(windowHeight * 0.62, 720), 420);
   const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
+  const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
 
   return (
     <View style={styles.root}>
@@ -626,6 +718,7 @@ export const CanvasV4DevScreen = () => {
 
             {lineStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, { left: worldToScreen(lineStartPoint).x - 5, top: worldToScreen(lineStartPoint).y - 5 }]} /> : null}
             {polylineLastPoint ? <View pointerEvents="none" style={[styles.anchorPoint, styles.polylineAnchor, { left: worldToScreen(polylineLastPoint).x - 5, top: worldToScreen(polylineLastPoint).y - 5 }]} /> : null}
+            {endpointSnapScreenPoint ? <View pointerEvents="none" style={[styles.endpointSnapMarker, { left: endpointSnapScreenPoint.x - 8, top: endpointSnapScreenPoint.y - 8 }]} /> : null}
 
             {isInspectorVisible ? (
               <View style={styles.inspectorPanel} pointerEvents="box-none">
@@ -804,6 +897,18 @@ const styles = StyleSheet.create({
   },
   polylineAnchor: {
     backgroundColor: '#0EA5E9',
+  },
+  endpointSnapMarker: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#FACC15',
+    backgroundColor: 'rgba(250, 204, 21, 0.2)',
+    shadowColor: '#FACC15',
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
   },
   inspectorPanel: {
     position: 'absolute',
