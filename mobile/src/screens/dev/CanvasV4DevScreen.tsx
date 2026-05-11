@@ -489,7 +489,7 @@ export const CanvasV4DevScreen = () => {
   const [cameraZoom, setCameraZoom] = useState(DEFAULT_ZOOM);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isGridVisible, setGridVisible] = useState(true);
-  const [isInspectorVisible, setInspectorVisible] = useState(true);
+  const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('idle');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
   const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
@@ -1466,7 +1466,7 @@ export const CanvasV4DevScreen = () => {
             ) : null}
 
             {isInspectorVisible ? (
-              <View style={styles.inspectorPanel} pointerEvents="box-none">
+              <View style={styles.inspectorPanel} pointerEvents="none">
                 <Text style={styles.inspectorTitle}>Dev Inspector</Text>
                 {inspectorLines.map((line) => (
                   <Text key={line} style={styles.inspectorLine}>{line}</Text>
