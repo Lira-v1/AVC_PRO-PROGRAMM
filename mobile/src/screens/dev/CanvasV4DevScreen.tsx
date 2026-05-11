@@ -108,6 +108,9 @@ const TRANSFORM_HANDLE_HIT_RADIUS_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
 const ANGLE_HELPER_TOLERANCE_DEG = 6;
 const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
+const LINE_DIMENSION_LABEL_OFFSET_PX = 14;
+
+const formatLineLength = (lengthMm: number) => `${(lengthMm / 1000).toFixed(2)} м`;
 
 const EMPTY_DRAG_SESSION: DragSession = {
   started: false,
@@ -489,6 +492,7 @@ export const CanvasV4DevScreen = () => {
   const [cameraZoom, setCameraZoom] = useState(DEFAULT_ZOOM);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isGridVisible, setGridVisible] = useState(true);
+  const [showLineDimensions, setShowLineDimensions] = useState(true);
   const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('idle');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
@@ -626,6 +630,7 @@ export const CanvasV4DevScreen = () => {
   }, [entities, selectedEntityIds]);
 
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
+  const selectedLineLength = selectedEntities.length === 1 ? selectedEntities[0].length : null;
 
   const transformHandles = useMemo(() => {
     if (selectedEntities.length === 1) {
@@ -1226,10 +1231,12 @@ export const CanvasV4DevScreen = () => {
   }, [deleteSelectedEntities, redoLastAction, undoLastAction]);
 
   const activeLineDelta = previewLine ? { x: previewLine.endPoint.x - previewLine.startPoint.x, y: previewLine.endPoint.y - previewLine.startPoint.y } : null;
+  const previewLineLength = previewLine?.length ?? null;
 
   const inspectorLines = useMemo(
     () => [
       `currentToolMode: ${currentToolMode}`,
+      `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
       `entitiesCount: ${entities.length}`,
       `selectedEntityIds: [${selectedEntityIds.join(', ') || 'empty'}]`,
       `selectedCount: ${selectedEntityIds.length}`,
@@ -1265,7 +1272,8 @@ export const CanvasV4DevScreen = () => {
       `lineDeltaY: ${activeLineDelta ? `${activeLineDelta.y.toFixed(0)} mm` : 'null'}`,
       `lineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
       `previewLineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
-      `previewLineLength: ${previewLine ? `${previewLine.length.toFixed(0)} mm` : 'null'}`,
+      `previewLineLength: ${previewLineLength === null ? 'null' : formatLineLength(previewLineLength)}`,
+      `selectedLineLength: ${selectedLineLength === null ? 'null' : formatLineLength(selectedLineLength)}`,
     ],
     [
       activeHandleId,
@@ -1277,6 +1285,7 @@ export const CanvasV4DevScreen = () => {
       activeSnap.gridSnappedEndPoint,
       cameraZoom,
       currentToolMode,
+      showLineDimensions,
       entities.length,
       lastActionType,
       lastRedoAction,
@@ -1290,11 +1299,13 @@ export const CanvasV4DevScreen = () => {
       pan.y,
       polylineLastPoint,
       previewLine,
+      previewLineLength,
       redoStack.length,
       resizeAxis,
       resizeScale.x,
       resizeScale.y,
       selectedBoundingBox,
+      selectedLineLength,
       selectedEntityIds,
       selectionBox?.active,
       selectionMode,
@@ -1331,6 +1342,9 @@ export const CanvasV4DevScreen = () => {
           </Pressable>
           <Pressable style={[styles.controlButton, !isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
             <Text style={styles.controlButtonText}>{isGridVisible ? 'Скрыть сетку' : 'Показать сетку'}</Text>
+          </Pressable>
+          <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : null]} onPress={() => setShowLineDimensions((current) => !current)}>
+            <Text style={styles.controlButtonText}>{showLineDimensions ? 'Скрыть размеры' : 'Показать размеры'}</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, isInspectorVisible ? styles.controlButtonActive : null]} onPress={() => setInspectorVisible((current) => !current)}>
             <Text style={styles.controlButtonText}>{isInspectorVisible ? 'Скрыть Inspector' : 'Inspector'}</Text>
@@ -1379,37 +1393,72 @@ export const CanvasV4DevScreen = () => {
               const isSelected = selectedEntityIdSet.has(entity.entityId);
 
               return (
-                <View
-                  key={entity.entityId}
-                  pointerEvents="none"
-                  style={[
-                    styles.lineEntity,
-                    entity.entityType === 'polyline-segment' ? styles.polylineSegment : null,
-                    isSelected ? styles.lineEntitySelected : null,
-                    {
-                      width: Math.max(geometry.length, 1),
-                      left: geometry.centerX - geometry.length / 2,
-                      top: geometry.centerY - (isSelected ? 2 : 1),
-                      transform: [{ rotate: `${geometry.angleDeg}deg` }],
-                    },
-                  ]}
-                />
+                <React.Fragment key={entity.entityId}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.lineEntity,
+                      entity.entityType === 'polyline-segment' ? styles.polylineSegment : null,
+                      isSelected ? styles.lineEntitySelected : null,
+                      {
+                        width: Math.max(geometry.length, 1),
+                        left: geometry.centerX - geometry.length / 2,
+                        top: geometry.centerY - (isSelected ? 2 : 1),
+                        transform: [{ rotate: `${geometry.angleDeg}deg` }],
+                      },
+                    ]}
+                  />
+                  {showLineDimensions ? (
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.dimensionLabel,
+                        isSelected ? styles.dimensionLabelSelected : null,
+                        {
+                          left: geometry.centerX,
+                          top: geometry.centerY - LINE_DIMENSION_LABEL_OFFSET_PX,
+                          transform: [{ translateX: -34 }, { translateY: -12 }],
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.dimensionLabelText, isSelected ? styles.dimensionLabelTextSelected : null]}>{formatLineLength(entity.length)}</Text>
+                    </View>
+                  ) : null}
+                </React.Fragment>
               );
             })}
 
             {previewLine && previewGeometry ? (
-              <View
-                pointerEvents="none"
-                style={[
-                  styles.previewLine,
-                  {
-                    width: Math.max(previewGeometry.length, 1),
-                    left: previewGeometry.centerX - previewGeometry.length / 2,
-                    top: previewGeometry.centerY - 1,
-                    transform: [{ rotate: `${previewGeometry.angleDeg}deg` }],
-                  },
-                ]}
-              />
+              <React.Fragment>
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.previewLine,
+                    {
+                      width: Math.max(previewGeometry.length, 1),
+                      left: previewGeometry.centerX - previewGeometry.length / 2,
+                      top: previewGeometry.centerY - 1,
+                      transform: [{ rotate: `${previewGeometry.angleDeg}deg` }],
+                    },
+                  ]}
+                />
+                {showLineDimensions ? (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.dimensionLabel,
+                      styles.previewDimensionLabel,
+                      {
+                        left: previewGeometry.centerX,
+                        top: previewGeometry.centerY - LINE_DIMENSION_LABEL_OFFSET_PX,
+                        transform: [{ translateX: -34 }, { translateY: -12 }],
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.dimensionLabelText, styles.previewDimensionLabelText]}>{formatLineLength(previewLine.length)}</Text>
+                  </View>
+                ) : null}
+              </React.Fragment>
             ) : null}
 
             {lineStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, { left: worldToScreen(lineStartPoint).x - 5, top: worldToScreen(lineStartPoint).y - 5 }]} /> : null}
@@ -1630,6 +1679,39 @@ const styles = StyleSheet.create({
     backgroundColor: '#22C55E',
     opacity: 0.72,
     borderStyle: 'dashed',
+  },
+  dimensionLabel: {
+    position: 'absolute',
+    minWidth: 68,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.55)',
+    alignItems: 'center',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+  },
+  dimensionLabelSelected: {
+    backgroundColor: 'rgba(255, 247, 237, 0.96)',
+    borderColor: '#FB923C',
+  },
+  previewDimensionLabel: {
+    backgroundColor: 'rgba(240, 253, 244, 0.96)',
+    borderColor: '#22C55E',
+  },
+  dimensionLabelText: {
+    color: '#334155',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  dimensionLabelTextSelected: {
+    color: '#C2410C',
+  },
+  previewDimensionLabelText: {
+    color: '#15803D',
   },
   anchorPoint: {
     position: 'absolute',
