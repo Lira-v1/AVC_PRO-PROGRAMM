@@ -148,6 +148,8 @@ const LINE_DIMENSION_LABEL_WIDTH_PX = 68;
 const LINE_DIMENSION_LABEL_HEIGHT_PX = 24;
 const POINT_MATCH_EPSILON = 0.001;
 const DEFAULT_WALL_THICKNESS_MM = 100;
+const WALL_THICKNESS_VISUAL = false;
+const WALL_THICKNESS_FROZEN = true;
 const DEFAULT_CORNER_JOIN_MODE: CornerJoinMode = 'bevel';
 
 type LineScreenGeometry = {
@@ -1710,7 +1712,6 @@ export const CanvasV4DevScreen = () => {
   const previewLineLength = previewLine?.length ?? null;
   const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
   const previewDimensionLabelPlacement = previewGeometry ? getPreviewDimensionLabelPlacement(previewGeometry) : null;
-  const previewWallRenderGeometry = previewGeometry ? getPreviewWallRenderGeometry(previewGeometry) : null;
   const selectedDimensionLabelPlacement = selectedEntities.length === 1
     ? getEntityDimensionLabelPlacement(selectedEntities[0], getLineScreenGeometry(selectedEntities[0].startPoint, selectedEntities[0].endPoint))
     : null;
@@ -1736,6 +1737,8 @@ export const CanvasV4DevScreen = () => {
       `selectedSegmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
       `segmentType: ${selectedSegment?.segmentType ?? newSegmentType}`,
       `wallAlignmentMode: ${selectedSegment?.wallAlignmentMode ?? getWallAlignmentMode(newSegmentType)}`,
+      `wallThicknessVisual: ${WALL_THICKNESS_VISUAL ? 'true' : 'false'}`,
+      `wallThicknessFrozen: ${WALL_THICKNESS_FROZEN ? 'true' : 'false'}`,
       `wallThickness: ${selectedSegment ? `${selectedSegment.wallThickness} mm` : `${DEFAULT_WALL_THICKNESS_MM} mm (default)`}`,
       `cornerJoinMode: ${selectedSegment?.cornerJoinMode ?? DEFAULT_CORNER_JOIN_MODE}`,
       `connectedSegmentIds: [${selectedSegment?.connectedSegmentIds.join(', ') || 'empty'}]`,
@@ -1837,7 +1840,6 @@ export const CanvasV4DevScreen = () => {
     ? getNormalizedRect(worldToScreen({ x: selectedBoundingBox.minX, y: selectedBoundingBox.minY }), worldToScreen({ x: selectedBoundingBox.maxX, y: selectedBoundingBox.maxY }))
     : null;
   const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
-  const wallJoinNodes = getWallJoinNodes(entities);
 
   return (
     <View style={styles.root}>
@@ -1877,7 +1879,7 @@ export const CanvasV4DevScreen = () => {
           {(['internal', 'external'] as WallSegmentType[]).map((segmentType) => (
             <Pressable key={segmentType} style={[styles.toolButton, newSegmentType === segmentType ? styles.segmentTypeButtonActive : null]} onPress={() => setNewSegmentType(segmentType)}>
               <Text style={[styles.toolButtonText, newSegmentType === segmentType ? styles.segmentTypeButtonTextActive : null]}>
-                {segmentType === 'internal' ? 'Перегородка 100 мм' : 'Наружная 100 мм'}
+                {segmentType === 'internal' ? 'Перегородка' : 'Наружная'}
               </Text>
             </Pressable>
           ))}
@@ -1912,7 +1914,6 @@ export const CanvasV4DevScreen = () => {
 
             {entities.map((entity) => {
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-              const wallRenderGeometry = getWallRenderGeometry(entity);
               const dimensionLabelPlacement = getEntityDimensionLabelPlacement(entity, geometry);
               const isSelected = selectedEntityIdSet.has(entity.entityId);
 
@@ -1921,22 +1922,8 @@ export const CanvasV4DevScreen = () => {
                   <View
                     pointerEvents="none"
                     style={[
-                      styles.wallSegmentBody,
-                      entity.segmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
-                      isSelected ? styles.wallSegmentSelected : null,
-                      {
-                        width: Math.max(geometry.length, 1),
-                        height: wallRenderGeometry.wallThicknessPx,
-                        left: wallRenderGeometry.renderCenterX - wallRenderGeometry.length / 2,
-                        top: wallRenderGeometry.renderCenterY - wallRenderGeometry.wallThicknessPx / 2,
-                        transform: [{ rotate: `${geometry.angleDeg}deg` }],
-                      },
-                    ]}
-                  />
-                  <View
-                    pointerEvents="none"
-                    style={[
                       styles.wallSegmentCenterLine,
+                      entity.segmentType === 'external' ? styles.externalWallLine : styles.internalWallLine,
                       isSelected ? styles.wallSegmentCenterLineSelected : null,
                       {
                         width: Math.max(geometry.length, 1),
@@ -1965,44 +1952,18 @@ export const CanvasV4DevScreen = () => {
               );
             })}
 
-            {wallJoinNodes.map((joinNode) => {
-              const joinScreenPoint = worldToScreen(joinNode.point);
-              const joinSize = Math.max(joinNode.wallThickness * cameraZoom, 4);
-              const joinOffset = joinNode.alignmentMode === 'inside' && joinNode.outwardNormal
-                ? scaleVector(normalizeVector(joinNode.outwardNormal), joinSize / 2)
-                : { x: 0, y: 0 };
-              const joinCenter = addPoints(joinScreenPoint, joinOffset);
 
-              return (
-                <View
-                  key={joinNode.id}
-                  pointerEvents="none"
-                  style={[
-                    styles.wallCornerJoin,
-                    joinNode.segmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
-                    {
-                      width: joinSize,
-                      height: joinSize,
-                      left: joinCenter.x - joinSize / 2,
-                      top: joinCenter.y - joinSize / 2,
-                    },
-                  ]}
-                />
-              );
-            })}
-
-            {previewLine && previewGeometry && previewWallRenderGeometry ? (
+            {previewLine && previewGeometry ? (
               <React.Fragment>
                 <View
                   pointerEvents="none"
                   style={[
                     styles.previewWallSegment,
-                    newSegmentType === 'external' ? styles.externalWallSegment : styles.internalWallSegment,
+                    newSegmentType === 'external' ? styles.externalWallLine : styles.internalWallLine,
                     {
-                      width: Math.max(previewWallRenderGeometry.length, 1),
-                      height: previewWallRenderGeometry.wallThicknessPx,
-                      left: previewWallRenderGeometry.renderCenterX - previewWallRenderGeometry.length / 2,
-                      top: previewWallRenderGeometry.renderCenterY - previewWallRenderGeometry.wallThicknessPx / 2,
+                      width: Math.max(previewGeometry.length, 1),
+                      left: previewGeometry.centerX - previewGeometry.length / 2,
+                      top: previewGeometry.centerY - 1,
                       transform: [{ rotate: `${previewGeometry.angleDeg}deg` }],
                     },
                   ]}
@@ -2252,14 +2213,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(3, 105, 161, 0.22)',
     borderColor: '#0369A1',
   },
+  internalWallLine: {
+    backgroundColor: '#0F172A',
+  },
+  externalWallLine: {
+    backgroundColor: '#0369A1',
+  },
   wallCornerJoin: {
     position: 'absolute',
     borderRadius: 2,
     borderWidth: 1,
   },
   wallSegmentSelected: {
-    backgroundColor: 'rgba(249, 115, 22, 0.25)',
-    borderColor: '#F97316',
+    backgroundColor: '#F97316',
     shadowColor: '#F97316',
     shadowOpacity: 0.35,
     shadowRadius: 6,
@@ -2275,9 +2241,8 @@ const styles = StyleSheet.create({
   },
   previewWallSegment: {
     position: 'absolute',
+    height: 2,
     borderRadius: 2,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
     opacity: 0.72,
   },
   dimensionLabel: {
