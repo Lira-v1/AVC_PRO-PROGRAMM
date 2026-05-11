@@ -108,7 +108,29 @@ const TRANSFORM_HANDLE_HIT_RADIUS_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
 const ANGLE_HELPER_TOLERANCE_DEG = 6;
 const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
-const LINE_DIMENSION_LABEL_OFFSET_PX = 14;
+const LINE_DIMENSION_LABEL_OFFSET_PX = 22;
+const LINE_DIMENSION_LABEL_WIDTH_PX = 68;
+const LINE_DIMENSION_LABEL_HEIGHT_PX = 24;
+const POINT_MATCH_EPSILON = 0.001;
+
+type LineScreenGeometry = {
+  length: number;
+  centerX: number;
+  centerY: number;
+  angleDeg: number;
+  screenStart: Point;
+  screenEnd: Point;
+};
+
+type DimensionLabelPlacementMode = 'line-normal-offset' | 'closed-contour-outside';
+
+type DimensionLabelPlacement = {
+  left: number;
+  top: number;
+  rotationDeg: number;
+  offsetPx: number;
+  placementMode: DimensionLabelPlacementMode;
+};
 
 const formatLineLength = (lengthMm: number) => `${(lengthMm / 1000).toFixed(2)} м`;
 
@@ -483,6 +505,124 @@ const getScreenPoint = (nativeEvent: any): Point => ({
   y: nativeEvent.locationY ?? nativeEvent.offsetY ?? 0,
 });
 
+
+const arePointsEqual = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y) <= POINT_MATCH_EPSILON;
+
+const getPolygonCentroid = (points: Point[]): Point | null => {
+  if (points.length < 3) {
+    return null;
+  }
+
+  let twiceArea = 0;
+  let cx = 0;
+  let cy = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    const cross = current.x * next.y - next.x * current.y;
+    twiceArea += cross;
+    cx += (current.x + next.x) * cross;
+    cy += (current.y + next.y) * cross;
+  }
+
+  if (Math.abs(twiceArea) <= 0.000001) {
+    return {
+      x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    };
+  }
+
+  return {
+    x: cx / (3 * twiceArea),
+    y: cy / (3 * twiceArea),
+  };
+};
+
+const getClosedPolylineCentroidForEntity = (entity: CanvasV4LineEntity, entities: CanvasV4LineEntity[]) => {
+  if (!entity.polylineId) {
+    return null;
+  }
+
+  const contourSegments = entities.filter((candidate) => candidate.polylineId === entity.polylineId);
+
+  if (contourSegments.length < 3) {
+    return null;
+  }
+
+  const isSequentialContour = contourSegments.every((segment, index) => {
+    const nextSegment = contourSegments[(index + 1) % contourSegments.length];
+    return arePointsEqual(segment.endPoint, nextSegment.startPoint);
+  });
+
+  if (!isSequentialContour) {
+    return null;
+  }
+
+  return getPolygonCentroid(contourSegments.map((segment) => segment.startPoint));
+};
+
+const normalizeDimensionLabelRotation = (angleDeg: number) => {
+  const normalized = ((angleDeg + 180) % 360) - 180;
+
+  if (normalized > 90) {
+    return normalized - 180;
+  }
+
+  if (normalized < -90) {
+    return normalized + 180;
+  }
+
+  return normalized;
+};
+
+const getPreferredOpenLineNormal = (normal: Point) => {
+  if (Math.abs(normal.x) > Math.abs(normal.y)) {
+    return normal.x < 0 ? { x: -normal.x, y: -normal.y } : normal;
+  }
+
+  return normal.y > 0 ? { x: -normal.x, y: -normal.y } : normal;
+};
+
+const getDimensionLabelPlacement = (geometry: LineScreenGeometry, contourCentroidScreenPoint: Point | null): DimensionLabelPlacement => {
+  const dx = geometry.screenEnd.x - geometry.screenStart.x;
+  const dy = geometry.screenEnd.y - geometry.screenStart.y;
+  const length = Math.max(Math.hypot(dx, dy), 1);
+  const unitX = dx / length;
+  const unitY = dy / length;
+  const leftNormal = { x: -unitY, y: unitX };
+  let offsetNormal = getPreferredOpenLineNormal(leftNormal);
+  let placementMode: DimensionLabelPlacementMode = 'line-normal-offset';
+
+  if (contourCentroidScreenPoint) {
+    const midpoint = { x: geometry.centerX, y: geometry.centerY };
+    const candidatePoint = {
+      x: midpoint.x + leftNormal.x * LINE_DIMENSION_LABEL_OFFSET_PX,
+      y: midpoint.y + leftNormal.y * LINE_DIMENSION_LABEL_OFFSET_PX,
+    };
+    const mirroredPoint = {
+      x: midpoint.x - leftNormal.x * LINE_DIMENSION_LABEL_OFFSET_PX,
+      y: midpoint.y - leftNormal.y * LINE_DIMENSION_LABEL_OFFSET_PX,
+    };
+    const candidateDistance = Math.hypot(candidatePoint.x - contourCentroidScreenPoint.x, candidatePoint.y - contourCentroidScreenPoint.y);
+    const mirroredDistance = Math.hypot(mirroredPoint.x - contourCentroidScreenPoint.x, mirroredPoint.y - contourCentroidScreenPoint.y);
+
+    offsetNormal = candidateDistance >= mirroredDistance ? leftNormal : { x: -leftNormal.x, y: -leftNormal.y };
+    placementMode = 'closed-contour-outside';
+  }
+
+  const anchorX = geometry.centerX + offsetNormal.x * LINE_DIMENSION_LABEL_OFFSET_PX;
+  const anchorY = geometry.centerY + offsetNormal.y * LINE_DIMENSION_LABEL_OFFSET_PX;
+
+  return {
+    left: anchorX - LINE_DIMENSION_LABEL_WIDTH_PX / 2,
+    top: anchorY - LINE_DIMENSION_LABEL_HEIGHT_PX / 2,
+    rotationDeg: normalizeDimensionLabelRotation(geometry.angleDeg),
+    offsetPx: LINE_DIMENSION_LABEL_OFFSET_PX,
+    placementMode,
+  };
+};
+
 export const CanvasV4DevScreen = () => {
   const canvasRef = useRef<View | null>(null);
   const dragSessionRef = useRef<DragSession>(EMPTY_DRAG_SESSION);
@@ -568,7 +708,7 @@ export const CanvasV4DevScreen = () => {
   }, [activeDrawingStartPoint, activeSnap.point, pointerWorldPoint]);
 
   const getLineScreenGeometry = useCallback(
-    (startPoint: Point, endPoint: Point) => {
+    (startPoint: Point, endPoint: Point): LineScreenGeometry => {
       const screenStart = worldToScreen(startPoint);
       const screenEnd = worldToScreen(endPoint);
       const length = Math.hypot(screenEnd.x - screenStart.x, screenEnd.y - screenStart.y);
@@ -576,9 +716,22 @@ export const CanvasV4DevScreen = () => {
       const centerY = (screenStart.y + screenEnd.y) / 2;
       const angleDeg = (Math.atan2(screenEnd.y - screenStart.y, screenEnd.x - screenStart.x) * 180) / Math.PI;
 
-      return { length, centerX, centerY, angleDeg };
+      return { length, centerX, centerY, angleDeg, screenStart, screenEnd };
     },
     [worldToScreen],
+  );
+
+  const getEntityDimensionLabelPlacement = useCallback(
+    (entity: CanvasV4LineEntity, geometry: LineScreenGeometry) => {
+      const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
+      return getDimensionLabelPlacement(geometry, contourCentroid ? worldToScreen(contourCentroid) : null);
+    },
+    [entities, worldToScreen],
+  );
+
+  const getPreviewDimensionLabelPlacement = useCallback(
+    (geometry: LineScreenGeometry) => getDimensionLabelPlacement(geometry, null),
+    [],
   );
 
   const gridLines = useMemo(() => {
@@ -1232,6 +1385,12 @@ export const CanvasV4DevScreen = () => {
 
   const activeLineDelta = previewLine ? { x: previewLine.endPoint.x - previewLine.startPoint.x, y: previewLine.endPoint.y - previewLine.startPoint.y } : null;
   const previewLineLength = previewLine?.length ?? null;
+  const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
+  const previewDimensionLabelPlacement = previewGeometry ? getPreviewDimensionLabelPlacement(previewGeometry) : null;
+  const selectedDimensionLabelPlacement = selectedEntities.length === 1
+    ? getEntityDimensionLabelPlacement(selectedEntities[0], getLineScreenGeometry(selectedEntities[0].startPoint, selectedEntities[0].endPoint))
+    : null;
+  const inspectedDimensionLabelPlacement = selectedDimensionLabelPlacement ?? previewDimensionLabelPlacement;
 
   const inspectorLines = useMemo(
     () => [
@@ -1274,6 +1433,9 @@ export const CanvasV4DevScreen = () => {
       `previewLineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
       `previewLineLength: ${previewLineLength === null ? 'null' : formatLineLength(previewLineLength)}`,
       `selectedLineLength: ${selectedLineLength === null ? 'null' : formatLineLength(selectedLineLength)}`,
+      `dimensionLabelRotation: ${inspectedDimensionLabelPlacement ? `${inspectedDimensionLabelPlacement.rotationDeg.toFixed(0)}°` : 'null'}`,
+      `dimensionLabelOffset: ${inspectedDimensionLabelPlacement ? `${inspectedDimensionLabelPlacement.offsetPx.toFixed(0)} px` : 'null'}`,
+      `dimensionLabelPlacementMode: ${inspectedDimensionLabelPlacement?.placementMode ?? 'null'}`,
     ],
     [
       activeHandleId,
@@ -1290,6 +1452,7 @@ export const CanvasV4DevScreen = () => {
       lastActionType,
       lastRedoAction,
       lastUndoAction,
+      inspectedDimensionLabelPlacement,
       isMovingSelection,
       lastMoveAction,
       lineStartPoint,
@@ -1316,7 +1479,6 @@ export const CanvasV4DevScreen = () => {
   );
 
   const canvasHeight = Math.max(Math.min(windowHeight * 0.62, 720), 420);
-  const previewGeometry = previewLine ? getLineScreenGeometry(previewLine.startPoint, previewLine.endPoint) : null;
   const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
   const selectedEntityIdSet = new Set(selectedEntityIds);
   const selectedBoundingBoxScreenRect = selectedEntities.length > 1 && selectedBoundingBox
@@ -1390,6 +1552,7 @@ export const CanvasV4DevScreen = () => {
 
             {entities.map((entity) => {
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+              const dimensionLabelPlacement = getEntityDimensionLabelPlacement(entity, geometry);
               const isSelected = selectedEntityIdSet.has(entity.entityId);
 
               return (
@@ -1415,9 +1578,9 @@ export const CanvasV4DevScreen = () => {
                         styles.dimensionLabel,
                         isSelected ? styles.dimensionLabelSelected : null,
                         {
-                          left: geometry.centerX,
-                          top: geometry.centerY - LINE_DIMENSION_LABEL_OFFSET_PX,
-                          transform: [{ translateX: -34 }, { translateY: -12 }],
+                          left: dimensionLabelPlacement.left,
+                          top: dimensionLabelPlacement.top,
+                          transform: [{ rotate: `${dimensionLabelPlacement.rotationDeg}deg` }],
                         },
                       ]}
                     >
@@ -1442,16 +1605,16 @@ export const CanvasV4DevScreen = () => {
                     },
                   ]}
                 />
-                {showLineDimensions ? (
+                {showLineDimensions && previewDimensionLabelPlacement ? (
                   <View
                     pointerEvents="none"
                     style={[
                       styles.dimensionLabel,
                       styles.previewDimensionLabel,
                       {
-                        left: previewGeometry.centerX,
-                        top: previewGeometry.centerY - LINE_DIMENSION_LABEL_OFFSET_PX,
-                        transform: [{ translateX: -34 }, { translateY: -12 }],
+                        left: previewDimensionLabelPlacement.left,
+                        top: previewDimensionLabelPlacement.top,
+                        transform: [{ rotate: `${previewDimensionLabelPlacement.rotationDeg}deg` }],
                       },
                     ]}
                   >
@@ -1682,7 +1845,9 @@ const styles = StyleSheet.create({
   },
   dimensionLabel: {
     position: 'absolute',
-    minWidth: 68,
+    width: LINE_DIMENSION_LABEL_WIDTH_PX,
+    minWidth: LINE_DIMENSION_LABEL_WIDTH_PX,
+    minHeight: LINE_DIMENSION_LABEL_HEIGHT_PX,
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 8,
