@@ -1030,7 +1030,7 @@ export const CanvasV4DevScreen = () => {
   const [showLineDimensions, setShowLineDimensions] = useState(true);
   const [isInspectorVisible, setInspectorVisible] = useState(false);
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('select');
-  const [newSegmentType, setNewSegmentType] = useState<WallSegmentType>('internal');
+  const [newSegmentType] = useState<WallSegmentType>('internal');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
   const [doors, setDoors] = useState<CanvasV4Door[]>([]);
   const [windows, setWindows] = useState<CanvasV4Window[]>([]);
@@ -2642,7 +2642,15 @@ export const CanvasV4DevScreen = () => {
     ],
   );
 
-  const canvasHeight = Math.max(Math.min(windowHeight * 0.62, 720), 420);
+  const canvasHeight = Math.max(Math.min(windowHeight * 0.66, 760), 460);
+  const hasSelection = selectedEntityIds.length > 0 || Boolean(selectedDoorId) || Boolean(selectedWindowId);
+  const drawingTools: Array<{ mode: ToolMode; icon: string; label: string }> = [
+    { mode: 'select', icon: '↖', label: 'Выбор' },
+    { mode: 'line', icon: '╱', label: 'Сегмент' },
+    { mode: 'polyline', icon: '⌁', label: 'Стена' },
+    { mode: 'door', icon: '▯', label: 'Дверь' },
+    { mode: 'window', icon: '═', label: 'Окно' },
+  ];
   const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
   const selectedEntityIdSet = new Set(selectedEntityIds);
   const selectedBoundingBoxScreenRect = selectedEntities.length > 1 && selectedBoundingBox
@@ -2655,79 +2663,64 @@ export const CanvasV4DevScreen = () => {
       <AppHeader title="Canvas V4 — CAD-lite" />
 
       <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent}>
-        <View style={styles.controlsRow}>
-          <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)}>
-            <Text style={styles.controlButtonText}>Масштаб -</Text>
+        <View style={styles.systemBar}>
+          <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)} accessibilityLabel="Zoom In">
+            <Text style={styles.controlButtonText}>+</Text>
           </Pressable>
-          <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)}>
-            <Text style={styles.controlButtonText}>Масштаб +</Text>
+          <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_OUT_FACTOR)} accessibilityLabel="Zoom Out">
+            <Text style={styles.controlButtonText}>-</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, styles.resetButton]} onPress={resetView}>
             <Text style={styles.controlButtonText}>Сброс вида</Text>
             <Text style={styles.controlButtonSubtext}>{((cameraZoom / DEFAULT_ZOOM) * 100).toFixed(0)}%</Text>
           </Pressable>
-          <Pressable style={[styles.controlButton, !isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
-            <Text style={styles.controlButtonText}>{isGridVisible ? 'Скрыть сетку' : 'Показать сетку'}</Text>
+          <Pressable style={[styles.controlButton, isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
+            <Text style={styles.controlButtonText}>Сетка</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : null]} onPress={() => setShowLineDimensions((current) => !current)}>
-            <Text style={styles.controlButtonText}>{showLineDimensions ? 'Скрыть размеры' : 'Показать размеры'}</Text>
+            <Text style={styles.controlButtonText}>Размеры</Text>
+          </Pressable>
+          <Pressable style={[styles.controlButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
+            <Text style={[styles.controlButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶</Text>
+          </Pressable>
+          <Pressable style={[styles.controlButton, redoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={redoLastAction} disabled={redoStack.length === 0}>
+            <Text style={[styles.controlButtonText, redoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↷</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, isInspectorVisible ? styles.controlButtonActive : null]} onPress={() => setInspectorVisible((current) => !current)}>
-            <Text style={styles.controlButtonText}>{isInspectorVisible ? 'Скрыть инспектор' : 'Инспектор'}</Text>
+            <Text style={styles.controlButtonText}>Инспектор</Text>
           </Pressable>
-        </View>
-
-        <View style={styles.toolRow}>
-          {(['select', 'line', 'polyline', 'door', 'window'] as ToolMode[]).map((mode) => (
-            <Pressable key={mode} style={[styles.toolButton, currentToolMode === mode ? styles.toolButtonActive : null]} onPress={() => setToolMode(mode)}>
-              <Text style={[styles.toolButtonText, currentToolMode === mode ? styles.toolButtonTextActive : null]}>
-                {mode === 'line' ? 'Сегмент стены' : mode === 'polyline' ? 'Стены' : mode === 'door' ? 'Дверь' : mode === 'window' ? 'Окно' : 'Выбор'}
-              </Text>
+          {hasSelection ? (
+            <Pressable style={[styles.controlButton, styles.dangerButton]} onPress={deleteSelectedEntities}>
+              <Text style={[styles.controlButtonText, styles.dangerButtonText]}>Удалить</Text>
             </Pressable>
-          ))}
-          {(['internal', 'external'] as WallSegmentType[]).map((segmentType) => (
-            <Pressable key={segmentType} style={[styles.toolButton, newSegmentType === segmentType ? styles.segmentTypeButtonActive : null]} onPress={() => setNewSegmentType(segmentType)}>
-              <Text style={[styles.toolButtonText, newSegmentType === segmentType ? styles.segmentTypeButtonTextActive : null]}>
-                {segmentType === 'internal' ? 'Перегородка' : 'Наружная'}
-              </Text>
-            </Pressable>
-          ))}
-          {selectedDoor ? (
-            <>
-              <Pressable style={[styles.toolButton, styles.doorFlipButton]} onPress={changeSelectedDoorHingeSide}>
-                <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Петли</Text>
-              </Pressable>
-              <Pressable style={[styles.toolButton, styles.doorFlipButton]} onPress={changeSelectedDoorSwingSide}>
-                <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Открывание</Text>
-              </Pressable>
-            </>
           ) : null}
-          {selectedWindow ? (
-            <View style={styles.windowWidthControl}>
-              <Text style={styles.windowWidthLabel}>Ширина окна</Text>
-              <TextInput
-                style={styles.windowWidthInput}
-                value={windowWidthInput}
-                onChangeText={setWindowWidthInput}
-                onSubmitEditing={updateSelectedWindowWidth}
-                onBlur={updateSelectedWindowWidth}
-                keyboardType="numeric"
-                selectTextOnFocus
-              />
-            </View>
-          ) : null}
-          <Pressable style={[styles.toolButton, selectedEntityIds.length > 0 || selectedDoorId || selectedWindowId ? styles.dangerButton : styles.toolButtonDisabled]} onPress={deleteSelectedEntities} disabled={selectedEntityIds.length === 0 && !selectedDoorId && !selectedWindowId}>
-            <Text style={[styles.toolButtonText, selectedEntityIds.length > 0 || selectedDoorId || selectedWindowId ? styles.dangerButtonText : styles.toolButtonDisabledText]}>Удалить</Text>
-          </Pressable>
-          <Pressable style={[styles.toolButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
-            <Text style={[styles.toolButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶ Отменить</Text>
-          </Pressable>
-          <Pressable style={[styles.toolButton, redoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={redoLastAction} disabled={redoStack.length === 0}>
-            <Text style={[styles.toolButtonText, redoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↷ Повторить</Text>
-          </Pressable>
         </View>
 
         <View style={styles.canvasShell}>
+          <View style={styles.projectRail} pointerEvents="box-none">
+            <Pressable style={[styles.projectRailButton, styles.projectRailButtonActive]} accessibilityLabel="План">
+              <Text style={styles.projectRailIcon}>▦</Text>
+              <Text style={styles.projectRailText}>План</Text>
+            </Pressable>
+            <Pressable style={styles.projectRailButton} accessibilityLabel="Создать проект">
+              <Text style={styles.projectRailIcon}>＋</Text>
+              <Text style={styles.projectRailText}>Создать</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.drawingToolbar} pointerEvents="box-none">
+            {drawingTools.map((tool) => (
+              <Pressable
+                key={tool.mode}
+                style={[styles.drawingToolButton, currentToolMode === tool.mode ? styles.drawingToolButtonActive : null]}
+                onPress={() => setToolMode(tool.mode)}
+                accessibilityLabel={tool.label}
+              >
+                <Text style={[styles.drawingToolIcon, currentToolMode === tool.mode ? styles.drawingToolIconActive : null]}>{tool.icon}</Text>
+              </Pressable>
+            ))}
+          </View>
+
           <View ref={canvasRef} style={[styles.canvasArea, { height: canvasHeight }]} onLayout={onLayout} {...responderHandlers}>
             {gridLines.map((line) => (
               <View
@@ -3081,6 +3074,35 @@ export const CanvasV4DevScreen = () => {
               <View style={styles.compassNeedle} />
             </View>
 
+            {selectedDoor || selectedWindow ? (
+              <View style={styles.contextPanel}>
+                {selectedDoor ? (
+                  <>
+                    <Pressable style={[styles.contextButton, styles.doorFlipButton]} onPress={changeSelectedDoorHingeSide}>
+                      <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Петли</Text>
+                    </Pressable>
+                    <Pressable style={[styles.contextButton, styles.doorFlipButton]} onPress={changeSelectedDoorSwingSide}>
+                      <Text style={[styles.toolButtonText, styles.doorFlipButtonText]}>Открывание</Text>
+                    </Pressable>
+                  </>
+                ) : null}
+                {selectedWindow ? (
+                  <View style={styles.windowWidthControl}>
+                    <Text style={styles.windowWidthLabel}>Ширина окна</Text>
+                    <TextInput
+                      style={styles.windowWidthInput}
+                      value={windowWidthInput}
+                      onChangeText={setWindowWidthInput}
+                      onSubmitEditing={updateSelectedWindowWidth}
+                      onBlur={updateSelectedWindowWidth}
+                      keyboardType="numeric"
+                      selectTextOnFocus
+                    />
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
             {isInspectorVisible ? (
               <View style={styles.inspectorPanel} pointerEvents="none">
                 <Text style={styles.inspectorTitle}>Dev-инспектор</Text>
@@ -3113,14 +3135,19 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 12,
   },
-  controlsRow: {
+  systemBar: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    padding: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.86)',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
   },
   controlButton: {
-    minHeight: 42,
-    paddingHorizontal: 14,
+    minHeight: 40,
+    paddingHorizontal: 12,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -3145,43 +3172,9 @@ const styles = StyleSheet.create({
   resetButton: {
     minWidth: 112,
   },
-  toolRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    padding: 10,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D6E0EF',
-  },
-  toolButton: {
-    minHeight: 38,
-    paddingHorizontal: 13,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toolButtonActive: {
-    borderColor: '#1D4ED8',
-    backgroundColor: '#2563EB',
-  },
   toolButtonText: {
     color: '#334155',
     fontWeight: '800',
-  },
-  toolButtonTextActive: {
-    color: '#FFFFFF',
-  },
-  segmentTypeButtonActive: {
-    borderColor: '#0EA5E9',
-    backgroundColor: '#E0F2FE',
-  },
-  segmentTypeButtonTextActive: {
-    color: '#0369A1',
   },
   dangerButton: {
     borderColor: '#FCA5A5',
@@ -3239,19 +3232,126 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
   },
   canvasShell: {
-    borderRadius: 18,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: '#DCE3F2',
     backgroundColor: '#FFFFFF',
-    padding: 10,
+    padding: 6,
+    position: 'relative',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
   },
   canvasArea: {
-    borderRadius: 14,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#D8E2F4',
+    borderColor: '#E2E8F0',
     overflow: 'hidden',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FBFCFF',
     position: 'relative',
+  },
+  projectRail: {
+    position: 'absolute',
+    left: 14,
+    top: 18,
+    zIndex: 10,
+    width: 68,
+    padding: 6,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    gap: 8,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.10,
+    shadowRadius: 12,
+  },
+  projectRailButton: {
+    minHeight: 58,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: '#F8FAFC',
+  },
+  projectRailButtonActive: {
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+  },
+  projectRailIcon: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  projectRailText: {
+    color: '#334155',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  drawingToolbar: {
+    position: 'absolute',
+    right: 14,
+    top: 18,
+    zIndex: 10,
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.28)',
+    gap: 8,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+  },
+  drawingToolButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(226, 232, 240, 0.18)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  drawingToolButtonActive: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#2563EB',
+  },
+  drawingToolIcon: {
+    color: '#E2E8F0',
+    fontSize: 23,
+    fontWeight: '900',
+    lineHeight: 26,
+  },
+  drawingToolIconActive: {
+    color: '#FFFFFF',
+  },
+  contextPanel: {
+    position: 'absolute',
+    left: 92,
+    bottom: 16,
+    zIndex: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    padding: 8,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+  },
+  contextButton: {
+    minHeight: 38,
+    paddingHorizontal: 13,
+    borderRadius: 11,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   gridLine: {
     position: 'absolute',
