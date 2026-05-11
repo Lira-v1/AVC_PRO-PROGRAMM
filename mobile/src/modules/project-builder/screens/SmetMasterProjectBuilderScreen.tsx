@@ -40,6 +40,7 @@ type MainStackParamList = {
   Placeholder: { title: string };
   ChatMaster: undefined;
   CanvasV3Dev: undefined;
+  CanvasV4Dev: undefined;
 };
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Estimate'>;
@@ -326,6 +327,14 @@ export const SmetMasterProjectBuilderScreen = ({ navigation }: Props) => {
               }}
             >
               <Text style={[styles.primaryActionButtonText, styles.secondaryActionButtonText]}>Создать проект V3</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryActionButton, styles.secondaryActionButton]}
+              onPress={() => {
+                navigation.navigate('CanvasV4Dev');
+              }}
+            >
+              <Text style={[styles.primaryActionButtonText, styles.secondaryActionButtonText]}>Canvas V4 CAD-lite Dev</Text>
             </Pressable>
           </View>
         </View>
