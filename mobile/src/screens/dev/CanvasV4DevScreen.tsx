@@ -237,6 +237,15 @@ type WallJoinNode = {
 };
 
 type DimensionLabelPlacementMode = 'line-normal-offset' | 'closed-contour-outside';
+type ClosedContourOrientation = 'clockwise' | 'counter-clockwise';
+
+type ClosedContourInfo = {
+  polylineId: string;
+  vertices: Point[];
+  signedArea: number;
+  orientation: ClosedContourOrientation;
+  centroid: Point;
+};
 
 type DimensionLabelPlacement = {
   left: number;
@@ -859,6 +868,17 @@ const getScreenPoint = (nativeEvent: any): Point => ({
 });
 
 
+const getPolygonSignedArea = (points: Point[]) => {
+  if (points.length < 3) {
+    return 0;
+  }
+
+  return points.reduce((twiceArea, current, index) => {
+    const next = points[(index + 1) % points.length];
+    return twiceArea + current.x * next.y - next.x * current.y;
+  }, 0) / 2;
+};
+
 const getPolygonCentroid = (points: Point[]): Point | null => {
   if (points.length < 3) {
     return null;
@@ -890,7 +910,7 @@ const getPolygonCentroid = (points: Point[]): Point | null => {
   };
 };
 
-const getClosedPolylineCentroidForEntity = (entity: CanvasV4LineEntity, entities: CanvasV4LineEntity[]) => {
+const getClosedPolylineInfoForEntity = (entity: CanvasV4LineEntity, entities: CanvasV4LineEntity[]): ClosedContourInfo | null => {
   if (!entity.polylineId) {
     return null;
   }
@@ -910,7 +930,29 @@ const getClosedPolylineCentroidForEntity = (entity: CanvasV4LineEntity, entities
     return null;
   }
 
-  return getPolygonCentroid(contourSegments.map((segment) => segment.startPoint));
+  const vertices = contourSegments.map((segment) => segment.startPoint);
+  const signedArea = getPolygonSignedArea(vertices);
+  const centroid = getPolygonCentroid(vertices);
+
+  if (!centroid || Math.abs(signedArea) <= 0.000001) {
+    return null;
+  }
+
+  return {
+    polylineId: entity.polylineId,
+    vertices,
+    signedArea,
+    // Canvas/world Y grows downward, so a positive signed area means the contour
+    // is visually clockwise and the polygon interior is on the left side of each edge.
+    orientation: signedArea > 0 ? 'clockwise' : 'counter-clockwise',
+    centroid,
+  };
+};
+
+const getClosedContourOutwardNormal = (entity: CanvasV4LineEntity, contourInfo: ClosedContourInfo): Point => {
+  const { leftNormal } = getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint);
+
+  return contourInfo.orientation === 'clockwise' ? scaleVector(leftNormal, -1) : leftNormal;
 };
 
 
@@ -923,23 +965,13 @@ const getEntityOutwardNormal = (entity: CanvasV4LineEntity, entities: CanvasV4Li
     return leftNormal;
   }
 
-  const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
+  const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
 
-  if (!contourCentroid) {
+  if (!contourInfo) {
     return getPreferredOpenLineNormal(leftNormal);
   }
 
-  const midpoint = {
-    x: (entity.startPoint.x + entity.endPoint.x) / 2,
-    y: (entity.startPoint.y + entity.endPoint.y) / 2,
-  };
-  const leftProbe = addPoints(midpoint, scaleVector(leftNormal, entity.wallThickness));
-  const rightNormal = scaleVector(leftNormal, -1);
-  const rightProbe = addPoints(midpoint, scaleVector(rightNormal, entity.wallThickness));
-  const leftDistance = Math.hypot(leftProbe.x - contourCentroid.x, leftProbe.y - contourCentroid.y);
-  const rightDistance = Math.hypot(rightProbe.x - contourCentroid.x, rightProbe.y - contourCentroid.y);
-
-  return leftDistance >= rightDistance ? leftNormal : rightNormal;
+  return getClosedContourOutwardNormal(entity, contourInfo);
 };
 
 const getWallJoinNodes = (entities: CanvasV4LineEntity[]): WallJoinNode[] => {
@@ -1041,7 +1073,7 @@ const getDimensionLabelRect = (placement: Pick<DimensionLabelPlacement, 'left' |
 
 const getDimensionPlacement = (
   geometry: LineScreenGeometry,
-  contourCentroidScreenPoint: Point | null,
+  closedContourOutwardNormalScreen: Point | null,
   baseOffsetPx: number,
 ): DimensionLabelPlacement => {
   const dx = geometry.screenEnd.x - geometry.screenStart.x;
@@ -1053,20 +1085,8 @@ const getDimensionPlacement = (
   let offsetNormal = getPreferredOpenLineNormal(leftNormal);
   let placementMode: DimensionLabelPlacementMode = 'line-normal-offset';
 
-  if (contourCentroidScreenPoint) {
-    const midpoint = { x: geometry.centerX, y: geometry.centerY };
-    const candidatePoint = {
-      x: midpoint.x + leftNormal.x * baseOffsetPx,
-      y: midpoint.y + leftNormal.y * baseOffsetPx,
-    };
-    const mirroredPoint = {
-      x: midpoint.x - leftNormal.x * baseOffsetPx,
-      y: midpoint.y - leftNormal.y * baseOffsetPx,
-    };
-    const candidateDistance = Math.hypot(candidatePoint.x - contourCentroidScreenPoint.x, candidatePoint.y - contourCentroidScreenPoint.y);
-    const mirroredDistance = Math.hypot(mirroredPoint.x - contourCentroidScreenPoint.x, mirroredPoint.y - contourCentroidScreenPoint.y);
-
-    offsetNormal = candidateDistance >= mirroredDistance ? leftNormal : { x: -leftNormal.x, y: -leftNormal.y };
+  if (closedContourOutwardNormalScreen) {
+    offsetNormal = normalizeVector(closedContourOutwardNormalScreen);
     placementMode = 'closed-contour-outside';
   }
 
@@ -1281,10 +1301,11 @@ export const CanvasV4DevScreen = () => {
 
   const getEntityDimensionLabelPlacement = useCallback(
     (entity: CanvasV4LineEntity, geometry: LineScreenGeometry) => {
-      const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
-      return getDimensionPlacement(geometry, contourCentroid ? worldToScreen(contourCentroid) : null, entity.segmentType === 'external' ? DIMENSION_BASE_OFFSET_PX : DIMENSION_INTERNAL_OFFSET_PX);
+      const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
+      const outwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
+      return getDimensionPlacement(geometry, outwardNormal, entity.segmentType === 'external' ? DIMENSION_BASE_OFFSET_PX : DIMENSION_INTERNAL_OFFSET_PX);
     },
-    [entities, worldToScreen],
+    [entities],
   );
 
   const getPreviewDimensionLabelPlacement = useCallback(
@@ -1348,12 +1369,12 @@ export const CanvasV4DevScreen = () => {
       }
 
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-      const contourCentroid = getClosedPolylineCentroidForEntity(entity, entities);
-      const contourCentroidScreenPoint = contourCentroid ? worldToScreen(contourCentroid) : null;
+      const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
+      const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
       const baseOffset = entity.segmentType === 'external'
         ? DIMENSION_BASE_OFFSET_PX + (dimensionDisplayMode === 'full' ? 8 : 0)
         : DIMENSION_INTERNAL_OFFSET_PX;
-      let placement = getDimensionPlacement(geometry, contourCentroidScreenPoint, baseOffset);
+      let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset);
       let collisionAvoidancePasses = 0;
 
       while (
@@ -1361,7 +1382,7 @@ export const CanvasV4DevScreen = () => {
         && [...openingRects, ...placedLabelRects].some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
       ) {
         collisionAvoidancePasses += 1;
-        placement = getDimensionPlacement(geometry, contourCentroidScreenPoint, baseOffset + collisionAvoidancePasses * DIMENSION_COLLISION_STEP_PX);
+        placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset + collisionAvoidancePasses * DIMENSION_COLLISION_STEP_PX);
       }
 
       placedLabelRects.push(getDimensionLabelRect(placement));
