@@ -29,6 +29,7 @@ type CanvasV4WallSegment = {
   connectedSegmentIds: string[];
   doorIds: string[];
   windowIds: string[];
+  connectionNodeIds: string[];
 };
 
 type CanvasV4LineEntity = CanvasV4WallSegment;
@@ -57,8 +58,8 @@ type CanvasV4Window = {
 };
 
 type HistoryAction =
-  | { type: 'CREATE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
-  | { type: 'CREATE_POLYLINE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'CREATE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; beforeEntities?: CanvasV4LineEntity[]; afterEntities?: CanvasV4LineEntity[]; beforeConnectionNodes?: ConnectionNode[]; afterConnectionNodes?: ConnectionNode[] }
+  | { type: 'CREATE_POLYLINE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; beforeEntities?: CanvasV4LineEntity[]; afterEntities?: CanvasV4LineEntity[]; beforeConnectionNodes?: ConnectionNode[]; afterConnectionNodes?: ConnectionNode[] }
   | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; doors: Array<{ door: CanvasV4Door; index: number }>; windows: Array<{ window: CanvasV4Window; index: number }> }
   | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }>; doors: Array<{ door: CanvasV4Door; index: number }>; windows: Array<{ window: CanvasV4Window; index: number }> }
   | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; beforeWindows: CanvasV4Window[]; afterWindows: CanvasV4Window[]; delta: Point }
@@ -74,12 +75,15 @@ type HistoryAction =
   | { type: 'DELETE_WINDOW'; window: CanvasV4Window; windowIndex: number; beforeEntity: CanvasV4LineEntity; afterEntity: CanvasV4LineEntity }
   | { type: 'UPDATE_WINDOW_WIDTH'; beforeWindow: CanvasV4Window; afterWindow: CanvasV4Window };
 
-type SnapType = 'none' | 'endpoint' | 'grid' | 'angle';
+type SnapType = 'none' | 'endpoint' | 'junction' | 'grid' | 'angle';
+type ConnectionNodeType = 'endpoint' | 'junction';
 
 type SnapResult = {
   point: Point;
   activeSnapType: SnapType;
   activeSnapTargetId: string | null;
+  activeSnapTargetSegmentId: string | null;
+  activeSnapTargetNodeId: string | null;
   activeSnapDistance: number | null;
   gridSnappedEndPoint: Point | null;
   angleHelperActive: boolean;
@@ -89,6 +93,16 @@ type EndpointSnapTarget = {
   targetId: string;
   point: Point;
   distance: number;
+  targetSegmentId: string;
+  targetNodeId: string | null;
+  snapType: 'endpoint' | 'junction';
+};
+
+type ConnectionNode = {
+  nodeId: string;
+  position: Point;
+  connectedSegmentIds: string[];
+  nodeType: ConnectionNodeType;
 };
 
 type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection' | 'move-door' | 'move-window';
@@ -176,11 +190,12 @@ const DOUBLE_TAP_DELAY_MS = 300;
 const DOUBLE_TAP_DISTANCE_PX = 18;
 const HIT_TOLERANCE_PX = 12;
 const ENDPOINT_SNAP_THRESHOLD_PX = 14;
+const SMART_CONNECTION_NODE_THRESHOLD_MM = 150;
 const TRANSFORM_HANDLE_SIZE_PX = 14;
 const TRANSFORM_HANDLE_HIT_RADIUS_PX = 14;
 const SNAP_ANGLE_STEP_DEG = 45;
 const ANGLE_HELPER_TOLERANCE_DEG = 6;
-const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
+const SNAP_PRIORITY_LABEL = 'endpoint > junction > grid > angle';
 const LINE_DIMENSION_LABEL_OFFSET_PX = 22;
 const LINE_DIMENSION_LABEL_WIDTH_PX = 68;
 const LINE_DIMENSION_LABEL_HEIGHT_PX = 24;
@@ -353,6 +368,9 @@ const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint:
           targetId: candidate.targetId,
           point: candidate.point,
           distance,
+          targetSegmentId: entity.segmentId,
+          targetNodeId: null,
+          snapType: 'endpoint',
         };
       }
     });
@@ -361,15 +379,73 @@ const findNearestEndpointSnapTarget = (entities: CanvasV4LineEntity[], rawPoint:
   return nearestTarget;
 };
 
-const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, endpointThreshold: number, startPoint?: Point | null, excludedTargetIds = new Set<string>()): SnapResult => {
-  const endpointTarget = findNearestEndpointSnapTarget(entities, rawPoint, endpointThreshold, excludedTargetIds);
+const findNearestConnectionNodeSnapTarget = (connectionNodes: ConnectionNode[], rawPoint: Point, threshold: number): EndpointSnapTarget | null => {
+  let nearestTarget: EndpointSnapTarget | null = null;
 
-  if (endpointTarget) {
+  connectionNodes.forEach((node) => {
+    const distance = Math.hypot(rawPoint.x - node.position.x, rawPoint.y - node.position.y);
+
+    if (distance <= threshold && (!nearestTarget || distance < nearestTarget.distance)) {
+      nearestTarget = {
+        targetId: node.nodeId,
+        point: node.position,
+        distance,
+        targetSegmentId: node.connectedSegmentIds[0] ?? 'null',
+        targetNodeId: node.nodeId,
+        snapType: node.nodeType === 'junction' ? 'junction' : 'endpoint',
+      };
+    }
+  });
+
+  return nearestTarget;
+};
+
+const findNearestSegmentSnapTarget = (entities: CanvasV4LineEntity[], rawPoint: Point, threshold: number, excludedSegmentIds = new Set<string>()): EndpointSnapTarget | null => {
+  let nearestTarget: EndpointSnapTarget | null = null;
+
+  entities.forEach((entity) => {
+    if (excludedSegmentIds.has(entity.segmentId)) {
+      return;
+    }
+
+    const projection = projectPointToSegment(rawPoint, entity);
+    const isAtEndpoint = projection.positionOnSegment <= POINT_MATCH_EPSILON || entity.length - projection.positionOnSegment <= POINT_MATCH_EPSILON;
+
+    if (isAtEndpoint) {
+      return;
+    }
+
+    if (projection.distance <= threshold && (!nearestTarget || projection.distance < nearestTarget.distance)) {
+      nearestTarget = {
+        targetId: `${entity.entityId}:junction`,
+        point: projection.point,
+        distance: projection.distance,
+        targetSegmentId: entity.segmentId,
+        targetNodeId: null,
+        snapType: 'junction',
+      };
+    }
+  });
+
+  return nearestTarget;
+};
+
+const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], connectionNodes: ConnectionNode[], rawPoint: Point, endpointThreshold: number, startPoint?: Point | null, excludedTargetIds = new Set<string>()): SnapResult => {
+  const connectionNodeTarget = findNearestConnectionNodeSnapTarget(connectionNodes, rawPoint, endpointThreshold);
+  const endpointTarget = findNearestEndpointSnapTarget(entities, rawPoint, endpointThreshold, excludedTargetIds);
+  const segmentTarget = findNearestSegmentSnapTarget(entities, rawPoint, Math.max(endpointThreshold, SMART_CONNECTION_NODE_THRESHOLD_MM), new Set(Array.from(excludedTargetIds).map((id) => id.split(':')[0])));
+  const nearestTarget = [connectionNodeTarget, endpointTarget, segmentTarget]
+    .filter((target): target is EndpointSnapTarget => !!target)
+    .sort((a, b) => a.distance - b.distance)[0] ?? null;
+
+  if (nearestTarget) {
     return {
-      point: endpointTarget.point,
-      activeSnapType: 'endpoint',
-      activeSnapTargetId: endpointTarget.targetId,
-      activeSnapDistance: endpointTarget.distance,
+      point: nearestTarget.point,
+      activeSnapType: nearestTarget.snapType,
+      activeSnapTargetId: nearestTarget.targetId,
+      activeSnapTargetSegmentId: nearestTarget.targetSegmentId,
+      activeSnapTargetNodeId: nearestTarget.targetNodeId,
+      activeSnapDistance: nearestTarget.distance,
       gridSnappedEndPoint: null,
       angleHelperActive: false,
     };
@@ -382,6 +458,8 @@ const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, en
       point: gridPoint,
       activeSnapType: 'grid',
       activeSnapTargetId: null,
+      activeSnapTargetSegmentId: null,
+      activeSnapTargetNodeId: null,
       activeSnapDistance: Math.hypot(rawPoint.x - gridPoint.x, rawPoint.y - gridPoint.y),
       gridSnappedEndPoint: gridPoint,
       angleHelperActive: false,
@@ -394,6 +472,8 @@ const resolveCanvasV4Snap = (entities: CanvasV4LineEntity[], rawPoint: Point, en
     point: angleHelper.point,
     activeSnapType: angleHelper.active ? 'angle' : 'grid',
     activeSnapTargetId: null,
+    activeSnapTargetSegmentId: null,
+    activeSnapTargetNodeId: null,
     activeSnapDistance: Math.hypot(rawPoint.x - angleHelper.point.x, rawPoint.y - angleHelper.point.y),
     gridSnappedEndPoint: gridPoint,
     angleHelperActive: angleHelper.active,
@@ -448,6 +528,7 @@ const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: Wall
     connectedSegmentIds: [],
     doorIds: [],
     windowIds: [],
+    connectionNodeIds: [],
   };
 };
 
@@ -459,7 +540,10 @@ const getEndpointPairs = (entity: CanvasV4LineEntity) => [
 ];
 
 const normalizeWallSegmentConnectivity = (entities: CanvasV4LineEntity[]) => {
-  const connectedBySegmentId = new Map(entities.map((entity) => [entity.segmentId, new Set<string>()]));
+  const segmentIds = new Set(entities.map((entity) => entity.segmentId));
+  const connectedBySegmentId = new Map(
+    entities.map((entity) => [entity.segmentId, new Set(entity.connectedSegmentIds.filter((segmentId) => segmentIds.has(segmentId)))]),
+  );
 
   entities.forEach((entity, entityIndex) => {
     entities.slice(entityIndex + 1).forEach((candidate) => {
@@ -503,6 +587,147 @@ const updateLineEntityGeometry = (entity: CanvasV4LineEntity, startPoint: Point,
     endPoint,
     length: metrics.length,
     angle: metrics.angle,
+  };
+};
+
+const createConnectionNodeId = () => `connection-node-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+
+const appendUniqueId = (ids: string[], id: string) => (ids.includes(id) ? ids : [...ids, id]);
+
+const mergeUniqueSortedIds = (ids: string[]) => Array.from(new Set(ids)).sort();
+
+const attachConnectionNodeToEntity = (entity: CanvasV4LineEntity, nodeId: string, connectedSegmentIds: string[]): CanvasV4LineEntity => ({
+  ...entity,
+  connectionNodeIds: appendUniqueId(entity.connectionNodeIds, nodeId),
+  connectedSegmentIds: mergeUniqueSortedIds([...entity.connectedSegmentIds, ...connectedSegmentIds].filter((segmentId) => segmentId !== entity.segmentId)),
+});
+
+const buildConnectionNodeForSnap = (snap: SnapResult, newEntity: CanvasV4LineEntity, connectionNodes: ConnectionNode[]): { node: ConnectionNode; nodes: ConnectionNode[] } | null => {
+  const targetSegmentId = snap.activeSnapTargetSegmentId;
+
+  if (!targetSegmentId || (snap.activeSnapType !== 'junction' && snap.activeSnapType !== 'endpoint')) {
+    return null;
+  }
+
+  if (snap.activeSnapTargetNodeId) {
+    const existingNode = connectionNodes.find((node) => node.nodeId === snap.activeSnapTargetNodeId);
+
+    if (!existingNode) {
+      return null;
+    }
+
+    const node = {
+      ...existingNode,
+      connectedSegmentIds: mergeUniqueSortedIds([...existingNode.connectedSegmentIds, newEntity.segmentId]),
+    };
+
+    return {
+      node,
+      nodes: connectionNodes.map((currentNode) => (currentNode.nodeId === node.nodeId ? node : currentNode)),
+    };
+  }
+
+  const node: ConnectionNode = {
+    nodeId: createConnectionNodeId(),
+    position: snap.point,
+    connectedSegmentIds: mergeUniqueSortedIds([targetSegmentId, newEntity.segmentId]),
+    nodeType: snap.activeSnapType === 'junction' ? 'junction' : 'endpoint',
+  };
+
+  return { node, nodes: [...connectionNodes, node] };
+};
+
+const findConnectionSnapForCreatedEndpoint = (entities: CanvasV4LineEntity[], connectionNodes: ConnectionNode[], point: Point): SnapResult | null => {
+  const existingNode = connectionNodes.find((node) => arePointsEqual(node.position, point));
+
+  if (existingNode) {
+    return {
+      point: existingNode.position,
+      activeSnapType: existingNode.nodeType === 'junction' ? 'junction' : 'endpoint',
+      activeSnapTargetId: existingNode.nodeId,
+      activeSnapTargetSegmentId: existingNode.connectedSegmentIds[0] ?? null,
+      activeSnapTargetNodeId: existingNode.nodeId,
+      activeSnapDistance: 0,
+      gridSnappedEndPoint: null,
+      angleHelperActive: false,
+    };
+  }
+
+  const endpointTarget = findNearestEndpointSnapTarget(entities, point, POINT_MATCH_EPSILON);
+
+  if (endpointTarget) {
+    return {
+      point: endpointTarget.point,
+      activeSnapType: 'endpoint',
+      activeSnapTargetId: endpointTarget.targetId,
+      activeSnapTargetSegmentId: endpointTarget.targetSegmentId,
+      activeSnapTargetNodeId: null,
+      activeSnapDistance: endpointTarget.distance,
+      gridSnappedEndPoint: null,
+      angleHelperActive: false,
+    };
+  }
+
+  const segmentTarget = findNearestSegmentSnapTarget(entities, point, POINT_MATCH_EPSILON);
+
+  if (!segmentTarget) {
+    return null;
+  }
+
+  return {
+    point: segmentTarget.point,
+    activeSnapType: 'junction',
+    activeSnapTargetId: segmentTarget.targetId,
+    activeSnapTargetSegmentId: segmentTarget.targetSegmentId,
+    activeSnapTargetNodeId: null,
+    activeSnapDistance: segmentTarget.distance,
+    gridSnappedEndPoint: null,
+    angleHelperActive: false,
+  };
+};
+
+const createWallSegmentWithSmartConnection = (
+  entities: CanvasV4LineEntity[],
+  connectionNodes: ConnectionNode[],
+  startPoint: Point,
+  endPoint: Point,
+  segmentType: WallSegmentType,
+  endSnap: SnapResult,
+  polylineId?: string,
+) => {
+  let entity = createWallSegment(startPoint, endPoint, segmentType, polylineId);
+  let nextConnectionNodes = connectionNodes;
+  let nextEntities = normalizeWallSegmentConnectivity([...entities, entity]);
+  let createdConnectionNodeId: string | null = null;
+  const startSnap = findConnectionSnapForCreatedEndpoint(entities, nextConnectionNodes, startPoint);
+  const endpointSnaps = [startSnap, endSnap].filter((snap): snap is SnapResult => !!snap && (snap.activeSnapType === 'junction' || snap.activeSnapType === 'endpoint'));
+
+  endpointSnaps.forEach((snap) => {
+    const connectionNodeResult = buildConnectionNodeForSnap(snap, entity, nextConnectionNodes);
+
+    if (!connectionNodeResult) {
+      return;
+    }
+
+    entity = attachConnectionNodeToEntity(entity, connectionNodeResult.node.nodeId, connectionNodeResult.node.connectedSegmentIds);
+    nextConnectionNodes = connectionNodeResult.nodes;
+    nextEntities = normalizeWallSegmentConnectivity(
+      nextEntities.map((currentEntity) =>
+        connectionNodeResult.node.connectedSegmentIds.includes(currentEntity.segmentId)
+          ? attachConnectionNodeToEntity(currentEntity.entityId === entity.entityId ? entity : currentEntity, connectionNodeResult.node.nodeId, connectionNodeResult.node.connectedSegmentIds)
+          : currentEntity.entityId === entity.entityId
+            ? entity
+            : currentEntity,
+      ),
+    );
+    createdConnectionNodeId = connectionNodeResult.node.nodeType === 'junction' ? connectionNodeResult.node.nodeId : createdConnectionNodeId;
+  });
+
+  return {
+    entity,
+    nextEntities,
+    nextConnectionNodes,
+    createdConnectionNodeId,
   };
 };
 
@@ -1034,6 +1259,8 @@ export const CanvasV4DevScreen = () => {
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
   const [doors, setDoors] = useState<CanvasV4Door[]>([]);
   const [windows, setWindows] = useState<CanvasV4Window[]>([]);
+  const [connectionNodes, setConnectionNodes] = useState<ConnectionNode[]>([]);
+  const [lastCreatedJunctionNodeId, setLastCreatedJunctionNodeId] = useState<string | null>(null);
   const [selectedEntityIds, setSelectedEntityIds] = useState<string[]>([]);
   const [selectedDoorId, setSelectedDoorId] = useState<string | null>(null);
   const [selectedWindowId, setSelectedWindowId] = useState<string | null>(null);
@@ -1092,14 +1319,16 @@ export const CanvasV4DevScreen = () => {
         point: { x: 0, y: 0 },
         activeSnapType: 'none',
         activeSnapTargetId: null,
+        activeSnapTargetSegmentId: null,
+        activeSnapTargetNodeId: null,
         activeSnapDistance: null,
         gridSnappedEndPoint: null,
         angleHelperActive: false,
       };
     }
 
-    return resolveCanvasV4Snap(entities, pointerWorldPoint, endpointSnapThreshold, activeDrawingStartPoint);
-  }, [activeDrawingStartPoint, endpointSnapThreshold, entities, pointerWorldPoint]);
+    return resolveCanvasV4Snap(entities, connectionNodes, pointerWorldPoint, endpointSnapThreshold, activeDrawingStartPoint);
+  }, [activeDrawingStartPoint, connectionNodes, endpointSnapThreshold, entities, pointerWorldPoint]);
 
   const previewLine = useMemo(() => {
     if (!activeDrawingStartPoint || !pointerWorldPoint) {
@@ -1433,7 +1662,13 @@ export const CanvasV4DevScreen = () => {
 
   const applyHistoryUndo = useCallback((action: HistoryAction) => {
     if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
-      setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => entity.entityId !== action.entity.entityId)));
+      if (action.beforeEntities && action.beforeConnectionNodes) {
+        setEntities(action.beforeEntities);
+        setConnectionNodes(action.beforeConnectionNodes);
+      } else {
+        setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => entity.entityId !== action.entity.entityId)));
+      }
+      setLastCreatedJunctionNodeId(null);
       setSelectedEntityIds([]);
       return;
     }
@@ -1549,7 +1784,14 @@ export const CanvasV4DevScreen = () => {
 
   const applyHistoryRedo = useCallback((action: HistoryAction) => {
     if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
-      setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
+      if (action.afterEntities && action.afterConnectionNodes) {
+        setEntities(action.afterEntities);
+        setConnectionNodes(action.afterConnectionNodes);
+        const createdNode = action.afterConnectionNodes.find((node) => !action.beforeConnectionNodes?.some((beforeNode) => beforeNode.nodeId === node.nodeId));
+        setLastCreatedJunctionNodeId(createdNode?.nodeId ?? null);
+      } else {
+        setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
+      }
       setSelectedEntityIds([action.entity.entityId]);
       return;
     }
@@ -1696,7 +1938,7 @@ export const CanvasV4DevScreen = () => {
     (screenPoint: Point) => {
       const rawWorldPoint = screenToWorld(screenPoint);
       const isDrawingTool = currentToolMode === 'line' || currentToolMode === 'polyline';
-      const clickSnap = resolveCanvasV4Snap(entities, rawWorldPoint, endpointSnapThreshold, currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null);
+      const clickSnap = resolveCanvasV4Snap(entities, connectionNodes, rawWorldPoint, endpointSnapThreshold, currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null);
       setPointerWorldPoint(rawWorldPoint);
 
       if (currentToolMode === 'line') {
@@ -1712,9 +1954,19 @@ export const CanvasV4DevScreen = () => {
         }
 
         const endPoint = clickSnap.point;
-        const entity = createWallSegment(lineStartPoint, endPoint, newSegmentType);
-        pushHistoryAction({ type: 'CREATE_WALL_SEGMENT', entity, index: entities.length });
-        setEntities((current) => normalizeWallSegmentConnectivity([...current, entity]));
+        const { entity, nextEntities, nextConnectionNodes, createdConnectionNodeId } = createWallSegmentWithSmartConnection(entities, connectionNodes, lineStartPoint, endPoint, newSegmentType, clickSnap);
+        pushHistoryAction({
+          type: 'CREATE_WALL_SEGMENT',
+          entity,
+          index: entities.length,
+          beforeEntities: entities,
+          afterEntities: nextEntities,
+          beforeConnectionNodes: connectionNodes,
+          afterConnectionNodes: nextConnectionNodes,
+        });
+        setEntities(nextEntities);
+        setConnectionNodes(nextConnectionNodes);
+        setLastCreatedJunctionNodeId(createdConnectionNodeId);
         setLineStartPoint(null);
         setSelectedEntityIds([entity.entityId]);
         setSelectedDoorId(null);
@@ -1736,9 +1988,19 @@ export const CanvasV4DevScreen = () => {
         }
 
         const endPoint = clickSnap.point;
-        const entity = createWallSegment(polylineLastPoint, endPoint, newSegmentType, activePolylineId ?? undefined);
-        pushHistoryAction({ type: 'CREATE_POLYLINE_WALL_SEGMENT', entity, index: entities.length });
-        setEntities((current) => normalizeWallSegmentConnectivity([...current, entity]));
+        const { entity, nextEntities, nextConnectionNodes, createdConnectionNodeId } = createWallSegmentWithSmartConnection(entities, connectionNodes, polylineLastPoint, endPoint, newSegmentType, clickSnap, activePolylineId ?? undefined);
+        pushHistoryAction({
+          type: 'CREATE_POLYLINE_WALL_SEGMENT',
+          entity,
+          index: entities.length,
+          beforeEntities: entities,
+          afterEntities: nextEntities,
+          beforeConnectionNodes: connectionNodes,
+          afterConnectionNodes: nextConnectionNodes,
+        });
+        setEntities(nextEntities);
+        setConnectionNodes(nextConnectionNodes);
+        setLastCreatedJunctionNodeId(createdConnectionNodeId);
         setPolylineLastPoint(endPoint);
         setSelectedEntityIds([entity.entityId]);
         setSelectedDoorId(null);
@@ -1871,7 +2133,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, windows.length],
+    [activePolylineId, connectionNodes, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, windows.length],
   );
 
   const changeSelectedDoorHingeSide = useCallback(() => {
@@ -2118,7 +2380,7 @@ export const CanvasV4DevScreen = () => {
             `${originalEntity.entityId}:startPoint`,
             `${originalEntity.entityId}:endPoint`,
           ]);
-          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, fixedPoint, excludedTargetIds);
+          const resizeSnap = resolveCanvasV4Snap(entities, connectionNodes, screenToWorld(screenPoint), endpointSnapThreshold, fixedPoint, excludedTargetIds);
           const resizedEntity = session.resizeHandleId === 'single-start'
             ? updateLineEntityGeometry(originalEntity, resizeSnap.point, originalEntity.endPoint)
             : updateLineEntityGeometry(originalEntity, originalEntity.startPoint, resizeSnap.point);
@@ -2143,7 +2405,7 @@ export const CanvasV4DevScreen = () => {
           const selectedTargetIds = new Set(
             session.resizeOriginalEntities.flatMap((entity) => [`${entity.entityId}:startPoint`, `${entity.entityId}:endPoint`]),
           );
-          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, null, selectedTargetIds);
+          const resizeSnap = resolveCanvasV4Snap(entities, connectionNodes, screenToWorld(screenPoint), endpointSnapThreshold, null, selectedTargetIds);
           const nextActivePoint = {
             x: session.resizeAxis === 'y' ? activePoint.x : resizeSnap.point.x,
             y: session.resizeAxis === 'x' ? activePoint.y : resizeSnap.point.y,
@@ -2255,7 +2517,7 @@ export const CanvasV4DevScreen = () => {
             `${originalEntity.entityId}:startPoint`,
             `${originalEntity.entityId}:endPoint`,
           ]);
-          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, fixedPoint, excludedTargetIds);
+          const resizeSnap = resolveCanvasV4Snap(entities, connectionNodes, screenToWorld(screenPoint), endpointSnapThreshold, fixedPoint, excludedTargetIds);
           const resizedEntity = session.resizeHandleId === 'single-start'
             ? updateLineEntityGeometry(originalEntity, resizeSnap.point, originalEntity.endPoint)
             : updateLineEntityGeometry(originalEntity, originalEntity.startPoint, resizeSnap.point);
@@ -2291,7 +2553,7 @@ export const CanvasV4DevScreen = () => {
           const selectedTargetIds = new Set(
             session.resizeOriginalEntities.flatMap((entity) => [`${entity.entityId}:startPoint`, `${entity.entityId}:endPoint`]),
           );
-          const resizeSnap = resolveCanvasV4Snap(entities, screenToWorld(screenPoint), endpointSnapThreshold, null, selectedTargetIds);
+          const resizeSnap = resolveCanvasV4Snap(entities, connectionNodes, screenToWorld(screenPoint), endpointSnapThreshold, null, selectedTargetIds);
           const nextActivePoint = {
             x: session.resizeAxis === 'y' ? activePoint.x : resizeSnap.point.x,
             y: session.resizeAxis === 'x' ? activePoint.y : resizeSnap.point.y,
@@ -2412,7 +2674,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis('none');
       dragSessionRef.current = EMPTY_DRAG_SESSION;
     },
-    [cameraZoom, doors, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox, windows],
+    [cameraZoom, connectionNodes, doors, endpointSnapThreshold, entities, finishClick, pushHistoryAction, screenToWorld, selectEntitiesInsideBox, windows],
   );
 
   const responderHandlers = useMemo(
@@ -2515,6 +2777,8 @@ export const CanvasV4DevScreen = () => {
       `entitiesCount: ${entities.length}`,
       `doorsCount: ${doors.length}`,
       `windowsCount: ${windows.length}`,
+      `junctionNodesCount: ${connectionNodes.filter((node) => node.nodeType === 'junction').length}`,
+      `lastCreatedJunctionNodeId: ${lastCreatedJunctionNodeId ?? 'null'}`,
       `selectedDoorId: ${selectedDoor?.doorId ?? 'null'}`,
       `selectedWindowId: ${selectedWindow?.windowId ?? 'null'}`,
       `lastCreatedDoorId: ${lastCreatedDoorId ?? 'null'}`,
@@ -2547,6 +2811,7 @@ export const CanvasV4DevScreen = () => {
       `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
       `doorIds: [${selectedSegment?.doorIds.join(', ') || 'empty'}]`,
       `windowIds: [${selectedSegment?.windowIds.join(', ') || 'empty'}]`,
+      `selectedSegmentConnectionNodeIds: [${selectedSegment?.connectionNodeIds.join(', ') || 'empty'}]`,
       `selectedCount: ${selectedEntityIds.length + (selectedDoor ? 1 : 0) + (selectedWindow ? 1 : 0)}`,
       `transformMode: ${transformMode}`,
       `selectedBoundingBox: ${selectedBoundingBox ? `(${selectedBoundingBox.minX.toFixed(0)}, ${selectedBoundingBox.minY.toFixed(0)}) - (${selectedBoundingBox.maxX.toFixed(0)}, ${selectedBoundingBox.maxY.toFixed(0)})` : 'null'}`,
@@ -2572,6 +2837,8 @@ export const CanvasV4DevScreen = () => {
       `snapPriority: ${SNAP_PRIORITY_LABEL}`,
       `activeSnapType: ${activeSnap.activeSnapType}`,
       `activeSnapTargetId: ${activeSnap.activeSnapTargetId ?? 'null'}`,
+      `activeSnapTargetSegmentId: ${activeSnap.activeSnapTargetSegmentId ?? 'null'}`,
+      `activeSnapTargetNodeId: ${activeSnap.activeSnapTargetNodeId ?? 'null'}`,
       `activeSnapDistance: ${activeSnap.activeSnapDistance === null ? 'null' : `${activeSnap.activeSnapDistance.toFixed(0)} mm`}`,
       `gridSnappedEndPoint: ${activeSnap.gridSnappedEndPoint ? `(${activeSnap.gridSnappedEndPoint.x.toFixed(0)}, ${activeSnap.gridSnappedEndPoint.y.toFixed(0)})` : 'null'}`,
       `angleHelperActive: ${activeSnap.angleHelperActive ? 'true' : 'false'}`,
@@ -2591,6 +2858,8 @@ export const CanvasV4DevScreen = () => {
       activeLineDelta,
       activeSnap.activeSnapDistance,
       activeSnap.activeSnapTargetId,
+      activeSnap.activeSnapTargetNodeId,
+      activeSnap.activeSnapTargetSegmentId,
       activeSnap.activeSnapType,
       activeSnap.angleHelperActive,
       activeSnap.gridSnappedEndPoint,
@@ -2600,6 +2869,7 @@ export const CanvasV4DevScreen = () => {
       showLineDimensions,
       doors.length,
       windows.length,
+      connectionNodes,
       entities.length,
       lastActionType,
       lastRedoAction,
@@ -2616,6 +2886,7 @@ export const CanvasV4DevScreen = () => {
       lastWindowAction,
       lastCreatedDoorId,
       lastCreatedWindowId,
+      lastCreatedJunctionNodeId,
       lineStartPoint,
       moveDeltaMm.x,
       moveDeltaMm.y,
@@ -2643,7 +2914,7 @@ export const CanvasV4DevScreen = () => {
   );
 
   const canvasHeight = Math.max(Math.min(windowHeight * 0.62, 720), 420);
-  const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
+  const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' || activeSnap.activeSnapType === 'junction' ? worldToScreen(activeSnap.point) : null;
   const selectedEntityIdSet = new Set(selectedEntityIds);
   const selectedBoundingBoxScreenRect = selectedEntities.length > 1 && selectedBoundingBox
     ? getNormalizedRect(worldToScreen({ x: selectedBoundingBox.minX, y: selectedBoundingBox.minY }), worldToScreen({ x: selectedBoundingBox.maxX, y: selectedBoundingBox.maxY }))
@@ -3020,7 +3291,23 @@ export const CanvasV4DevScreen = () => {
 
             {lineStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, { left: worldToScreen(lineStartPoint).x - 5, top: worldToScreen(lineStartPoint).y - 5 }]} /> : null}
             {polylineLastPoint ? <View pointerEvents="none" style={[styles.anchorPoint, styles.polylineAnchor, { left: worldToScreen(polylineLastPoint).x - 5, top: worldToScreen(polylineLastPoint).y - 5 }]} /> : null}
-            {endpointSnapScreenPoint ? <View pointerEvents="none" style={[styles.endpointSnapMarker, { left: endpointSnapScreenPoint.x - 8, top: endpointSnapScreenPoint.y - 8 }]} /> : null}
+            {connectionNodes.map((node) => {
+              const screenPoint = worldToScreen(node.position);
+
+              return (
+                <View
+                  key={node.nodeId}
+                  pointerEvents="none"
+                  style={[
+                    styles.connectionNodeMarker,
+                    node.nodeType === 'junction' ? styles.junctionNodeMarker : styles.endpointNodeMarker,
+                    { left: screenPoint.x - 4, top: screenPoint.y - 4 },
+                  ]}
+                />
+              );
+            })}
+
+            {endpointSnapScreenPoint ? <View pointerEvents="none" style={[styles.endpointSnapMarker, activeSnap.activeSnapType === 'junction' ? styles.junctionSnapMarker : null, { left: endpointSnapScreenPoint.x - 8, top: endpointSnapScreenPoint.y - 8 }]} /> : null}
 
             {selectedBoundingBoxScreenRect ? (
               <View
@@ -3433,6 +3720,26 @@ const styles = StyleSheet.create({
     shadowColor: '#FACC15',
     shadowOpacity: 0.45,
     shadowRadius: 6,
+  },
+  junctionSnapMarker: {
+    borderColor: '#A855F7',
+    backgroundColor: 'rgba(168, 85, 247, 0.18)',
+    shadowColor: '#A855F7',
+  },
+  connectionNodeMarker: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    opacity: 0.8,
+  },
+  junctionNodeMarker: {
+    backgroundColor: '#A855F7',
+  },
+  endpointNodeMarker: {
+    backgroundColor: '#FACC15',
   },
   selectionBox: {
     position: 'absolute',
