@@ -7,7 +7,8 @@ type Point = {
   y: number;
 };
 
-type ToolMode = 'idle' | 'line' | 'polyline' | 'select' | 'door' | 'window';
+type ShapeToolMode = 'rectangle' | 'circle';
+type ToolMode = 'idle' | 'line' | 'polyline' | ShapeToolMode | 'select' | 'door' | 'window';
 type WallSegmentType = 'external' | 'internal';
 type DimensionDisplayMode = 'minimal' | 'architectural' | 'full';
 type DimensionLevel = 'external' | 'internal' | 'detail';
@@ -77,6 +78,8 @@ type CanvasV4ProjectState = {
 type HistoryAction =
   | { type: 'CREATE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
   | { type: 'CREATE_POLYLINE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number }
+  | { type: 'CREATE_RECTANGLE'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
+  | { type: 'CREATE_CIRCLE'; entities: Array<{ entity: CanvasV4LineEntity; index: number }> }
   | { type: 'DELETE_WALL_SEGMENT'; entity: CanvasV4LineEntity; index: number; doors: Array<{ door: CanvasV4Door; index: number }>; windows: Array<{ window: CanvasV4Window; index: number }> }
   | { type: 'DELETE_SELECTED_WALL_SEGMENTS'; entities: Array<{ entity: CanvasV4LineEntity; index: number }>; doors: Array<{ door: CanvasV4Door; index: number }>; windows: Array<{ window: CanvasV4Window; index: number }> }
   | { type: 'MOVE_SELECTED_WALL_SEGMENTS'; beforeEntities: CanvasV4LineEntity[]; afterEntities: CanvasV4LineEntity[]; beforeDoors: CanvasV4Door[]; afterDoors: CanvasV4Door[]; beforeWindows: CanvasV4Window[]; afterWindows: CanvasV4Window[]; delta: Point }
@@ -126,6 +129,8 @@ type LastInteractionType =
   | 'resize-selection'
   | 'draw-line'
   | 'draw-polyline'
+  | 'draw-rectangle'
+  | 'draw-circle'
   | 'tool-change'
   | 'zoom'
   | 'reset-view';
@@ -229,6 +234,9 @@ const DOOR_HIT_TOLERANCE_PX = 16;
 const WINDOW_HIT_TOLERANCE_PX = 14;
 const DOOR_SWING_ARC_VISUAL_SCALE = 0.68;
 const DOOR_SWING_ARC_SEGMENTS = 12;
+const CIRCLE_SHAPE_SEGMENT_COUNT = 24;
+const MIN_SHAPE_SIZE_MM = GRID_STEP_MM;
+const SHAPE_WALL_SEGMENT_TYPE: WallSegmentType = 'external';
 
 type LineScreenGeometry = {
   length: number;
@@ -321,6 +329,20 @@ type DimensionScreenItem = {
   placement: DimensionLabelPlacement;
   label: string;
   isSelected: boolean;
+};
+
+type ShapePreviewSegment = {
+  id: string;
+  startPoint: Point;
+  endPoint: Point;
+};
+
+type ShapePreview = {
+  type: ShapeToolMode;
+  startPoint: Point;
+  endPoint: Point;
+  segments: ShapePreviewSegment[];
+  segmentCount: number;
 };
 
 type ScreenRect = {
@@ -543,7 +565,63 @@ const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: Wall
   };
 };
 
+const isShapeToolMode = (mode: ToolMode): mode is ShapeToolMode => mode === 'rectangle' || mode === 'circle';
 
+const isGeometryDrawingToolMode = (mode: ToolMode) => mode === 'line' || mode === 'polyline' || isShapeToolMode(mode);
+
+const getRectangleCornerPoints = (startPoint: Point, endPoint: Point): Point[] => {
+  const rect = getNormalizedRect(startPoint, endPoint);
+
+  return [
+    { x: rect.minX, y: rect.minY },
+    { x: rect.maxX, y: rect.minY },
+    { x: rect.maxX, y: rect.maxY },
+    { x: rect.minX, y: rect.maxY },
+  ];
+};
+
+const getCircleApproximationPoints = (centerPoint: Point, radius: number, segmentCount = CIRCLE_SHAPE_SEGMENT_COUNT): Point[] =>
+  Array.from({ length: segmentCount }, (_, index) => {
+    const angle = (Math.PI * 2 * index) / segmentCount;
+    return {
+      x: centerPoint.x + Math.cos(angle) * radius,
+      y: centerPoint.y + Math.sin(angle) * radius,
+    };
+  });
+
+const getClosedPreviewSegments = (type: ShapeToolMode, points: Point[]): ShapePreviewSegment[] =>
+  points.map((point, index) => ({
+    id: `${type}-preview-${index}`,
+    startPoint: point,
+    endPoint: points[(index + 1) % points.length],
+  }));
+
+const createClosedShapeWallSegments = (type: ShapeToolMode, points: Point[], segmentType: WallSegmentType = SHAPE_WALL_SEGMENT_TYPE): CanvasV4LineEntity[] => {
+  const polylineId = `${type}-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+
+  return points.map((point, index) => createWallSegment(point, points[(index + 1) % points.length], segmentType, polylineId));
+};
+
+const createRectangleWallSegments = (startPoint: Point, endPoint: Point): CanvasV4LineEntity[] => {
+  const width = Math.abs(endPoint.x - startPoint.x);
+  const height = Math.abs(endPoint.y - startPoint.y);
+
+  if (width < MIN_SHAPE_SIZE_MM || height < MIN_SHAPE_SIZE_MM) {
+    return [];
+  }
+
+  return createClosedShapeWallSegments('rectangle', getRectangleCornerPoints(startPoint, endPoint));
+};
+
+const createCircleWallSegments = (centerPoint: Point, radiusPoint: Point): CanvasV4LineEntity[] => {
+  const radius = Math.hypot(radiusPoint.x - centerPoint.x, radiusPoint.y - centerPoint.y);
+
+  if (radius < MIN_SHAPE_SIZE_MM) {
+    return [];
+  }
+
+  return createClosedShapeWallSegments('circle', getCircleApproximationPoints(centerPoint, radius));
+};
 
 const getEndpointPairs = (entity: CanvasV4LineEntity) => [
   { segmentId: entity.segmentId, point: entity.startPoint },
@@ -1514,6 +1592,10 @@ export const CanvasV4DevScreen = () => {
   const [lineStartPoint, setLineStartPoint] = useState<Point | null>(null);
   const [polylineLastPoint, setPolylineLastPoint] = useState<Point | null>(null);
   const [activePolylineId, setActivePolylineId] = useState<string | null>(null);
+  const [shapeStartPoint, setShapeStartPoint] = useState<Point | null>(null);
+  const [lastShapeTool, setLastShapeTool] = useState<ShapeToolMode | 'none'>('none');
+  const [lastCreatedShapeType, setLastCreatedShapeType] = useState<ShapeToolMode | 'none'>('none');
+  const [lastCreatedShapeSegmentCount, setLastCreatedShapeSegmentCount] = useState(0);
   const [pointerWorldPoint, setPointerWorldPoint] = useState<Point | null>(null);
   const [lastActionType, setLastActionType] = useState<string>('INIT_CANVAS_V4');
   const [undoStack, setUndoStack] = useState<HistoryAction[]>([]);
@@ -1560,6 +1642,7 @@ export const CanvasV4DevScreen = () => {
 
   const endpointSnapThreshold = ENDPOINT_SNAP_THRESHOLD_PX / cameraZoom;
   const activeDrawingStartPoint = currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null;
+  const activeShapeStartPoint = isShapeToolMode(currentToolMode) ? shapeStartPoint : null;
 
   const projectContours = useMemo(
     () => (currentCanvasMode === 'project' ? recognizeProjectContours(entities) : []),
@@ -1579,6 +1662,7 @@ export const CanvasV4DevScreen = () => {
     setLineStartPoint(null);
     setPolylineLastPoint(null);
     setActivePolylineId(null);
+    setShapeStartPoint(null);
     setSelectionBox(null);
   }, [doors, entities, windows]);
 
@@ -1612,6 +1696,51 @@ export const CanvasV4DevScreen = () => {
       angle: metrics.angle,
     };
   }, [activeDrawingStartPoint, activeSnap.point, pointerWorldPoint]);
+
+  const shapePreview = useMemo<ShapePreview | null>(() => {
+    if (!activeShapeStartPoint || !pointerWorldPoint || !isShapeToolMode(currentToolMode)) {
+      return null;
+    }
+
+    const endPoint = activeSnap.point;
+
+    if (currentToolMode === 'rectangle') {
+      const width = Math.abs(endPoint.x - activeShapeStartPoint.x);
+      const height = Math.abs(endPoint.y - activeShapeStartPoint.y);
+
+      if (width <= 0.000001 || height <= 0.000001) {
+        return null;
+      }
+
+      const points = getRectangleCornerPoints(activeShapeStartPoint, endPoint);
+      const segments = getClosedPreviewSegments('rectangle', points);
+
+      return {
+        type: 'rectangle',
+        startPoint: activeShapeStartPoint,
+        endPoint,
+        segments,
+        segmentCount: segments.length,
+      };
+    }
+
+    const radius = Math.hypot(endPoint.x - activeShapeStartPoint.x, endPoint.y - activeShapeStartPoint.y);
+
+    if (radius <= 0.000001) {
+      return null;
+    }
+
+    const points = getCircleApproximationPoints(activeShapeStartPoint, radius);
+    const segments = getClosedPreviewSegments('circle', points);
+
+    return {
+      type: 'circle',
+      startPoint: activeShapeStartPoint,
+      endPoint,
+      segments,
+      segmentCount: segments.length,
+    };
+  }, [activeShapeStartPoint, activeSnap.point, currentToolMode, pointerWorldPoint]);
 
   const getLineScreenGeometry = useCallback(
     (startPoint: Point, endPoint: Point): LineScreenGeometry => {
@@ -2099,6 +2228,15 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
+    if (action.type === 'CREATE_RECTANGLE' || action.type === 'CREATE_CIRCLE') {
+      const createdEntityIds = new Set(action.entities.map(({ entity }) => entity.entityId));
+      setEntities((current) => normalizeWallSegmentConnectivity(current.filter((entity) => !createdEntityIds.has(entity.entityId))));
+      setSelectedEntityIds([]);
+      setSelectedDoorId(null);
+      setSelectedWindowId(null);
+      return;
+    }
+
     if (action.type === 'DELETE_WALL_SEGMENT') {
       setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
       setDoors((current) =>
@@ -2212,6 +2350,21 @@ export const CanvasV4DevScreen = () => {
     if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
       setEntities((current) => normalizeWallSegmentConnectivity(insertEntityAtIndex(current, action.entity, action.index)));
       setSelectedEntityIds([action.entity.entityId]);
+      return;
+    }
+
+    if (action.type === 'CREATE_RECTANGLE' || action.type === 'CREATE_CIRCLE') {
+      const orderedEntities = [...action.entities].sort((a, b) => a.index - b.index);
+      setEntities((current) =>
+        normalizeWallSegmentConnectivity(
+          orderedEntities.reduce((next, item) => insertEntityAtIndex(next, item.entity, item.index), current),
+        ),
+      );
+      setSelectedEntityIds(orderedEntities.map(({ entity }) => entity.entityId));
+      setSelectedDoorId(null);
+      setSelectedWindowId(null);
+      setLastCreatedShapeType(action.type === 'CREATE_RECTANGLE' ? 'rectangle' : 'circle');
+      setLastCreatedShapeSegmentCount(orderedEntities.length);
       return;
     }
 
@@ -2356,7 +2509,7 @@ export const CanvasV4DevScreen = () => {
   const finishClick = useCallback(
     (screenPoint: Point) => {
       const rawWorldPoint = screenToWorld(screenPoint);
-      const isDrawingTool = currentToolMode === 'line' || currentToolMode === 'polyline';
+      const isDrawingTool = isGeometryDrawingToolMode(currentToolMode);
       const clickSnap = resolveCanvasV4Snap(entities, rawWorldPoint, endpointSnapThreshold, currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null);
       setPointerWorldPoint(rawWorldPoint);
 
@@ -2407,6 +2560,74 @@ export const CanvasV4DevScreen = () => {
         return;
       }
 
+      if (currentToolMode === 'rectangle') {
+        setLastInteractionType('draw-rectangle');
+        setLastShapeTool('rectangle');
+
+        if (!shapeStartPoint) {
+          setShapeStartPoint(clickSnap.point);
+          setSelectedEntityIds([]);
+          setSelectedDoorId(null);
+          setSelectedWindowId(null);
+          setLastActionType('SET_RECTANGLE_START');
+          return;
+        }
+
+        const shapeEntities = createRectangleWallSegments(shapeStartPoint, clickSnap.point);
+
+        if (shapeEntities.length !== 4) {
+          setLastActionType('CREATE_RECTANGLE_SKIPPED_SMALL_SHAPE');
+          return;
+        }
+
+        pushHistoryAction({
+          type: 'CREATE_RECTANGLE',
+          entities: shapeEntities.map((entity, index) => ({ entity, index: entities.length + index })),
+        });
+        setEntities((current) => normalizeWallSegmentConnectivity([...current, ...shapeEntities]));
+        setShapeStartPoint(null);
+        setSelectedEntityIds(shapeEntities.map((entity) => entity.entityId));
+        setSelectedDoorId(null);
+        setSelectedWindowId(null);
+        setLastCreatedShapeType('rectangle');
+        setLastCreatedShapeSegmentCount(shapeEntities.length);
+        return;
+      }
+
+      if (currentToolMode === 'circle') {
+        setLastInteractionType('draw-circle');
+        setLastShapeTool('circle');
+
+        if (!shapeStartPoint) {
+          setShapeStartPoint(clickSnap.point);
+          setSelectedEntityIds([]);
+          setSelectedDoorId(null);
+          setSelectedWindowId(null);
+          setLastActionType('SET_CIRCLE_CENTER');
+          return;
+        }
+
+        const shapeEntities = createCircleWallSegments(shapeStartPoint, clickSnap.point);
+
+        if (shapeEntities.length !== CIRCLE_SHAPE_SEGMENT_COUNT) {
+          setLastActionType('CREATE_CIRCLE_SKIPPED_SMALL_RADIUS');
+          return;
+        }
+
+        pushHistoryAction({
+          type: 'CREATE_CIRCLE',
+          entities: shapeEntities.map((entity, index) => ({ entity, index: entities.length + index })),
+        });
+        setEntities((current) => normalizeWallSegmentConnectivity([...current, ...shapeEntities]));
+        setShapeStartPoint(null);
+        setSelectedEntityIds(shapeEntities.map((entity) => entity.entityId));
+        setSelectedDoorId(null);
+        setSelectedWindowId(null);
+        setLastCreatedShapeType('circle');
+        setLastCreatedShapeSegmentCount(shapeEntities.length);
+        return;
+      }
+
       if (currentToolMode === 'door') {
         const target = findNearestSegmentProjection(rawWorldPoint);
 
@@ -2429,6 +2650,7 @@ export const CanvasV4DevScreen = () => {
         setLineStartPoint(null);
         setPolylineLastPoint(null);
         setActivePolylineId(null);
+        setShapeStartPoint(null);
         setSelectionBox(null);
         setInteractionMode('idle');
         setIsPanningCanvas(false);
@@ -2460,6 +2682,7 @@ export const CanvasV4DevScreen = () => {
         setLineStartPoint(null);
         setPolylineLastPoint(null);
         setActivePolylineId(null);
+        setShapeStartPoint(null);
         setSelectionBox(null);
         setInteractionMode('idle');
         setIsPanningCanvas(false);
@@ -2532,7 +2755,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, windows.length],
+    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, shapeStartPoint, windows.length],
   );
 
   const changeSelectedDoorHingeSide = useCallback(() => {
@@ -2613,6 +2836,10 @@ export const CanvasV4DevScreen = () => {
     setLineStartPoint(null);
     setPolylineLastPoint(null);
     setActivePolylineId(null);
+    setShapeStartPoint(null);
+    if (isShapeToolMode(mode)) {
+      setLastShapeTool(mode);
+    }
     setPointerWorldPoint(null);
     setSelectionBox(null);
     setSelectedDoorId(null);
@@ -2637,7 +2864,7 @@ export const CanvasV4DevScreen = () => {
     (screenPoint: Point, pointerId?: number) => {
       const rawWorldPoint = screenToWorld(screenPoint);
       const selectedSet = new Set(selectedEntityIds);
-      const isNavigationSelectionMode = currentToolMode !== 'line' && currentToolMode !== 'polyline' && currentToolMode !== 'door' && currentToolMode !== 'window';
+      const isNavigationSelectionMode = !isGeometryDrawingToolMode(currentToolMode) && currentToolMode !== 'door' && currentToolMode !== 'window';
       const transformHandle = isNavigationSelectionMode ? findTransformHandleAtScreenPoint(screenPoint) : null;
       const hitDoorId = isNavigationSelectionMode && !transformHandle ? findDoorAtWorldPoint(rawWorldPoint) : null;
       const hitWindowId = isNavigationSelectionMode && !transformHandle && !hitDoorId ? findWindowAtWorldPoint(rawWorldPoint) : null;
@@ -3158,6 +3385,7 @@ export const CanvasV4DevScreen = () => {
     ? getEntityDimensionLabelPlacement(selectedEntities[0], getLineScreenGeometry(selectedEntities[0].startPoint, selectedEntities[0].endPoint))
     : null;
   const inspectedDimensionLabelPlacement = selectedDimensionLabelPlacement ?? previewDimensionLabelPlacement;
+  const shapePreviewActive = Boolean(shapePreview);
 
   const inspectorLines = useMemo(
     () => [
@@ -3168,6 +3396,10 @@ export const CanvasV4DevScreen = () => {
       `projectContoursCount: ${projectContours.length}`,
       `projectModeActivatedAt: ${projectState ? new Date(projectState.createdAt).toISOString() : 'null'}`,
       `currentToolMode: ${currentToolMode}`,
+      `lastShapeTool: ${lastShapeTool}`,
+      `lastCreatedShapeType: ${lastCreatedShapeType}`,
+      `lastCreatedShapeSegmentCount: ${lastCreatedShapeSegmentCount}`,
+      `shapePreviewActive: ${shapePreviewActive ? 'true' : 'false'}`,
       `interactionMode: ${interactionMode}`,
       `isPanningCanvas: ${isPanningCanvas ? 'true' : 'false'}`,
       `isDraggingSelection: ${isMovingSelection ? 'true' : 'false'}`,
@@ -3248,6 +3480,7 @@ export const CanvasV4DevScreen = () => {
       `gridSnappedEndPoint: ${activeSnap.gridSnappedEndPoint ? `(${activeSnap.gridSnappedEndPoint.x.toFixed(0)}, ${activeSnap.gridSnappedEndPoint.y.toFixed(0)})` : 'null'}`,
       `angleHelperActive: ${activeSnap.angleHelperActive ? 'true' : 'false'}`,
       `isDrawingLine: ${lineStartPoint || polylineLastPoint ? 'true' : 'false'}`,
+      `isDrawingShape: ${shapeStartPoint ? 'true' : 'false'}`,
       `lineDeltaX: ${activeLineDelta ? `${activeLineDelta.x.toFixed(0)} mm` : 'null'}`,
       `lineDeltaY: ${activeLineDelta ? `${activeLineDelta.y.toFixed(0)} mm` : 'null'}`,
       `lineAngle: ${previewLine ? `${formatAngle(previewLine.angle).toFixed(0)}°` : 'null'}`,
@@ -3292,6 +3525,10 @@ export const CanvasV4DevScreen = () => {
       isMovingSelection,
       lastInteractionType,
       lastHitTestEntityId,
+      lastShapeTool,
+      lastCreatedShapeType,
+      lastCreatedShapeSegmentCount,
+      shapePreviewActive,
       lastMoveAction,
       lastDoorAction,
       lastWindowAction,
@@ -3320,6 +3557,7 @@ export const CanvasV4DevScreen = () => {
       selectedSegment,
       selectionBox?.active,
       selectionMode,
+      shapeStartPoint,
       transformMode,
       undoStack.length,
       isResizing,
@@ -3329,6 +3567,8 @@ export const CanvasV4DevScreen = () => {
   const canvasHeight = Math.max(Math.min(windowHeight * 0.66, 760), 460);
   const hasSelection = selectedEntityIds.length > 0 || Boolean(selectedDoorId) || Boolean(selectedWindowId);
   const drawingTools: Array<{ mode: ToolMode; icon: string; label: string }> = [
+    { mode: 'rectangle', icon: '▭', label: 'Rectangle' },
+    { mode: 'circle', icon: '○', label: 'Circle' },
     { mode: 'select', icon: '↖', label: 'Выбор' },
     { mode: 'line', icon: '╱', label: 'Сегмент' },
     { mode: 'polyline', icon: '⌁', label: 'Стена' },
@@ -3771,8 +4011,33 @@ export const CanvasV4DevScreen = () => {
               </React.Fragment>
             ) : null}
 
+            {shapePreview ? (
+              <React.Fragment>
+                {shapePreview.segments.map((segment) => {
+                  const geometry = getLineScreenGeometry(segment.startPoint, segment.endPoint);
+
+                  return (
+                    <View
+                      key={segment.id}
+                      pointerEvents="none"
+                      style={[
+                        styles.shapePreviewSegment,
+                        {
+                          width: Math.max(geometry.length, 1),
+                          left: geometry.centerX - geometry.length / 2,
+                          top: geometry.centerY - 1,
+                          transform: [{ rotate: `${geometry.angleDeg}deg` }],
+                        },
+                      ]}
+                    />
+                  );
+                })}
+              </React.Fragment>
+            ) : null}
+
             {lineStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, { left: worldToScreen(lineStartPoint).x - 5, top: worldToScreen(lineStartPoint).y - 5 }]} /> : null}
             {polylineLastPoint ? <View pointerEvents="none" style={[styles.anchorPoint, styles.polylineAnchor, { left: worldToScreen(polylineLastPoint).x - 5, top: worldToScreen(polylineLastPoint).y - 5 }]} /> : null}
+            {shapeStartPoint ? <View pointerEvents="none" style={[styles.anchorPoint, styles.shapeAnchor, { left: worldToScreen(shapeStartPoint).x - 5, top: worldToScreen(shapeStartPoint).y - 5 }]} /> : null}
             {endpointSnapScreenPoint ? <View pointerEvents="none" style={[styles.endpointSnapMarker, { left: endpointSnapScreenPoint.x - 8, top: endpointSnapScreenPoint.y - 8 }]} /> : null}
 
             {selectedBoundingBoxScreenRect ? (
@@ -4179,6 +4444,14 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     opacity: 0.72,
   },
+  shapePreviewSegment: {
+    position: 'absolute',
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: '#2563EB',
+    opacity: 0.54,
+    borderStyle: 'dashed',
+  },
   doorWallBreakOverlay: {
     position: 'absolute',
     height: 6,
@@ -4322,6 +4595,9 @@ const styles = StyleSheet.create({
   },
   polylineAnchor: {
     backgroundColor: '#0EA5E9',
+  },
+  shapeAnchor: {
+    backgroundColor: '#8B5CF6',
   },
   endpointSnapMarker: {
     position: 'absolute',
