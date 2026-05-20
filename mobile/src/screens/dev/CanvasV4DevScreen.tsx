@@ -8,10 +8,12 @@ type Point = {
 };
 
 type ShapeToolMode = 'rectangle' | 'circle';
+type ShapeType = ShapeToolMode;
+type ShapeRole = 'top' | 'right' | 'bottom' | 'left' | 'perimeter';
 type ToolMode = 'idle' | 'line' | 'polyline' | ShapeToolMode | 'select' | 'door' | 'window';
 type WallSegmentType = 'external' | 'internal';
 type DimensionDisplayMode = 'minimal' | 'architectural' | 'full';
-type DimensionLevel = 'external' | 'internal' | 'detail';
+type DimensionLevel = 'external' | 'internal' | 'detail' | 'shape';
 type WallAlignmentMode = 'inside' | 'center';
 type CornerJoinMode = 'bevel';
 type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
@@ -24,6 +26,9 @@ type CanvasV4WallSegment = {
   lineId: string;
   entityType: 'wall-segment';
   polylineId?: string;
+  shapeId?: string;
+  shapeType?: ShapeType;
+  shapeRole?: ShapeRole;
   startPoint: Point;
   endPoint: Point;
   length: number;
@@ -33,6 +38,7 @@ type CanvasV4WallSegment = {
   cornerJoinMode: CornerJoinMode;
   segmentType: WallSegmentType;
   connectedSegmentIds: string[];
+  connectionNodeIds: string[];
   doorIds: string[];
   windowIds: string[];
 };
@@ -237,6 +243,7 @@ const DOOR_SWING_ARC_SEGMENTS = 12;
 const CIRCLE_SHAPE_SEGMENT_COUNT = 24;
 const MIN_SHAPE_SIZE_MM = GRID_STEP_MM;
 const SHAPE_WALL_SEGMENT_TYPE: WallSegmentType = 'external';
+const RECTANGLE_SHAPE_ROLES: ShapeRole[] = ['top', 'right', 'bottom', 'left'];
 
 type LineScreenGeometry = {
   length: number;
@@ -343,6 +350,12 @@ type ShapePreview = {
   endPoint: Point;
   segments: ShapePreviewSegment[];
   segmentCount: number;
+};
+
+type ShapeGeometryGroup = {
+  shapeId: string;
+  shapeType: ShapeType;
+  segments: CanvasV4LineEntity[];
 };
 
 type ScreenRect = {
@@ -541,7 +554,15 @@ const getSegmentUnitAndLeftNormal = (startPoint: Point, endPoint: Point) => {
   return { unit, leftNormal: { x: -unit.y, y: unit.x } };
 };
 
-const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: WallSegmentType = 'internal', polylineId?: string): CanvasV4WallSegment => {
+const getConnectionNodeId = (point: Point) => `node-${point.x.toFixed(3)}:${point.y.toFixed(3)}`;
+
+const createWallSegment = (
+  startPoint: Point,
+  endPoint: Point,
+  segmentType: WallSegmentType = 'internal',
+  polylineId?: string,
+  shapeMetadata?: { shapeId: string; shapeType: ShapeType; shapeRole: ShapeRole },
+): CanvasV4WallSegment => {
   const metrics = getLineMetrics(startPoint, endPoint);
   const segmentId = `wall-segment-${Date.now()}-${Math.round(Math.random() * 100000)}`;
 
@@ -551,6 +572,9 @@ const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: Wall
     lineId: segmentId,
     entityType: 'wall-segment',
     polylineId,
+    shapeId: shapeMetadata?.shapeId,
+    shapeType: shapeMetadata?.shapeType,
+    shapeRole: shapeMetadata?.shapeRole,
     startPoint,
     endPoint,
     length: metrics.length,
@@ -560,6 +584,7 @@ const createWallSegment = (startPoint: Point, endPoint: Point, segmentType: Wall
     cornerJoinMode: DEFAULT_CORNER_JOIN_MODE,
     segmentType,
     connectedSegmentIds: [],
+    connectionNodeIds: [getConnectionNodeId(startPoint), getConnectionNodeId(endPoint)],
     doorIds: [],
     windowIds: [],
   };
@@ -597,9 +622,19 @@ const getClosedPreviewSegments = (type: ShapeToolMode, points: Point[]): ShapePr
   }));
 
 const createClosedShapeWallSegments = (type: ShapeToolMode, points: Point[], segmentType: WallSegmentType = SHAPE_WALL_SEGMENT_TYPE): CanvasV4LineEntity[] => {
-  const polylineId = `${type}-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+  const shapeId = `${type}-${Date.now()}-${Math.round(Math.random() * 100000)}`;
 
-  return points.map((point, index) => createWallSegment(point, points[(index + 1) % points.length], segmentType, polylineId));
+  return points.map((point, index) => createWallSegment(
+    point,
+    points[(index + 1) % points.length],
+    segmentType,
+    shapeId,
+    {
+      shapeId,
+      shapeType: type,
+      shapeRole: type === 'rectangle' ? RECTANGLE_SHAPE_ROLES[index] : 'perimeter',
+    },
+  ));
 };
 
 const createRectangleWallSegments = (startPoint: Point, endPoint: Point): CanvasV4LineEntity[] => {
@@ -647,6 +682,7 @@ const normalizeWallSegmentConnectivity = (entities: CanvasV4LineEntity[]) => {
   return entities.map((entity) => ({
     ...entity,
     connectedSegmentIds: Array.from(connectedBySegmentId.get(entity.segmentId) ?? []).sort(),
+    connectionNodeIds: [getConnectionNodeId(entity.startPoint), getConnectionNodeId(entity.endPoint)],
   }));
 };
 
@@ -691,6 +727,36 @@ const getEntitiesBoundingBox = (entities: CanvasV4LineEntity[]): BoundingBox | n
     { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY },
   );
 };
+
+const getShapeGroups = (entities: CanvasV4LineEntity[]): ShapeGeometryGroup[] => {
+  const groupsByShapeId = new Map<string, ShapeGeometryGroup>();
+
+  entities.forEach((entity) => {
+    if (!entity.shapeId || !entity.shapeType) {
+      return;
+    }
+
+    const currentGroup = groupsByShapeId.get(entity.shapeId) ?? {
+      shapeId: entity.shapeId,
+      shapeType: entity.shapeType,
+      segments: [],
+    };
+
+    groupsByShapeId.set(entity.shapeId, {
+      ...currentGroup,
+      segments: [...currentGroup.segments, entity],
+    });
+  });
+
+  return Array.from(groupsByShapeId.values());
+};
+
+const isBoundingBoxInsideRect = (box: BoundingBox, rect: ReturnType<typeof getNormalizedRect>) => (
+  box.minX >= rect.minX
+  && box.maxX <= rect.maxX
+  && box.minY >= rect.minY
+  && box.maxY <= rect.maxY
+);
 
 const getResizeAxisForHandle = (handleId: TransformHandleId): ResizeAxis => {
   if (handleId === 'bbox-n' || handleId === 'bbox-s') {
@@ -1084,9 +1150,10 @@ const cloneCanvasV4ProjectGeometrySnapshot = (entities: CanvasV4LineEntity[], do
     ...entity,
     startPoint: { ...entity.startPoint },
     endPoint: { ...entity.endPoint },
-    connectedSegmentIds: [...entity.connectedSegmentIds],
-    doorIds: [...entity.doorIds],
-    windowIds: [...entity.windowIds],
+    connectedSegmentIds: [...(entity.connectedSegmentIds ?? [])],
+    connectionNodeIds: [...(entity.connectionNodeIds ?? [])],
+    doorIds: [...(entity.doorIds ?? [])],
+    windowIds: [...(entity.windowIds ?? [])],
   })),
   doors: doors.map((door) => ({ ...door })),
   windows: windows.map((window) => ({ ...window })),
@@ -1594,6 +1661,7 @@ export const CanvasV4DevScreen = () => {
   const [activePolylineId, setActivePolylineId] = useState<string | null>(null);
   const [shapeStartPoint, setShapeStartPoint] = useState<Point | null>(null);
   const [lastShapeTool, setLastShapeTool] = useState<ShapeToolMode | 'none'>('none');
+  const [lastCreatedShapeId, setLastCreatedShapeId] = useState<string | null>(null);
   const [lastCreatedShapeType, setLastCreatedShapeType] = useState<ShapeToolMode | 'none'>('none');
   const [lastCreatedShapeSegmentCount, setLastCreatedShapeSegmentCount] = useState(0);
   const [pointerWorldPoint, setPointerWorldPoint] = useState<Point | null>(null);
@@ -1648,6 +1716,8 @@ export const CanvasV4DevScreen = () => {
     () => (currentCanvasMode === 'project' ? recognizeProjectContours(entities) : []),
     [currentCanvasMode, entities],
   );
+  const shapeGroups = useMemo(() => getShapeGroups(entities), [entities]);
+  const shapeGroupById = useMemo(() => new Map(shapeGroups.map((group) => [group.shapeId, group])), [shapeGroups]);
 
   const createProjectStub = useCallback(() => {
     const activatedAt = Date.now();
@@ -1820,11 +1890,12 @@ export const CanvasV4DevScreen = () => {
   );
 
   const visibleDimensions = useMemo<DimensionScreenItem[]>(() => {
-    if (!showLineDimensions || dimensionDisplayMode === 'minimal') {
+    if (!showLineDimensions) {
       return [];
     }
 
     const selectedDimensionEntityIds = new Set(selectedEntityIds);
+    const selectedShapeIds = new Set(selectedEntityIds.map((entityId) => entities.find((entity) => entity.entityId === entityId)?.shapeId).filter((shapeId): shapeId is string => Boolean(shapeId)));
     const openingRects: ScreenRect[] = [...doors.map((door) => {
       const segment = entities.find((entity) => entity.segmentId === door.segmentId);
 
@@ -1863,6 +1934,115 @@ export const CanvasV4DevScreen = () => {
       const wallPadding = Math.max(entity.wallThickness * cameraZoom, 8);
       return getLineScreenRect(geometry.screenStart, geometry.screenEnd, wallPadding);
     });
+    const placedLabelRects: ScreenRect[] = [];
+    const placedLineRects: ScreenRect[] = [];
+    const createShapePlacement = (entity: CanvasV4LineEntity, side: DimensionSide) => {
+      const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+      const spatialAnalysis: DimensionSpatialAnalysis = {
+        side,
+        role: 'external-like',
+        neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
+        isHorizontalLike: side === 'top' || side === 'bottom',
+        isVerticalLike: side === 'left' || side === 'right',
+      };
+      return getDimensionPlacement(geometry, null, DIMENSION_BASE_OFFSET_PX, spatialAnalysis);
+    };
+    const countDimensionCollisions = (placement: DimensionLabelPlacement) => {
+      const labelRect = getDimensionLabelRect(placement);
+      const lineRect = getLineScreenRect(placement.lineStart, placement.lineEnd, 3);
+      const labelCollisions = [...openingRects, ...placedLabelRects, ...wallRects].filter((rect) => rectsOverlap(labelRect, rect, 6)).length;
+      const lineCollisions = [...openingRects, ...placedLineRects, ...wallRects].filter((rect) => rectsOverlap(lineRect, rect, 6)).length;
+
+      return labelCollisions + lineCollisions;
+    };
+    const pickShapePlacement = (candidates: Array<{ entity: CanvasV4LineEntity; side: DimensionSide }>) => {
+      const placements = candidates.map((candidate) => ({
+        ...candidate,
+        placement: createShapePlacement(candidate.entity, candidate.side),
+      }));
+
+      return placements.sort((first, second) => countDimensionCollisions(first.placement) - countDimensionCollisions(second.placement))[0] ?? null;
+    };
+    const shapeDimensions = dimensionDisplayMode === 'full'
+      ? []
+      : shapeGroups.flatMap<DimensionScreenItem>((group) => {
+        const shapeBox = getEntitiesBoundingBox(group.segments);
+        const representativeEntity = group.segments[0];
+
+        if (!shapeBox || !representativeEntity) {
+          return [];
+        }
+
+        if (group.shapeType === 'rectangle') {
+          if (group.segments.length !== 4) {
+            return [];
+          }
+
+          const topEntity = group.segments.find((entity) => entity.shapeRole === 'top');
+          const bottomEntity = group.segments.find((entity) => entity.shapeRole === 'bottom');
+          const leftEntity = group.segments.find((entity) => entity.shapeRole === 'left');
+          const rightEntity = group.segments.find((entity) => entity.shapeRole === 'right');
+          const widthCandidate = pickShapePlacement([
+            ...(topEntity ? [{ entity: topEntity, side: 'top' as DimensionSide }] : []),
+            ...(bottomEntity ? [{ entity: bottomEntity, side: 'bottom' as DimensionSide }] : []),
+          ]);
+          const heightCandidate = pickShapePlacement([
+            ...(leftEntity ? [{ entity: leftEntity, side: 'left' as DimensionSide }] : []),
+            ...(rightEntity ? [{ entity: rightEntity, side: 'right' as DimensionSide }] : []),
+          ]);
+          const pickedRectangleCandidates = [widthCandidate, heightCandidate].filter((candidate): candidate is { entity: CanvasV4LineEntity; side: DimensionSide; placement: DimensionLabelPlacement } => Boolean(candidate));
+
+          return pickedRectangleCandidates.map((candidate, index) => {
+            const item: DimensionScreenItem = {
+              id: `${group.shapeId}:shape-dimension-${index}`,
+              entity: candidate.entity,
+              level: 'shape',
+              placement: candidate.placement,
+              label: formatLineLength(candidate.entity.length),
+              isSelected: selectedShapeIds.has(group.shapeId),
+            };
+            placedLabelRects.push(getDimensionLabelRect(candidate.placement));
+            placedLineRects.push(getLineScreenRect(candidate.placement.lineStart, candidate.placement.lineEnd, 3));
+            return item;
+          });
+        }
+
+        if (group.segments.length !== CIRCLE_SHAPE_SEGMENT_COUNT) {
+          return [];
+        }
+
+        const centerY = (shapeBox.minY + shapeBox.maxY) / 2;
+        const diameter = Math.max(shapeBox.maxX - shapeBox.minX, shapeBox.maxY - shapeBox.minY);
+        const screenStart = worldToScreen({ x: shapeBox.minX, y: centerY });
+        const screenEnd = worldToScreen({ x: shapeBox.maxX, y: centerY });
+        const geometry: LineScreenGeometry = {
+          length: Math.max(Math.hypot(screenEnd.x - screenStart.x, screenEnd.y - screenStart.y), 1),
+          centerX: (screenStart.x + screenEnd.x) / 2,
+          centerY: (screenStart.y + screenEnd.y) / 2,
+          angleDeg: 0,
+          screenStart,
+          screenEnd,
+        };
+        const placement = getDimensionPlacement(geometry, null, DIMENSION_BASE_OFFSET_PX, {
+          side: 'top',
+          role: 'external-like',
+          neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
+          isHorizontalLike: true,
+          isVerticalLike: false,
+        });
+        const item: DimensionScreenItem = {
+          id: `${group.shapeId}:diameter-dimension`,
+          entity: representativeEntity,
+          level: 'shape',
+          placement,
+          label: `D ${formatLineLength(diameter)}`,
+          isSelected: selectedShapeIds.has(group.shapeId),
+        };
+        placedLabelRects.push(getDimensionLabelRect(placement));
+        placedLineRects.push(getLineScreenRect(placement.lineStart, placement.lineEnd, 3));
+        return [item];
+      });
+    const nonDebugShapeIds = new Set(shapeGroups.map((group) => group.shapeId));
     const dimensionCandidates = entities.map((entity) => {
       const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
       const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
@@ -1881,6 +2061,10 @@ export const CanvasV4DevScreen = () => {
         return true;
       }
 
+      if (candidate.entity.shapeId && nonDebugShapeIds.has(candidate.entity.shapeId)) {
+        return false;
+      }
+
       if (candidate.level === 'detail') {
         return false;
       }
@@ -1896,18 +2080,16 @@ export const CanvasV4DevScreen = () => {
       return true;
     }).sort((first, second) => {
       const levelPriority: Record<DimensionLevel, number> = {
-        external: 0,
-        internal: 1,
-        detail: 2,
+        shape: 0,
+        external: 1,
+        internal: 2,
+        detail: 3,
       };
 
       return levelPriority[first.level] - levelPriority[second.level] || second.entity.length - first.entity.length;
     });
 
-    const placedLabelRects: ScreenRect[] = [];
-    const placedLineRects: ScreenRect[] = [];
-
-    return visibleCandidates.flatMap((candidate) => {
+    const segmentDimensions = visibleCandidates.flatMap((candidate) => {
       const { entity, closedContourOutwardNormal, level, spatialAnalysis } = candidate;
       const isSelected = selectedDimensionEntityIds.has(entity.entityId);
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
@@ -1954,7 +2136,9 @@ export const CanvasV4DevScreen = () => {
         isSelected,
       }];
     });
-  }, [cameraZoom, dimensionDisplayMode, doors, entities, getLineScreenGeometry, selectedEntityIds, showLineDimensions, windows, worldToScreen]);
+
+    return [...shapeDimensions, ...segmentDimensions];
+  }, [cameraZoom, dimensionDisplayMode, doors, entities, getLineScreenGeometry, selectedEntityIds, shapeGroups, showLineDimensions, windows, worldToScreen]);
 
   const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.placement.spatialRole === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX));
   const dimensionOffsetPx = visibleDimensions.length > 0
@@ -2099,6 +2283,22 @@ export const CanvasV4DevScreen = () => {
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
+  const selectedShapeId = useMemo(() => {
+    if (selectedSegment?.shapeId) {
+      return selectedSegment.shapeId;
+    }
+
+    const selectedShapeIds = Array.from(new Set(selectedEntities.map((entity) => entity.shapeId).filter((shapeId): shapeId is string => Boolean(shapeId))));
+    return selectedShapeIds.length === 1 ? selectedShapeIds[0] : null;
+  }, [selectedEntities, selectedSegment]);
+  const selectedShapeGroup = selectedShapeId ? shapeGroupById.get(selectedShapeId) ?? null : null;
+  const selectedShapeType = selectedShapeGroup?.shapeType ?? selectedSegment?.shapeType ?? null;
+  const selectedShapeSegmentCount = selectedShapeGroup?.segments.length ?? 0;
+  const shapeDimensionMode = !showLineDimensions
+    ? 'hidden'
+    : dimensionDisplayMode === 'full'
+      ? 'segment-debug'
+      : 'shape-summary';
 
   useEffect(() => {
     setWindowWidthInput(selectedWindow ? String(Math.round(selectedWindow.width)) : String(DEFAULT_WINDOW_WIDTH_MM));
@@ -2363,6 +2563,7 @@ export const CanvasV4DevScreen = () => {
       setSelectedEntityIds(orderedEntities.map(({ entity }) => entity.entityId));
       setSelectedDoorId(null);
       setSelectedWindowId(null);
+      setLastCreatedShapeId(orderedEntities[0]?.entity.shapeId ?? null);
       setLastCreatedShapeType(action.type === 'CREATE_RECTANGLE' ? 'rectangle' : 'circle');
       setLastCreatedShapeSegmentCount(orderedEntities.length);
       return;
@@ -2494,7 +2695,17 @@ export const CanvasV4DevScreen = () => {
       const worldStart = screenToWorld(startPoint);
       const worldEnd = screenToWorld(endPoint);
       const worldRect = getNormalizedRect(worldStart, worldEnd);
-      const nextSelectedIds = entities.filter((entity) => doesLineIntersectRect(entity, worldRect)).map((entity) => entity.entityId);
+      const selectedIds = new Set(entities.filter((entity) => doesLineIntersectRect(entity, worldRect)).map((entity) => entity.entityId));
+
+      shapeGroups.forEach((group) => {
+        const box = getEntitiesBoundingBox(group.segments);
+
+        if (box && isBoundingBoxInsideRect(box, worldRect)) {
+          group.segments.forEach((segment) => selectedIds.add(segment.entityId));
+        }
+      });
+
+      const nextSelectedIds = entities.filter((entity) => selectedIds.has(entity.entityId)).map((entity) => entity.entityId);
 
       setSelectedEntityIds(nextSelectedIds);
       setSelectedDoorId(null);
@@ -2503,7 +2714,7 @@ export const CanvasV4DevScreen = () => {
       setLastActionType(nextSelectedIds.length > 0 ? 'SELECTION_BOX_SELECT' : 'SELECTION_BOX_CLEAR');
       setLastInteractionType('selection-box');
     },
-    [entities, screenToWorld],
+    [entities, screenToWorld, shapeGroups],
   );
 
   const finishClick = useCallback(
@@ -2589,6 +2800,7 @@ export const CanvasV4DevScreen = () => {
         setSelectedEntityIds(shapeEntities.map((entity) => entity.entityId));
         setSelectedDoorId(null);
         setSelectedWindowId(null);
+        setLastCreatedShapeId(shapeEntities[0]?.shapeId ?? null);
         setLastCreatedShapeType('rectangle');
         setLastCreatedShapeSegmentCount(shapeEntities.length);
         return;
@@ -2623,6 +2835,7 @@ export const CanvasV4DevScreen = () => {
         setSelectedEntityIds(shapeEntities.map((entity) => entity.entityId));
         setSelectedDoorId(null);
         setSelectedWindowId(null);
+        setLastCreatedShapeId(shapeEntities[0]?.shapeId ?? null);
         setLastCreatedShapeType('circle');
         setLastCreatedShapeSegmentCount(shapeEntities.length);
         return;
@@ -3397,9 +3610,14 @@ export const CanvasV4DevScreen = () => {
       `projectModeActivatedAt: ${projectState ? new Date(projectState.createdAt).toISOString() : 'null'}`,
       `currentToolMode: ${currentToolMode}`,
       `lastShapeTool: ${lastShapeTool}`,
+      `lastCreatedShapeId: ${lastCreatedShapeId ?? 'null'}`,
       `lastCreatedShapeType: ${lastCreatedShapeType}`,
       `lastCreatedShapeSegmentCount: ${lastCreatedShapeSegmentCount}`,
       `shapePreviewActive: ${shapePreviewActive ? 'true' : 'false'}`,
+      `selectedShapeId: ${selectedShapeId ?? 'null'}`,
+      `selectedShapeType: ${selectedShapeType ?? 'null'}`,
+      `selectedShapeSegmentCount: ${selectedShapeSegmentCount}`,
+      `shapeDimensionMode: ${shapeDimensionMode}`,
       `interactionMode: ${interactionMode}`,
       `isPanningCanvas: ${isPanningCanvas ? 'true' : 'false'}`,
       `isDraggingSelection: ${isMovingSelection ? 'true' : 'false'}`,
@@ -3446,7 +3664,11 @@ export const CanvasV4DevScreen = () => {
       `wallThicknessFrozen: ${WALL_THICKNESS_FROZEN ? 'true' : 'false'}`,
       `wallThickness: ${selectedSegment ? `${selectedSegment.wallThickness} mm` : `${DEFAULT_WALL_THICKNESS_MM} mm (default)`}`,
       `cornerJoinMode: ${selectedSegment?.cornerJoinMode ?? DEFAULT_CORNER_JOIN_MODE}`,
-      `connectedSegmentIds: [${selectedSegment?.connectedSegmentIds.join(', ') || 'empty'}]`,
+      `connectedSegmentIds: [${selectedSegment?.connectedSegmentIds?.join(', ') || 'empty'}]`,
+      `connectionNodeIds: [${selectedSegment?.connectionNodeIds?.join(', ') || 'empty'}]`,
+      `shapeId: ${selectedSegment?.shapeId ?? 'null'}`,
+      `shapeType: ${selectedSegment?.shapeType ?? 'null'}`,
+      `shapeRole: ${selectedSegment?.shapeRole ?? 'null'}`,
       `segmentLength: ${selectedSegment ? formatLineLength(selectedSegment.length) : 'null'}`,
       `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
       `doorIds: [${selectedSegment?.doorIds.join(', ') || 'empty'}]`,
@@ -3526,8 +3748,13 @@ export const CanvasV4DevScreen = () => {
       lastInteractionType,
       lastHitTestEntityId,
       lastShapeTool,
+      lastCreatedShapeId,
       lastCreatedShapeType,
       lastCreatedShapeSegmentCount,
+      selectedShapeId,
+      selectedShapeType,
+      selectedShapeSegmentCount,
+      shapeDimensionMode,
       shapePreviewActive,
       lastMoveAction,
       lastDoorAction,
@@ -4409,14 +4636,14 @@ const styles = StyleSheet.create({
     borderColor: '#0F172A',
   },
   externalWallSegment: {
-    backgroundColor: 'rgba(3, 105, 161, 0.22)',
-    borderColor: '#0369A1',
+    backgroundColor: 'rgba(15, 23, 42, 0.18)',
+    borderColor: '#0F172A',
   },
   internalWallLine: {
     backgroundColor: '#0F172A',
   },
   externalWallLine: {
-    backgroundColor: '#0369A1',
+    backgroundColor: '#0F172A',
   },
   wallCornerJoin: {
     position: 'absolute',
@@ -4424,8 +4651,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   wallSegmentSelected: {
-    backgroundColor: '#F97316',
-    shadowColor: '#F97316',
+    backgroundColor: '#2563EB',
+    shadowColor: '#2563EB',
     shadowOpacity: 0.35,
     shadowRadius: 6,
   },
@@ -4436,7 +4663,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
   },
   wallSegmentCenterLineSelected: {
-    backgroundColor: '#F97316',
+    backgroundColor: '#2563EB',
   },
   previewWallSegment: {
     position: 'absolute',
@@ -4459,62 +4686,62 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: 'rgba(37, 99, 235, 0.35)',
+    borderColor: 'rgba(15, 23, 42, 0.35)',
   },
   doorLeafLine: {
     position: 'absolute',
     height: 2,
     borderRadius: 2,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#0F172A',
   },
   doorSwingArcSegment: {
     position: 'absolute',
     height: 2,
     borderRadius: 2,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#334155',
     opacity: 0.85,
   },
   doorElementSelected: {
-    backgroundColor: '#F97316',
-    borderColor: '#F97316',
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
   },
   doorHingeMarker: {
     position: 'absolute',
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#0F172A',
     borderWidth: 1,
     borderColor: '#EFF6FF',
   },
   doorHingeMarkerSelected: {
-    backgroundColor: '#F97316',
+    backgroundColor: '#2563EB',
   },
   windowOverlayLine: {
     position: 'absolute',
     height: 6,
     borderRadius: 3,
-    backgroundColor: 'rgba(20, 184, 166, 0.16)',
+    backgroundColor: 'rgba(15, 23, 42, 0.08)',
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#0F766E',
+    borderColor: '#0F172A',
   },
   windowGlassLine: {
     position: 'absolute',
     height: 2,
     borderRadius: 2,
-    backgroundColor: '#14B8A6',
+    backgroundColor: '#0F172A',
   },
   windowEndCap: {
     position: 'absolute',
     width: 2,
     height: 10,
     borderRadius: 1,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#0F172A',
   },
   windowElementSelected: {
-    backgroundColor: '#F97316',
-    borderColor: '#F97316',
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
   },
   projectContourEdge: {
     position: 'absolute',
@@ -4579,7 +4806,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   dimensionLabelTextSelected: {
-    color: '#C2410C',
+    color: '#1D4ED8',
   },
   previewDimensionLabelText: {
     color: '#15803D',
