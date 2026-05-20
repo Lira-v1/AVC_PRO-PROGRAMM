@@ -19,6 +19,7 @@ type CornerJoinMode = 'bevel';
 type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
 type SegmentSpatialRole = 'external-like' | 'internal-like' | 'unknown';
 type CanvasV4Mode = 'plan' | 'project';
+type CircleVisualMode = 'smooth' | 'segmented';
 
 type CanvasV4WallSegment = {
   entityId: string;
@@ -29,6 +30,10 @@ type CanvasV4WallSegment = {
   shapeId?: string;
   shapeType?: ShapeType;
   shapeRole?: ShapeRole;
+  shapeCenterPoint?: Point;
+  shapeRadius?: number;
+  shapeDiameter?: number;
+  shapeSegmentIds?: string[];
   startPoint: Point;
   endPoint: Point;
   length: number;
@@ -241,6 +246,7 @@ const WINDOW_HIT_TOLERANCE_PX = 14;
 const DOOR_SWING_ARC_VISUAL_SCALE = 0.68;
 const DOOR_SWING_ARC_SEGMENTS = 12;
 const CIRCLE_SHAPE_SEGMENT_COUNT = 24;
+const CIRCLE_VISUAL_STROKE_WIDTH_PX = 2;
 const MIN_SHAPE_SIZE_MM = GRID_STEP_MM;
 const SHAPE_WALL_SEGMENT_TYPE: WallSegmentType = 'external';
 const RECTANGLE_SHAPE_ROLES: ShapeRole[] = ['top', 'right', 'bottom', 'left'];
@@ -356,6 +362,13 @@ type ShapeGeometryGroup = {
   shapeId: string;
   shapeType: ShapeType;
   segments: CanvasV4LineEntity[];
+  segmentIds: string[];
+  boundingBox: BoundingBox | null;
+  centerPoint?: Point;
+  radius?: number;
+  radiusX?: number;
+  radiusY?: number;
+  diameter?: number;
 };
 
 type ScreenRect = {
@@ -556,6 +569,128 @@ const getSegmentUnitAndLeftNormal = (startPoint: Point, endPoint: Point) => {
 
 const getConnectionNodeId = (point: Point) => `node-${point.x.toFixed(3)}:${point.y.toFixed(3)}`;
 
+const getEntitiesBoundingBox = (entities: CanvasV4LineEntity[]): BoundingBox | null => {
+  if (entities.length === 0) {
+    return null;
+  }
+
+  return entities.reduce<BoundingBox>(
+    (box, entity) => ({
+      minX: Math.min(box.minX, entity.startPoint.x, entity.endPoint.x),
+      maxX: Math.max(box.maxX, entity.startPoint.x, entity.endPoint.x),
+      minY: Math.min(box.minY, entity.startPoint.y, entity.endPoint.y),
+      maxY: Math.max(box.maxY, entity.startPoint.y, entity.endPoint.y),
+    }),
+    { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY },
+  );
+};
+
+const getCircleMetricsFromBoundingBox = (box: BoundingBox | null) => {
+  if (!box) {
+    return null;
+  }
+
+  const radiusX = Math.abs(box.maxX - box.minX) / 2;
+  const radiusY = Math.abs(box.maxY - box.minY) / 2;
+  const diameter = Math.max(radiusX * 2, radiusY * 2);
+
+  if (diameter <= 0.000001) {
+    return null;
+  }
+
+  return {
+    centerPoint: {
+      x: (box.minX + box.maxX) / 2,
+      y: (box.minY + box.maxY) / 2,
+    },
+    radius: diameter / 2,
+    radiusX,
+    radiusY,
+    diameter,
+  };
+};
+
+const getShapeGroups = (entities: CanvasV4LineEntity[]): ShapeGeometryGroup[] => {
+  const groupsByShapeId = new Map<string, ShapeGeometryGroup>();
+
+  entities.forEach((entity) => {
+    if (!entity.shapeId || !entity.shapeType) {
+      return;
+    }
+
+    const currentGroup = groupsByShapeId.get(entity.shapeId) ?? {
+      shapeId: entity.shapeId,
+      shapeType: entity.shapeType,
+      segments: [],
+      segmentIds: [],
+      boundingBox: null,
+    };
+
+    groupsByShapeId.set(entity.shapeId, {
+      ...currentGroup,
+      segments: [...currentGroup.segments, entity],
+      segmentIds: [...currentGroup.segmentIds, entity.segmentId],
+    });
+  });
+
+  return Array.from(groupsByShapeId.values()).map((group) => {
+    const boundingBox = getEntitiesBoundingBox(group.segments);
+
+    if (group.shapeType !== 'circle') {
+      return {
+        ...group,
+        boundingBox,
+      };
+    }
+
+    const circleMetrics = getCircleMetricsFromBoundingBox(boundingBox);
+
+    return {
+      ...group,
+      boundingBox,
+      centerPoint: circleMetrics?.centerPoint,
+      radius: circleMetrics?.radius,
+      radiusX: circleMetrics?.radiusX,
+      radiusY: circleMetrics?.radiusY,
+      diameter: circleMetrics?.diameter,
+    };
+  });
+};
+
+const withShapeGeometryMetadata = (entities: CanvasV4LineEntity[]): CanvasV4LineEntity[] => {
+  const groupsByShapeId = new Map(getShapeGroups(entities).map((group) => [group.shapeId, group]));
+
+  return entities.map((entity) => {
+    if (!entity.shapeId) {
+      return entity;
+    }
+
+    const group = groupsByShapeId.get(entity.shapeId);
+
+    if (!group) {
+      return entity;
+    }
+
+    if (group.shapeType !== 'circle') {
+      return {
+        ...entity,
+        shapeSegmentIds: group.segmentIds,
+        shapeCenterPoint: undefined,
+        shapeRadius: undefined,
+        shapeDiameter: undefined,
+      };
+    }
+
+    return {
+      ...entity,
+      shapeSegmentIds: group.segmentIds,
+      shapeCenterPoint: group.centerPoint,
+      shapeRadius: group.radius,
+      shapeDiameter: group.diameter,
+    };
+  });
+};
+
 const createWallSegment = (
   startPoint: Point,
   endPoint: Point,
@@ -624,7 +759,7 @@ const getClosedPreviewSegments = (type: ShapeToolMode, points: Point[]): ShapePr
 const createClosedShapeWallSegments = (type: ShapeToolMode, points: Point[], segmentType: WallSegmentType = SHAPE_WALL_SEGMENT_TYPE): CanvasV4LineEntity[] => {
   const shapeId = `${type}-${Date.now()}-${Math.round(Math.random() * 100000)}`;
 
-  return points.map((point, index) => createWallSegment(
+  const segments = points.map((point, index) => createWallSegment(
     point,
     points[(index + 1) % points.length],
     segmentType,
@@ -635,6 +770,8 @@ const createClosedShapeWallSegments = (type: ShapeToolMode, points: Point[], seg
       shapeRole: type === 'rectangle' ? RECTANGLE_SHAPE_ROLES[index] : 'perimeter',
     },
   ));
+
+  return withShapeGeometryMetadata(segments);
 };
 
 const createRectangleWallSegments = (startPoint: Point, endPoint: Point): CanvasV4LineEntity[] => {
@@ -679,11 +816,13 @@ const normalizeWallSegmentConnectivity = (entities: CanvasV4LineEntity[]) => {
     });
   });
 
-  return entities.map((entity) => ({
+  const connectedEntities = entities.map((entity) => ({
     ...entity,
     connectedSegmentIds: Array.from(connectedBySegmentId.get(entity.segmentId) ?? []).sort(),
     connectionNodeIds: [getConnectionNodeId(entity.startPoint), getConnectionNodeId(entity.endPoint)],
   }));
+
+  return withShapeGeometryMetadata(connectedEntities);
 };
 
 const moveLineEntity = (entity: CanvasV4LineEntity, delta: Point): CanvasV4LineEntity => {
@@ -710,45 +849,6 @@ const updateLineEntityGeometry = (entity: CanvasV4LineEntity, startPoint: Point,
     length: metrics.length,
     angle: metrics.angle,
   };
-};
-
-const getEntitiesBoundingBox = (entities: CanvasV4LineEntity[]): BoundingBox | null => {
-  if (entities.length === 0) {
-    return null;
-  }
-
-  return entities.reduce<BoundingBox>(
-    (box, entity) => ({
-      minX: Math.min(box.minX, entity.startPoint.x, entity.endPoint.x),
-      maxX: Math.max(box.maxX, entity.startPoint.x, entity.endPoint.x),
-      minY: Math.min(box.minY, entity.startPoint.y, entity.endPoint.y),
-      maxY: Math.max(box.maxY, entity.startPoint.y, entity.endPoint.y),
-    }),
-    { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY },
-  );
-};
-
-const getShapeGroups = (entities: CanvasV4LineEntity[]): ShapeGeometryGroup[] => {
-  const groupsByShapeId = new Map<string, ShapeGeometryGroup>();
-
-  entities.forEach((entity) => {
-    if (!entity.shapeId || !entity.shapeType) {
-      return;
-    }
-
-    const currentGroup = groupsByShapeId.get(entity.shapeId) ?? {
-      shapeId: entity.shapeId,
-      shapeType: entity.shapeType,
-      segments: [],
-    };
-
-    groupsByShapeId.set(entity.shapeId, {
-      ...currentGroup,
-      segments: [...currentGroup.segments, entity],
-    });
-  });
-
-  return Array.from(groupsByShapeId.values());
 };
 
 const isBoundingBoxInsideRect = (box: BoundingBox, rect: ReturnType<typeof getNormalizedRect>) => (
@@ -1150,6 +1250,8 @@ const cloneCanvasV4ProjectGeometrySnapshot = (entities: CanvasV4LineEntity[], do
     ...entity,
     startPoint: { ...entity.startPoint },
     endPoint: { ...entity.endPoint },
+    shapeCenterPoint: entity.shapeCenterPoint ? { ...entity.shapeCenterPoint } : undefined,
+    shapeSegmentIds: entity.shapeSegmentIds ? [...entity.shapeSegmentIds] : undefined,
     connectedSegmentIds: [...(entity.connectedSegmentIds ?? [])],
     connectionNodeIds: [...(entity.connectionNodeIds ?? [])],
     doorIds: [...(entity.doorIds ?? [])],
@@ -1718,6 +1820,14 @@ export const CanvasV4DevScreen = () => {
   );
   const shapeGroups = useMemo(() => getShapeGroups(entities), [entities]);
   const shapeGroupById = useMemo(() => new Map(shapeGroups.map((group) => [group.shapeId, group])), [shapeGroups]);
+  const entityBySegmentId = useMemo(() => new Map(entities.map((entity) => [entity.segmentId, entity])), [entities]);
+  const smoothCircleShapeGroups = useMemo(
+    () => (dimensionDisplayMode === 'full'
+      ? []
+      : shapeGroups.filter((group) => group.shapeType === 'circle' && group.centerPoint && group.radiusX && group.radiusY)),
+    [dimensionDisplayMode, shapeGroups],
+  );
+  const circleVisualMode: CircleVisualMode = dimensionDisplayMode === 'full' ? 'segmented' : 'smooth';
 
   const createProjectStub = useCallback(() => {
     const activatedAt = Date.now();
@@ -1966,7 +2076,7 @@ export const CanvasV4DevScreen = () => {
     const shapeDimensions = dimensionDisplayMode === 'full'
       ? []
       : shapeGroups.flatMap<DimensionScreenItem>((group) => {
-        const shapeBox = getEntitiesBoundingBox(group.segments);
+        const shapeBox = group.boundingBox ?? getEntitiesBoundingBox(group.segments);
         const representativeEntity = group.segments[0];
 
         if (!shapeBox || !representativeEntity) {
@@ -2011,31 +2121,41 @@ export const CanvasV4DevScreen = () => {
           return [];
         }
 
-        const centerY = (shapeBox.minY + shapeBox.maxY) / 2;
-        const diameter = Math.max(shapeBox.maxX - shapeBox.minX, shapeBox.maxY - shapeBox.minY);
-        const screenStart = worldToScreen({ x: shapeBox.minX, y: centerY });
-        const screenEnd = worldToScreen({ x: shapeBox.maxX, y: centerY });
+        const centerPoint = group.centerPoint ?? {
+          x: (shapeBox.minX + shapeBox.maxX) / 2,
+          y: (shapeBox.minY + shapeBox.maxY) / 2,
+        };
+        const width = shapeBox.maxX - shapeBox.minX;
+        const height = shapeBox.maxY - shapeBox.minY;
+        const diameter = group.diameter ?? Math.max(shapeBox.maxX - shapeBox.minX, shapeBox.maxY - shapeBox.minY);
+        const isHorizontalDiameter = width >= height;
+        const screenStart = isHorizontalDiameter
+          ? worldToScreen({ x: shapeBox.minX, y: centerPoint.y })
+          : worldToScreen({ x: centerPoint.x, y: shapeBox.minY });
+        const screenEnd = isHorizontalDiameter
+          ? worldToScreen({ x: shapeBox.maxX, y: centerPoint.y })
+          : worldToScreen({ x: centerPoint.x, y: shapeBox.maxY });
         const geometry: LineScreenGeometry = {
           length: Math.max(Math.hypot(screenEnd.x - screenStart.x, screenEnd.y - screenStart.y), 1),
           centerX: (screenStart.x + screenEnd.x) / 2,
           centerY: (screenStart.y + screenEnd.y) / 2,
-          angleDeg: 0,
+          angleDeg: isHorizontalDiameter ? 0 : 90,
           screenStart,
           screenEnd,
         };
         const placement = getDimensionPlacement(geometry, null, DIMENSION_BASE_OFFSET_PX, {
-          side: 'top',
+          side: isHorizontalDiameter ? 'top' : 'right',
           role: 'external-like',
           neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
-          isHorizontalLike: true,
-          isVerticalLike: false,
+          isHorizontalLike: isHorizontalDiameter,
+          isVerticalLike: !isHorizontalDiameter,
         });
         const item: DimensionScreenItem = {
           id: `${group.shapeId}:diameter-dimension`,
           entity: representativeEntity,
           level: 'shape',
           placement,
-          label: `D ${formatLineLength(diameter)}`,
+          label: `Ø ${formatLineLength(diameter)}`,
           isSelected: selectedShapeIds.has(group.shapeId),
         };
         placedLabelRects.push(getDimensionLabelRect(placement));
@@ -2208,6 +2328,33 @@ export const CanvasV4DevScreen = () => {
     [cameraZoom, entities],
   );
 
+  const findCircleShapeAtWorldPoint = useCallback(
+    (worldPoint: Point) => {
+      if (dimensionDisplayMode === 'full') {
+        return null;
+      }
+
+      const tolerance = HIT_TOLERANCE_PX / cameraZoom;
+
+      return [...shapeGroups]
+        .reverse()
+        .find((group) => {
+          if (group.shapeType !== 'circle' || !group.centerPoint || !group.radiusX || !group.radiusY) {
+            return false;
+          }
+
+          const normalizedDistance = Math.hypot(
+            (worldPoint.x - group.centerPoint.x) / Math.max(group.radiusX, 1),
+            (worldPoint.y - group.centerPoint.y) / Math.max(group.radiusY, 1),
+          );
+          const boundaryDistance = Math.abs(normalizedDistance - 1) * Math.max(group.radiusX, group.radiusY);
+
+          return boundaryDistance <= tolerance;
+        })?.shapeId ?? null;
+    },
+    [cameraZoom, dimensionDisplayMode, shapeGroups],
+  );
+
   const findNearestSegmentProjection = useCallback(
     (worldPoint: Point): { entity: CanvasV4LineEntity; positionOnSegment: number; distance: number } | null => {
       const tolerance = HIT_TOLERANCE_PX / cameraZoom;
@@ -2294,6 +2441,15 @@ export const CanvasV4DevScreen = () => {
   const selectedShapeGroup = selectedShapeId ? shapeGroupById.get(selectedShapeId) ?? null : null;
   const selectedShapeType = selectedShapeGroup?.shapeType ?? selectedSegment?.shapeType ?? null;
   const selectedShapeSegmentCount = selectedShapeGroup?.segments.length ?? 0;
+  const selectedCircleCenterPoint = selectedShapeType === 'circle'
+    ? selectedShapeGroup?.centerPoint ?? selectedSegment?.shapeCenterPoint ?? null
+    : null;
+  const selectedCircleRadius = selectedShapeType === 'circle'
+    ? selectedShapeGroup?.radius ?? selectedSegment?.shapeRadius ?? null
+    : null;
+  const selectedCircleDiameter = selectedShapeType === 'circle'
+    ? selectedShapeGroup?.diameter ?? selectedSegment?.shapeDiameter ?? null
+    : null;
   const shapeDimensionMode = !showLineDimensions
     ? 'hidden'
     : dimensionDisplayMode === 'full'
@@ -2908,10 +3064,19 @@ export const CanvasV4DevScreen = () => {
       if (!isDrawingTool) {
         const hitDoorId = findDoorAtWorldPoint(rawWorldPoint);
         const hitWindowId = hitDoorId ? null : findWindowAtWorldPoint(rawWorldPoint);
-        const hitEntityId = hitDoorId || hitWindowId ? null : findEntityAtWorldPoint(rawWorldPoint);
+        const hitCircleShapeId = hitDoorId || hitWindowId ? null : findCircleShapeAtWorldPoint(rawWorldPoint);
+        const hitCircleGroup = hitCircleShapeId ? shapeGroupById.get(hitCircleShapeId) ?? null : null;
+        const hitEntityId = hitDoorId || hitWindowId || hitCircleShapeId ? null : findEntityAtWorldPoint(rawWorldPoint);
+        const hitEntity = hitEntityId ? entities.find((entity) => entity.entityId === hitEntityId) ?? null : null;
+        const hitEntityCircleGroup = hitEntity?.shapeType === 'circle' && hitEntity.shapeId && dimensionDisplayMode !== 'full'
+          ? shapeGroupById.get(hitEntity.shapeId) ?? null
+          : null;
+        const hitShapeGroup = hitCircleGroup ?? hitEntityCircleGroup;
+        const isHitShapeSelected = hitShapeGroup ? hitShapeGroup.segments.some((entity) => selectedEntityIds.includes(entity.entityId)) : false;
+        const isHitEntitySelected = hitEntityId ? selectedEntityIds.includes(hitEntityId) : false;
         const now = Date.now();
-        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitWindowId ? 'window-geometry' : hitEntityId && selectedEntityIds.includes(hitEntityId) ? 'selected-geometry' : hitEntityId ? 'wall-geometry' : 'empty-canvas');
-        setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitEntityId);
+        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitWindowId ? 'window-geometry' : isHitShapeSelected || isHitEntitySelected ? 'selected-geometry' : hitShapeGroup || hitEntityId ? 'wall-geometry' : 'empty-canvas');
+        setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitShapeGroup?.shapeId ?? hitEntityId);
 
         if (hitDoorId) {
           setSelectedDoorId(hitDoorId);
@@ -2930,6 +3095,17 @@ export const CanvasV4DevScreen = () => {
           setSelectedEntityIds([]);
           setSelectionMode('single');
           setLastActionType('SELECT_WINDOW');
+          setLastInteractionType('tap-select');
+          lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
+          return;
+        }
+
+        if (hitShapeGroup) {
+          setSelectedEntityIds(hitShapeGroup.segments.map((entity) => entity.entityId));
+          setSelectedDoorId(null);
+          setSelectedWindowId(null);
+          setSelectionMode('single');
+          setLastActionType('SELECT_CIRCLE_SHAPE');
           setLastInteractionType('tap-select');
           lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
           return;
@@ -2968,7 +3144,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, shapeStartPoint, windows.length],
+    [activePolylineId, currentToolMode, dimensionDisplayMode, doors.length, endpointSnapThreshold, entities, findCircleShapeAtWorldPoint, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, shapeGroupById, shapeStartPoint, windows.length],
   );
 
   const changeSelectedDoorHingeSide = useCallback(() => {
@@ -3081,13 +3257,16 @@ export const CanvasV4DevScreen = () => {
       const transformHandle = isNavigationSelectionMode ? findTransformHandleAtScreenPoint(screenPoint) : null;
       const hitDoorId = isNavigationSelectionMode && !transformHandle ? findDoorAtWorldPoint(rawWorldPoint) : null;
       const hitWindowId = isNavigationSelectionMode && !transformHandle && !hitDoorId ? findWindowAtWorldPoint(rawWorldPoint) : null;
+      const hitCircleShapeId = isNavigationSelectionMode && !transformHandle && !hitDoorId && !hitWindowId ? findCircleShapeAtWorldPoint(rawWorldPoint) : null;
+      const hitCircleGroup = hitCircleShapeId ? shapeGroupById.get(hitCircleShapeId) ?? null : null;
       const isLineResize = !!transformHandle && selectedEntities.length === 1;
       const isSelectionResize = !!transformHandle && selectedEntities.length > 1;
       const tolerance = HIT_TOLERANCE_PX / cameraZoom;
+      const hitSelectedCircleEntityId = hitCircleGroup?.segments.find((entity) => selectedSet.has(entity.entityId))?.entityId ?? null;
       const hitSelectedEntityId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle
-        ? [...selectedEntities].reverse().find((entity) => getDistanceToSegment(rawWorldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null
+        ? hitSelectedCircleEntityId ?? [...selectedEntities].reverse().find((entity) => getDistanceToSegment(rawWorldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null
         : null;
-      const hitEntityId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle ? hitSelectedEntityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const hitEntityId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle ? hitSelectedEntityId ?? hitCircleGroup?.segments[0]?.entityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
       const shouldMoveDoor = isNavigationSelectionMode && !!hitDoorId && selectedDoorId === hitDoorId;
       const shouldMoveWindow = isNavigationSelectionMode && !!hitWindowId && selectedWindowId === hitWindowId;
       const shouldMoveSelection = isNavigationSelectionMode && !!hitSelectedEntityId && selectedSet.has(hitSelectedEntityId);
@@ -3147,7 +3326,7 @@ export const CanvasV4DevScreen = () => {
       };
       setPointerWorldPoint(rawWorldPoint);
       setHitTestTargetType(hitTargetType);
-      setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitEntityId);
+      setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitCircleShapeId ?? hitEntityId);
       setInteractionMode(initialInteractionMode);
       setIsPanningCanvas(false);
       setSelectionBox(null);
@@ -3159,7 +3338,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis(transformHandle?.axis ?? 'none');
       setResizeScale({ x: 1, y: 1 });
     },
-    [cameraZoom, currentToolMode, doors, findDoorAtWorldPoint, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, findWindowAtWorldPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds, selectedWindowId, windows],
+    [cameraZoom, currentToolMode, doors, findCircleShapeAtWorldPoint, findDoorAtWorldPoint, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, findWindowAtWorldPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds, selectedWindowId, shapeGroupById, windows],
   );
 
   const moveInteraction = useCallback(
@@ -3618,6 +3797,10 @@ export const CanvasV4DevScreen = () => {
       `selectedShapeType: ${selectedShapeType ?? 'null'}`,
       `selectedShapeSegmentCount: ${selectedShapeSegmentCount}`,
       `shapeDimensionMode: ${shapeDimensionMode}`,
+      `circleCenterPoint: ${selectedCircleCenterPoint ? `(${selectedCircleCenterPoint.x.toFixed(0)}, ${selectedCircleCenterPoint.y.toFixed(0)})` : 'null'}`,
+      `circleRadius: ${selectedCircleRadius === null ? 'null' : formatLineLength(selectedCircleRadius)}`,
+      `circleDiameter: ${selectedCircleDiameter === null ? 'null' : formatLineLength(selectedCircleDiameter)}`,
+      `circleVisualMode: ${circleVisualMode}`,
       `interactionMode: ${interactionMode}`,
       `isPanningCanvas: ${isPanningCanvas ? 'true' : 'false'}`,
       `isDraggingSelection: ${isMovingSelection ? 'true' : 'false'}`,
@@ -3755,6 +3938,10 @@ export const CanvasV4DevScreen = () => {
       selectedShapeType,
       selectedShapeSegmentCount,
       shapeDimensionMode,
+      selectedCircleCenterPoint,
+      selectedCircleRadius,
+      selectedCircleDiameter,
+      circleVisualMode,
       shapePreviewActive,
       lastMoveAction,
       lastDoorAction,
@@ -3910,7 +4097,40 @@ export const CanvasV4DevScreen = () => {
             <View pointerEvents="none" style={[styles.axisLine, { left: worldToScreen({ x: 0, y: 0 }).x, top: 0, height: viewport.height, width: 1 }]} />
             <View pointerEvents="none" style={[styles.axisLine, { top: worldToScreen({ x: 0, y: 0 }).y, left: 0, width: viewport.width, height: 1 }]} />
 
+            {smoothCircleShapeGroups.map((group) => {
+              if (!group.centerPoint || !group.radiusX || !group.radiusY) {
+                return null;
+              }
+
+              const screenCenter = worldToScreen(group.centerPoint);
+              const widthPx = Math.max(group.radiusX * 2 * cameraZoom, CIRCLE_VISUAL_STROKE_WIDTH_PX);
+              const heightPx = Math.max(group.radiusY * 2 * cameraZoom, CIRCLE_VISUAL_STROKE_WIDTH_PX);
+              const isSelected = group.segments.some((entity) => selectedEntityIdSet.has(entity.entityId));
+
+              return (
+                <View
+                  key={`${group.shapeId}-smooth-circle`}
+                  pointerEvents="none"
+                  style={[
+                    styles.circleShapeVisual,
+                    isSelected ? styles.circleShapeVisualSelected : null,
+                    {
+                      left: screenCenter.x - widthPx / 2,
+                      top: screenCenter.y - heightPx / 2,
+                      width: widthPx,
+                      height: heightPx,
+                      borderRadius: Math.max(widthPx, heightPx) / 2,
+                    },
+                  ]}
+                />
+              );
+            })}
+
             {entities.map((entity) => {
+              if (entity.shapeType === 'circle' && dimensionDisplayMode !== 'full') {
+                return null;
+              }
+
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
               const isSelected = selectedEntityIdSet.has(entity.entityId);
 
@@ -4181,10 +4401,12 @@ export const CanvasV4DevScreen = () => {
 
             {projectContours.map((contour) => {
               const screenCentroid = worldToScreen(contour.centroid);
+              const isCircleContour = contour.segmentIds.length > 0 && contour.segmentIds.every((segmentId) => entityBySegmentId.get(segmentId)?.shapeType === 'circle');
+              const shouldRenderContourEdges = !(isCircleContour && dimensionDisplayMode !== 'full');
 
               return (
                 <React.Fragment key={contour.contourId}>
-                  {contour.vertices.map((vertex, index) => {
+                  {shouldRenderContourEdges ? contour.vertices.map((vertex, index) => {
                     const nextVertex = contour.vertices[(index + 1) % contour.vertices.length];
                     const start = worldToScreen(vertex);
                     const end = worldToScreen(nextVertex);
@@ -4196,7 +4418,7 @@ export const CanvasV4DevScreen = () => {
                         style={[styles.projectContourEdge, getScreenLineStyle(start, end)]}
                       />
                     );
-                  })}
+                  }) : null}
                   <View pointerEvents="none" style={[styles.projectContourBadge, { left: screenCentroid.x - 13, top: screenCentroid.y - 13 }]}>
                     <Text style={styles.projectContourBadgeText}>P</Text>
                   </View>
@@ -4240,7 +4462,27 @@ export const CanvasV4DevScreen = () => {
 
             {shapePreview ? (
               <React.Fragment>
-                {shapePreview.segments.map((segment) => {
+                {shapePreview.type === 'circle' ? (() => {
+                  const screenCenter = worldToScreen(shapePreview.startPoint);
+                  const screenRadiusPoint = worldToScreen(shapePreview.endPoint);
+                  const radiusPx = Math.max(Math.hypot(screenRadiusPoint.x - screenCenter.x, screenRadiusPoint.y - screenCenter.y), 1);
+
+                  return (
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.circleShapePreview,
+                        {
+                          left: screenCenter.x - radiusPx,
+                          top: screenCenter.y - radiusPx,
+                          width: radiusPx * 2,
+                          height: radiusPx * 2,
+                          borderRadius: radiusPx,
+                        },
+                      ]}
+                    />
+                  );
+                })() : shapePreview.segments.map((segment) => {
                   const geometry = getLineScreenGeometry(segment.startPoint, segment.endPoint);
 
                   return (
@@ -4664,6 +4906,26 @@ const styles = StyleSheet.create({
   },
   wallSegmentCenterLineSelected: {
     backgroundColor: '#2563EB',
+  },
+  circleShapeVisual: {
+    position: 'absolute',
+    borderWidth: CIRCLE_VISUAL_STROKE_WIDTH_PX,
+    borderColor: '#0F172A',
+    backgroundColor: 'transparent',
+  },
+  circleShapeVisualSelected: {
+    borderColor: '#2563EB',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.28,
+    shadowRadius: 5,
+  },
+  circleShapePreview: {
+    position: 'absolute',
+    borderWidth: CIRCLE_VISUAL_STROKE_WIDTH_PX,
+    borderColor: '#2563EB',
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
+    opacity: 0.66,
   },
   previewWallSegment: {
     position: 'absolute',
