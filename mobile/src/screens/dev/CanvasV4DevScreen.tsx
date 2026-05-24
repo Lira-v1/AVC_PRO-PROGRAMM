@@ -20,6 +20,11 @@ type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
 type SegmentSpatialRole = 'external-like' | 'internal-like' | 'unknown';
 type CanvasV4Mode = 'plan' | 'project';
 type CircleVisualMode = 'smooth' | 'segmented';
+type CanvasEntryStep = 'start' | 'template-categories' | 'apartment-gallery' | 'canvas';
+type TemplateCategory = 'apartment' | 'house' | 'cottage';
+type ApartmentTemplateVariant = 'one-room' | 'two-room' | 'three-room';
+type TemplateVariant = ApartmentTemplateVariant;
+type TemplateAvailability = 'ready' | 'stub';
 
 type CanvasV4WallSegment = {
   entityId: string;
@@ -250,6 +255,16 @@ const CIRCLE_VISUAL_STROKE_WIDTH_PX = 2;
 const MIN_SHAPE_SIZE_MM = GRID_STEP_MM;
 const SHAPE_WALL_SEGMENT_TYPE: WallSegmentType = 'external';
 const RECTANGLE_SHAPE_ROLES: ShapeRole[] = ['top', 'right', 'bottom', 'left'];
+const TEMPLATE_CATEGORY_CARDS: TemplateCategoryCard[] = [
+  { id: 'apartment', title: 'Квартира', subtitle: 'Editable CAD templates', availability: 'ready' },
+  { id: 'house', title: 'Дом', subtitle: 'Заготовка категории', availability: 'stub' },
+  { id: 'cottage', title: 'Коттедж', subtitle: 'Заготовка категории', availability: 'stub' },
+];
+const APARTMENT_TEMPLATE_CARDS: ApartmentTemplateCard[] = [
+  { id: 'one-room', title: '1-комнатная', areaLabel: '30-42 м²', roomsLabel: 'зал/спальня, кухня, санузел, коридор' },
+  { id: 'two-room', title: '2-комнатная', areaLabel: '45-65 м²', roomsLabel: 'зал, спальня, кухня, санузел, коридор' },
+  { id: 'three-room', title: '3-комнатная', areaLabel: '65-90 м²', roomsLabel: 'зал, две спальни, кухня, санузел, прихожая' },
+];
 
 type LineScreenGeometry = {
   length: number;
@@ -382,6 +397,27 @@ type ScreenRect = {
   top: number;
   right: number;
   bottom: number;
+};
+
+type TemplateCategoryCard = {
+  id: TemplateCategory;
+  title: string;
+  subtitle: string;
+  availability: TemplateAvailability;
+};
+
+type ApartmentTemplateCard = {
+  id: ApartmentTemplateVariant;
+  title: string;
+  areaLabel: string;
+  roomsLabel: string;
+};
+
+type TemplateGeneratedGeometry = {
+  entities: CanvasV4LineEntity[];
+  doors: CanvasV4Door[];
+  windows: CanvasV4Window[];
+  selectedEntityIds: string[];
 };
 
 const formatLineLength = (lengthMm: number) => `${(lengthMm / 1000).toFixed(2)} м`;
@@ -1151,6 +1187,156 @@ const withWindowDetachedFromSegment = (entity: CanvasV4LineEntity, windowId: str
   windowIds: entity.windowIds.filter((id) => id !== windowId),
 });
 
+type TemplateWallSpec = {
+  key: string;
+  startPoint: Point;
+  endPoint: Point;
+  segmentType: WallSegmentType;
+  polylineId?: string;
+};
+
+const createTemplatePoint = (x: number, y: number): Point => ({ x, y });
+
+const createTemplateOuterWallSpecs = (width: number, height: number, polylineId: string): TemplateWallSpec[] => {
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
+  const topLeft = createTemplatePoint(-halfWidth, -halfHeight);
+  const topRight = createTemplatePoint(halfWidth, -halfHeight);
+  const bottomRight = createTemplatePoint(halfWidth, halfHeight);
+  const bottomLeft = createTemplatePoint(-halfWidth, halfHeight);
+
+  return [
+    { key: 'outer-top', startPoint: topLeft, endPoint: topRight, segmentType: 'external', polylineId },
+    { key: 'outer-right', startPoint: topRight, endPoint: bottomRight, segmentType: 'external', polylineId },
+    { key: 'outer-bottom', startPoint: bottomRight, endPoint: bottomLeft, segmentType: 'external', polylineId },
+    { key: 'outer-left', startPoint: bottomLeft, endPoint: topLeft, segmentType: 'external', polylineId },
+  ];
+};
+
+const addTemplateDoor = (
+  segmentKey: string,
+  positionOnSegment: number,
+  segmentByKey: Map<string, CanvasV4LineEntity>,
+  updateEntity: (entity: CanvasV4LineEntity) => void,
+  doors: CanvasV4Door[],
+) => {
+  const segment = segmentByKey.get(segmentKey);
+
+  if (!segment) {
+    return;
+  }
+
+  const door = createDoor(segment, positionOnSegment);
+  const attachedSegment = withDoorAttachedToSegment(segment, door.doorId);
+
+  segmentByKey.set(segmentKey, attachedSegment);
+  updateEntity(attachedSegment);
+  doors.push(door);
+};
+
+const addTemplateWindow = (
+  segmentKey: string,
+  positionOnSegment: number,
+  segmentByKey: Map<string, CanvasV4LineEntity>,
+  updateEntity: (entity: CanvasV4LineEntity) => void,
+  windows: CanvasV4Window[],
+) => {
+  const segment = segmentByKey.get(segmentKey);
+
+  if (!segment) {
+    return;
+  }
+
+  const window = createWindow(segment, positionOnSegment);
+  const attachedSegment = withWindowAttachedToSegment(segment, window.windowId);
+
+  segmentByKey.set(segmentKey, attachedSegment);
+  updateEntity(attachedSegment);
+  windows.push(window);
+};
+
+const createOneRoomApartmentTemplateSpecs = (polylineId: string): TemplateWallSpec[] => [
+  ...createTemplateOuterWallSpecs(6800, 5600, polylineId),
+  { key: 'living-service-top', startPoint: createTemplatePoint(-900, -2800), endPoint: createTemplatePoint(-900, 500), segmentType: 'internal' },
+  { key: 'living-service-bottom', startPoint: createTemplatePoint(-900, 500), endPoint: createTemplatePoint(-900, 2800), segmentType: 'internal' },
+  { key: 'service-horizontal', startPoint: createTemplatePoint(-900, 500), endPoint: createTemplatePoint(3400, 500), segmentType: 'internal' },
+  { key: 'bath-corridor', startPoint: createTemplatePoint(1000, 500), endPoint: createTemplatePoint(1000, 2800), segmentType: 'internal' },
+];
+
+const createTwoRoomApartmentTemplateSpecs = (polylineId: string): TemplateWallSpec[] => [
+  ...createTemplateOuterWallSpecs(8600, 6500, polylineId),
+  { key: 'main-vertical-top', startPoint: createTemplatePoint(-900, -3250), endPoint: createTemplatePoint(-900, -800), segmentType: 'internal' },
+  { key: 'main-vertical-mid', startPoint: createTemplatePoint(-900, -800), endPoint: createTemplatePoint(-900, 700), segmentType: 'internal' },
+  { key: 'main-vertical-bottom', startPoint: createTemplatePoint(-900, 700), endPoint: createTemplatePoint(-900, 3250), segmentType: 'internal' },
+  { key: 'living-bedroom', startPoint: createTemplatePoint(-4300, 700), endPoint: createTemplatePoint(-900, 700), segmentType: 'internal' },
+  { key: 'kitchen-service', startPoint: createTemplatePoint(-900, -800), endPoint: createTemplatePoint(4300, -800), segmentType: 'internal' },
+  { key: 'bath-corridor', startPoint: createTemplatePoint(1400, -800), endPoint: createTemplatePoint(1400, 3250), segmentType: 'internal' },
+];
+
+const createThreeRoomApartmentTemplateSpecs = (polylineId: string): TemplateWallSpec[] => [
+  ...createTemplateOuterWallSpecs(10000, 7800, polylineId),
+  { key: 'main-vertical-top', startPoint: createTemplatePoint(-1800, -3900), endPoint: createTemplatePoint(-1800, -1200), segmentType: 'internal' },
+  { key: 'main-vertical-upper-mid', startPoint: createTemplatePoint(-1800, -1200), endPoint: createTemplatePoint(-1800, -1000), segmentType: 'internal' },
+  { key: 'main-vertical-lower-mid', startPoint: createTemplatePoint(-1800, -1000), endPoint: createTemplatePoint(-1800, 1400), segmentType: 'internal' },
+  { key: 'main-vertical-bottom', startPoint: createTemplatePoint(-1800, 1400), endPoint: createTemplatePoint(-1800, 3900), segmentType: 'internal' },
+  { key: 'bedroom-upper', startPoint: createTemplatePoint(-5000, -1200), endPoint: createTemplatePoint(-1800, -1200), segmentType: 'internal' },
+  { key: 'bedroom-lower', startPoint: createTemplatePoint(-5000, 1400), endPoint: createTemplatePoint(-1800, 1400), segmentType: 'internal' },
+  { key: 'kitchen-service', startPoint: createTemplatePoint(-1800, -1000), endPoint: createTemplatePoint(5000, -1000), segmentType: 'internal' },
+  { key: 'bath-hallway', startPoint: createTemplatePoint(1600, -1000), endPoint: createTemplatePoint(1600, 3900), segmentType: 'internal' },
+];
+
+const createApartmentTemplateGeometry = (variant: ApartmentTemplateVariant): TemplateGeneratedGeometry => {
+  const polylineId = `template-apartment-${variant}-${Date.now()}`;
+  const specs = variant === 'one-room'
+    ? createOneRoomApartmentTemplateSpecs(polylineId)
+    : variant === 'two-room'
+      ? createTwoRoomApartmentTemplateSpecs(polylineId)
+      : createThreeRoomApartmentTemplateSpecs(polylineId);
+  let entities = specs.map((spec) => createWallSegment(spec.startPoint, spec.endPoint, spec.segmentType, spec.polylineId));
+  const segmentByKey = new Map(specs.map((spec, index) => [spec.key, entities[index]]));
+  const doors: CanvasV4Door[] = [];
+  const windows: CanvasV4Window[] = [];
+  const updateEntity = (updatedEntity: CanvasV4LineEntity) => {
+    entities = entities.map((entity) => (entity.entityId === updatedEntity.entityId ? updatedEntity : entity));
+  };
+
+  if (variant === 'one-room') {
+    addTemplateDoor('outer-bottom', 2500, segmentByKey, updateEntity, doors);
+    addTemplateDoor('living-service-bottom', 1450, segmentByKey, updateEntity, doors);
+    addTemplateDoor('service-horizontal', 3000, segmentByKey, updateEntity, doors);
+    addTemplateDoor('bath-corridor', 1150, segmentByKey, updateEntity, doors);
+    addTemplateWindow('outer-left', 3200, segmentByKey, updateEntity, windows);
+    addTemplateWindow('outer-top', 5200, segmentByKey, updateEntity, windows);
+  } else if (variant === 'two-room') {
+    addTemplateDoor('outer-bottom', 3300, segmentByKey, updateEntity, doors);
+    addTemplateDoor('main-vertical-mid', 750, segmentByKey, updateEntity, doors);
+    addTemplateDoor('main-vertical-bottom', 1450, segmentByKey, updateEntity, doors);
+    addTemplateDoor('living-bedroom', 1750, segmentByKey, updateEntity, doors);
+    addTemplateDoor('bath-corridor', 2650, segmentByKey, updateEntity, doors);
+    addTemplateWindow('outer-left', 1850, segmentByKey, updateEntity, windows);
+    addTemplateWindow('outer-left', 5000, segmentByKey, updateEntity, windows);
+    addTemplateWindow('outer-top', 6400, segmentByKey, updateEntity, windows);
+  } else {
+    addTemplateDoor('outer-bottom', 4300, segmentByKey, updateEntity, doors);
+    addTemplateDoor('main-vertical-top', 1500, segmentByKey, updateEntity, doors);
+    addTemplateDoor('main-vertical-lower-mid', 1200, segmentByKey, updateEntity, doors);
+    addTemplateDoor('main-vertical-bottom', 1250, segmentByKey, updateEntity, doors);
+    addTemplateDoor('bedroom-upper', 1650, segmentByKey, updateEntity, doors);
+    addTemplateDoor('bath-hallway', 2750, segmentByKey, updateEntity, doors);
+    addTemplateWindow('outer-left', 1550, segmentByKey, updateEntity, windows);
+    addTemplateWindow('outer-left', 3900, segmentByKey, updateEntity, windows);
+    addTemplateWindow('outer-top', 7000, segmentByKey, updateEntity, windows);
+    addTemplateWindow('outer-right', 1700, segmentByKey, updateEntity, windows);
+  }
+
+  return {
+    entities: normalizeWallSegmentConnectivity(entities),
+    doors,
+    windows,
+    selectedEntityIds: [],
+  };
+};
+
 const clampDoorsToSegments = (doors: CanvasV4Door[], entities: CanvasV4LineEntity[]) => {
   const segmentsById = new Map(entities.map((entity) => [entity.segmentId, entity]));
 
@@ -1775,6 +1961,10 @@ export const CanvasV4DevScreen = () => {
   const [showLineDimensions, setShowLineDimensions] = useState(true);
   const [dimensionDisplayMode, setDimensionDisplayMode] = useState<DimensionDisplayMode>('minimal');
   const [isInspectorVisible, setInspectorVisible] = useState(false);
+  const [canvasEntryStep, setCanvasEntryStep] = useState<CanvasEntryStep>('start');
+  const [selectedTemplateCategory, setSelectedTemplateCategory] = useState<TemplateCategory | null>(null);
+  const [selectedTemplateVariant, setSelectedTemplateVariant] = useState<TemplateVariant | null>(null);
+  const [lastTemplateAction, setLastTemplateAction] = useState<string>('null');
   const [currentToolMode, setCurrentToolMode] = useState<ToolMode>('select');
   const [newSegmentType] = useState<WallSegmentType>('internal');
   const [entities, setEntities] = useState<CanvasV4LineEntity[]>([]);
@@ -1869,6 +2059,11 @@ export const CanvasV4DevScreen = () => {
   const circleVisualMode: CircleVisualMode = dimensionDisplayMode === 'full' ? 'segmented' : 'smooth';
 
   const createProjectStub = useCallback(() => {
+    if (entities.length === 0) {
+      setLastActionType('CREATE_PROJECT_SKIPPED_EMPTY_GEOMETRY');
+      return;
+    }
+
     const activatedAt = Date.now();
 
     setProjectState({
@@ -1884,6 +2079,85 @@ export const CanvasV4DevScreen = () => {
     setShapeStartPoint(null);
     setSelectionBox(null);
   }, [doors, entities, windows]);
+
+  const openManualDrawFlow = useCallback(() => {
+    setCanvasEntryStep('canvas');
+    setSelectedTemplateCategory(null);
+    setSelectedTemplateVariant(null);
+    setCurrentCanvasMode('plan');
+    setCurrentToolMode('select');
+    setLineStartPoint(null);
+    setPolylineLastPoint(null);
+    setActivePolylineId(null);
+    setShapeStartPoint(null);
+    setSelectedEntityIds([]);
+    setSelectedDoorId(null);
+    setSelectedWindowId(null);
+    setSelectionBox(null);
+    setLastTemplateAction('OPEN_MANUAL_DRAW');
+    setLastActionType('OPEN_MANUAL_DRAW_FLOW');
+  }, []);
+
+  const openTemplateCategories = useCallback(() => {
+    setCanvasEntryStep('template-categories');
+    setSelectedTemplateCategory(null);
+    setSelectedTemplateVariant(null);
+    setLastTemplateAction('OPEN_TEMPLATE_CATEGORIES');
+  }, []);
+
+  const selectTemplateCategory = useCallback((category: TemplateCategory) => {
+    setSelectedTemplateCategory(category);
+
+    if (category === 'apartment') {
+      setCanvasEntryStep('apartment-gallery');
+      setLastTemplateAction('OPEN_APARTMENT_TEMPLATE_GALLERY');
+      return;
+    }
+
+    setLastTemplateAction(`TEMPLATE_CATEGORY_STUB_${category.toUpperCase()}`);
+  }, []);
+
+  const generateApartmentTemplate = useCallback((variant: ApartmentTemplateVariant) => {
+    const generatedGeometry = createApartmentTemplateGeometry(variant);
+
+    setEntities(generatedGeometry.entities);
+    setDoors(generatedGeometry.doors);
+    setWindows(generatedGeometry.windows);
+    setSelectedEntityIds(generatedGeometry.selectedEntityIds);
+    setSelectedDoorId(null);
+    setSelectedWindowId(null);
+    setWindowWidthInput(String(DEFAULT_WINDOW_WIDTH_MM));
+    setCameraZoom(DEFAULT_ZOOM);
+    setPan({ x: 0, y: 0 });
+    setLineStartPoint(null);
+    setPolylineLastPoint(null);
+    setActivePolylineId(null);
+    setShapeStartPoint(null);
+    setPointerWorldPoint(null);
+    setSelectionBox(null);
+    setInteractionMode('idle');
+    setIsPanningCanvas(false);
+    setIsMovingSelection(false);
+    setTransformMode('idle');
+    setActiveHandleId(null);
+    setIsResizing(false);
+    setResizeAxis('none');
+    setResizeScale({ x: 1, y: 1 });
+    setUndoStack([]);
+    setRedoStack([]);
+    setLastUndoAction('null');
+    setLastRedoAction('null');
+    setProjectState(null);
+    setCurrentCanvasMode('plan');
+    setCurrentToolMode('select');
+    setShowLineDimensions(true);
+    setDimensionDisplayMode('minimal');
+    setSelectedTemplateCategory('apartment');
+    setSelectedTemplateVariant(variant);
+    setCanvasEntryStep('canvas');
+    setLastTemplateAction(`GENERATE_APARTMENT_TEMPLATE_${variant.toUpperCase()}`);
+    setLastActionType(`GENERATE_APARTMENT_TEMPLATE_${variant.toUpperCase()}`);
+  }, []);
 
   const activeSnap = useMemo<SnapResult>(() => {
     if (!pointerWorldPoint) {
@@ -3914,6 +4188,10 @@ export const CanvasV4DevScreen = () => {
 
   const inspectorLines = useMemo(
     () => [
+      `canvasEntryStep: ${canvasEntryStep}`,
+      `selectedTemplateCategory: ${selectedTemplateCategory ?? 'null'}`,
+      `selectedTemplateVariant: ${selectedTemplateVariant ?? 'null'}`,
+      `lastTemplateAction: ${lastTemplateAction}`,
       `currentCanvasMode: ${currentCanvasMode}`,
       `projectCreated: ${projectCreated ? 'true' : 'false'}`,
       `projectId: ${projectState?.projectId ?? 'null'}`,
@@ -4045,6 +4323,7 @@ export const CanvasV4DevScreen = () => {
       activeSnap.angleHelperActive,
       activeSnap.gridSnappedEndPoint,
       cameraZoom,
+      canvasEntryStep,
       currentCanvasMode,
       currentToolMode,
       dimensionCollisionAvoidance,
@@ -4114,6 +4393,9 @@ export const CanvasV4DevScreen = () => {
       transformMode,
       undoStack.length,
       isResizing,
+      lastTemplateAction,
+      selectedTemplateCategory,
+      selectedTemplateVariant,
     ],
   );
 
@@ -4144,12 +4426,146 @@ export const CanvasV4DevScreen = () => {
     ? getNormalizedRect(worldToScreen({ x: selectedBoundingBox.minX, y: selectedBoundingBox.minY }), worldToScreen({ x: selectedBoundingBox.maxX, y: selectedBoundingBox.maxY }))
     : null;
   const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
+  const canvasHeaderTitle = canvasEntryStep === 'canvas'
+    ? `Canvas V4 — ${currentCanvasMode === 'plan' ? 'PLAN MODE' : 'PROJECT MODE'}`
+    : 'Canvas V4 — старт';
+
+  const renderApartmentTemplatePreview = (variant: ApartmentTemplateVariant) => {
+    const extraLines = variant === 'one-room'
+      ? [
+          { id: 'v1', style: { left: '43%', top: '16%', width: 1, height: '68%' } },
+          { id: 'h1', style: { left: '43%', top: '52%', width: '38%', height: 1 } },
+          { id: 'v2', style: { left: '60%', top: '52%', width: 1, height: '32%' } },
+        ] as const
+      : variant === 'two-room'
+        ? [
+            { id: 'v1', style: { left: '41%', top: '14%', width: 1, height: '72%' } },
+            { id: 'h1', style: { left: '16%', top: '48%', width: '25%', height: 1 } },
+            { id: 'h2', style: { left: '41%', top: '38%', width: '43%', height: 1 } },
+            { id: 'v2', style: { left: '60%', top: '38%', width: 1, height: '48%' } },
+          ] as const
+        : [
+            { id: 'v1', style: { left: '36%', top: '14%', width: 1, height: '72%' } },
+            { id: 'h1', style: { left: '16%', top: '34%', width: '20%', height: 1 } },
+            { id: 'h2', style: { left: '16%', top: '58%', width: '20%', height: 1 } },
+            { id: 'h3', style: { left: '36%', top: '40%', width: '48%', height: 1 } },
+            { id: 'v2', style: { left: '58%', top: '40%', width: 1, height: '46%' } },
+          ] as const;
+
+    return (
+      <View style={styles.templatePreviewCanvas} pointerEvents="none">
+        <View style={[styles.templatePreviewLine, styles.templatePreviewLineTop]} />
+        <View style={[styles.templatePreviewLine, styles.templatePreviewLineRight]} />
+        <View style={[styles.templatePreviewLine, styles.templatePreviewLineBottom]} />
+        <View style={[styles.templatePreviewLine, styles.templatePreviewLineLeft]} />
+        {extraLines.map((line) => (
+          <View key={line.id} style={[styles.templatePreviewLine, line.style]} />
+        ))}
+        <View style={styles.templatePreviewDoor} />
+        <View style={styles.templatePreviewWindow} />
+      </View>
+    );
+  };
+
+  const renderEntryFlow = () => {
+    if (canvasEntryStep === 'template-categories') {
+      return (
+        <View style={styles.entryShell}>
+          <View style={styles.entryTopBar}>
+            <Pressable style={styles.entryBackButton} onPress={() => setCanvasEntryStep('start')}>
+              <Text style={styles.entryBackButtonText}>Назад</Text>
+            </Pressable>
+          </View>
+          <View style={styles.entryHeader}>
+            <Text style={styles.entryKicker}>Template Flow</Text>
+            <Text style={styles.entryTitle}>Выберите тип объекта</Text>
+            <Text style={styles.entrySubtitle}>Шаблон создаст обычные WallSegments, двери и окна. После генерации чертёж откроется в PLAN MODE.</Text>
+          </View>
+          <View style={styles.templateCategoryGrid}>
+            {TEMPLATE_CATEGORY_CARDS.map((category) => {
+              const isStub = category.availability === 'stub';
+              const isSelectedStub = selectedTemplateCategory === category.id && isStub;
+
+              return (
+                <Pressable
+                  key={category.id}
+                  style={[styles.templateCategoryCard, isStub ? styles.templateCategoryCardStub : null, isSelectedStub ? styles.templateCategoryCardSelected : null]}
+                  onPress={() => selectTemplateCategory(category.id)}
+                >
+                  <Text style={styles.templateCardTitle}>{category.title}</Text>
+                  <Text style={styles.templateCardSubtitle}>{category.subtitle}</Text>
+                  <Text style={[styles.templateCardStatus, isStub ? styles.templateCardStatusStub : null]}>{isStub ? 'Скоро' : 'Доступно'}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {selectedTemplateCategory && selectedTemplateCategory !== 'apartment' ? (
+            <View style={styles.templateStubNotice}>
+              <Text style={styles.templateStubNoticeTitle}>Категория в подготовке</Text>
+              <Text style={styles.templateStubNoticeText}>На этом этапе генерация включена только для квартир. Дом и коттедж оставлены как foundation-заготовки.</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+
+    if (canvasEntryStep === 'apartment-gallery') {
+      return (
+        <View style={styles.entryShell}>
+          <View style={styles.entryTopBar}>
+            <Pressable style={styles.entryBackButton} onPress={() => setCanvasEntryStep('template-categories')}>
+              <Text style={styles.entryBackButtonText}>Назад</Text>
+            </Pressable>
+          </View>
+          <View style={styles.entryHeader}>
+            <Text style={styles.entryKicker}>Квартира</Text>
+            <Text style={styles.entryTitle}>Выберите базовый план</Text>
+            <Text style={styles.entrySubtitle}>Каждый вариант генерирует редактируемую CAD-геометрию: наружный контур, перегородки, двери, окна и размеры.</Text>
+          </View>
+          <View style={styles.apartmentGalleryGrid}>
+            {APARTMENT_TEMPLATE_CARDS.map((template) => (
+              <Pressable key={template.id} style={styles.apartmentTemplateCard} onPress={() => generateApartmentTemplate(template.id)}>
+                {renderApartmentTemplatePreview(template.id)}
+                <View style={styles.apartmentTemplateInfo}>
+                  <Text style={styles.templateCardTitle}>{template.title}</Text>
+                  <Text style={styles.templateAreaLabel}>{template.areaLabel}</Text>
+                  <Text style={styles.templateCardSubtitle}>{template.roomsLabel}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.entryShell}>
+        <View style={styles.entryHeader}>
+          <Text style={styles.entryKicker}>Canvas V4 CAD-lite</Text>
+          <Text style={styles.entryTitle}>С чего начать чертёж?</Text>
+          <Text style={styles.entrySubtitle}>Можно взять редактируемый шаблон квартиры или открыть чистый CAD-план и нарисовать вручную.</Text>
+        </View>
+        <View style={styles.entryActionGrid}>
+          <Pressable style={[styles.entryActionCard, styles.entryActionCardPrimary]} onPress={openTemplateCategories}>
+            <Text style={styles.entryActionTitle}>Создать по шаблону</Text>
+            <Text style={styles.entryActionText}>Галерея квартир с автоматической WallSegment-геометрией, дверями, окнами и размерами.</Text>
+          </Pressable>
+          <Pressable style={styles.entryActionCard} onPress={openManualDrawFlow}>
+            <Text style={styles.entryActionTitle}>Нарисовать вручную</Text>
+            <Text style={styles.entryActionText}>Открыть текущий PLAN MODE с линиями, polyline, rectangle, circle, doors/windows и snapping.</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.root}>
-      <AppHeader title={`Canvas V4 — ${currentCanvasMode === 'plan' ? 'PLAN MODE' : 'PROJECT MODE'}`} />
+      <AppHeader title={canvasHeaderTitle} />
 
       <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageContent}>
+        {canvasEntryStep === 'canvas' ? (
+          <>
         <View style={styles.systemBar}>
           <Pressable style={styles.controlButton} onPress={() => applyZoom(ZOOM_IN_FACTOR)} accessibilityLabel="Zoom In">
             <Text style={styles.controlButtonText}>+</Text>
@@ -4165,7 +4581,7 @@ export const CanvasV4DevScreen = () => {
             <Text style={styles.controlButtonText}>Сетка</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : null]} onPress={() => setShowLineDimensions((current) => !current)}>
-            <Text style={styles.controlButtonText}>Размеры</Text>
+            <Text style={styles.controlButtonText}>{showLineDimensions ? 'Скрыть размеры' : 'Показать размеры'}</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : styles.toolButtonDisabled]} onPress={cycleDimensionDisplayMode} disabled={!showLineDimensions}>
             <Text style={[styles.controlButtonText, showLineDimensions ? null : styles.toolButtonDisabledText]}>{dimensionDisplayModeLabel}</Text>
@@ -4199,10 +4615,17 @@ export const CanvasV4DevScreen = () => {
               </Pressable>
             ))}
             {!projectCreated ? (
-              <Pressable style={[styles.projectRailButton, styles.projectRailCreateButton]} onPress={createProjectStub} accessibilityLabel="Создать проект">
-                <Text style={styles.projectRailIcon}>＋</Text>
-                <Text style={styles.projectRailText}>Создать проект</Text>
-              </Pressable>
+              entities.length > 0 ? (
+                <Pressable style={[styles.projectRailButton, styles.projectRailCreateButton]} onPress={createProjectStub} accessibilityLabel="Создать проект">
+                  <Text style={styles.projectRailIcon}>＋</Text>
+                  <Text style={styles.projectRailText}>Создать проект</Text>
+                </Pressable>
+              ) : (
+                <View style={[styles.projectRailButton, styles.projectRailCreateButtonDisabled]} pointerEvents="none">
+                  <Text style={[styles.projectRailIcon, styles.projectRailCreateButtonDisabledIcon]}>＋</Text>
+                  <Text style={[styles.projectRailText, styles.projectRailCreateButtonDisabledText]}>Чертёж отсутствует</Text>
+                </View>
+              )
             ) : null}
           </View>
 
@@ -4780,6 +5203,10 @@ export const CanvasV4DevScreen = () => {
           <Text style={styles.metaTitle}>Canvas V4 CAD-lite: стены</Text>
           <Text style={styles.metaText}>Чистая dev-сцена с базовыми WallSegment, endpoint connectivity и будущими door/window attachment ids — без Room Engine, Surface Scene, split, wall graph и SmetMaster logic. ЛКМ/тап — действие инструмента, перетаскивание — панорамирование, колесо/кнопки — зум.</Text>
         </View>
+          </>
+        ) : (
+          renderEntryFlow()
+        )}
       </ScrollView>
     </View>
   );
@@ -4796,6 +5223,233 @@ const styles = StyleSheet.create({
   pageContent: {
     padding: 16,
     gap: 12,
+  },
+  entryShell: {
+    minHeight: 520,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D7DEE8',
+    backgroundColor: '#F8FAFC',
+    padding: 18,
+    gap: 18,
+  },
+  entryTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  entryBackButton: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+  },
+  entryBackButtonText: {
+    color: '#1F2937',
+    fontWeight: '800',
+  },
+  entryHeader: {
+    maxWidth: 720,
+    gap: 8,
+  },
+  entryKicker: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  entryTitle: {
+    color: '#0F172A',
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  entrySubtitle: {
+    color: '#475569',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '600',
+  },
+  entryActionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  entryActionCard: {
+    flexGrow: 1,
+    flexBasis: 280,
+    minHeight: 154,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    padding: 18,
+    justifyContent: 'space-between',
+  },
+  entryActionCardPrimary: {
+    borderColor: '#334155',
+    backgroundColor: '#F1F5F9',
+  },
+  entryActionTitle: {
+    color: '#0F172A',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  entryActionText: {
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  templateCategoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  templateCategoryCard: {
+    flexGrow: 1,
+    flexBasis: 210,
+    minHeight: 132,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    gap: 8,
+  },
+  templateCategoryCardStub: {
+    backgroundColor: '#F8FAFC',
+  },
+  templateCategoryCardSelected: {
+    borderColor: '#64748B',
+    backgroundColor: '#E2E8F0',
+  },
+  templateCardTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  templateCardSubtitle: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  templateCardStatus: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  templateCardStatusStub: {
+    backgroundColor: '#E2E8F0',
+    color: '#475569',
+  },
+  templateStubNotice: {
+    maxWidth: 640,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    gap: 4,
+  },
+  templateStubNoticeTitle: {
+    color: '#0F172A',
+    fontWeight: '900',
+  },
+  templateStubNoticeText: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+  },
+  apartmentGalleryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  apartmentTemplateCard: {
+    flexGrow: 1,
+    flexBasis: 250,
+    minHeight: 260,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    gap: 12,
+  },
+  apartmentTemplateInfo: {
+    gap: 6,
+  },
+  templateAreaLabel: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  templatePreviewCanvas: {
+    height: 124,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  templatePreviewLine: {
+    position: 'absolute',
+    backgroundColor: '#111827',
+  },
+  templatePreviewLineTop: {
+    left: '16%',
+    top: '14%',
+    width: '68%',
+    height: 2,
+  },
+  templatePreviewLineRight: {
+    left: '84%',
+    top: '14%',
+    width: 2,
+    height: '72%',
+  },
+  templatePreviewLineBottom: {
+    left: '16%',
+    top: '86%',
+    width: '68%',
+    height: 2,
+  },
+  templatePreviewLineLeft: {
+    left: '16%',
+    top: '14%',
+    width: 2,
+    height: '72%',
+  },
+  templatePreviewDoor: {
+    position: 'absolute',
+    left: '50%',
+    top: '84%',
+    width: '12%',
+    height: 4,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+  },
+  templatePreviewWindow: {
+    position: 'absolute',
+    left: '60%',
+    top: '12%',
+    width: '16%',
+    height: 5,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#F8FAFC',
   },
   systemBar: {
     flexDirection: 'row',
@@ -4949,6 +5603,19 @@ const styles = StyleSheet.create({
   projectRailCreateButton: {
     borderColor: '#A7F3D0',
     backgroundColor: '#ECFDF5',
+  },
+  projectRailCreateButtonDisabled: {
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F1F5F9',
+  },
+  projectRailCreateButtonDisabledIcon: {
+    color: '#94A3B8',
+  },
+  projectRailCreateButtonDisabledText: {
+    color: '#94A3B8',
+    fontSize: 8,
+    lineHeight: 10,
+    textAlign: 'center',
   },
   projectRailIcon: {
     color: '#0F172A',
