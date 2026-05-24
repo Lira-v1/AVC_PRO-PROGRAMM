@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { ImageSourcePropType } from 'react-native';
 import { CompactCardGrid } from '../components/CompactCardGrid';
 import { AppHeader } from '../components/AppHeader';
 import { LocationPicker } from '../components/LocationPicker';
@@ -9,6 +10,7 @@ import { useAppStore } from '../store/AppStore';
 export type HomeCategory = {
   id: string;
   title: string;
+  image?: ImageSourcePropType;
   route:
     | 'Services'
     | 'Emergency'
@@ -25,6 +27,17 @@ type HomeScreenProps = {
   onCategoryPress: (category: HomeCategory) => void;
 };
 
+const homeCardImages: Record<string, ImageSourcePropType> = {
+  services: require('../../assets/home-cards/call-master.png'),
+  emergency: require('../../assets/home-cards/emergency-master.png'),
+  estimate: require('../../assets/home-cards/smetmaster.png'),
+  'industrial-engineering': require('../../assets/home-cards/industrial-engineering.png'),
+  maintenance: require('../../assets/home-cards/maintenance.png'),
+  vacancies: require('../../assets/home-cards/vacancies.png'),
+  orders: require('../../assets/home-cards/orders.png'),
+  shop: require('../../assets/home-cards/shop.png'),
+};
+
 export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) => {
   const { userLocation, setUserLocation } = useAppStore();
   const categories = useMemo<HomeCategory[]>(
@@ -39,6 +52,15 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
       { id: 'shop', title: 'Магазин', route: 'Shop' },
     ],
     []
+  );
+
+  const categoriesWithImages = useMemo<HomeCategory[]>(
+    () =>
+      categories.map((category) => ({
+        ...category,
+        image: homeCardImages[category.id],
+      })),
+    [categories]
   );
 
   const quickAccessItems = useMemo<QuickAccessItem[]>(
@@ -81,7 +103,7 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
           <Text style={styles.searchPlaceholder}>Найти услугу или мастера</Text>
         </View>
 
-        <CompactCardGrid items={categories} onItemPress={onCategoryPress} />
+        <CompactCardGrid items={categoriesWithImages} onItemPress={onCategoryPress} />
 
         <QuickAccessRibbon
           items={quickAccessItems}
