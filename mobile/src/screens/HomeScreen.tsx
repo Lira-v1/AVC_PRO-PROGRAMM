@@ -28,14 +28,14 @@ type HomeScreenProps = {
 };
 
 const homeCardImages: Record<string, ImageSourcePropType> = {
-  services: require('../../assets/home-cards/call-master.png'),
-  emergency: require('../../assets/home-cards/emergency-master.png'),
-  estimate: require('../../assets/home-cards/smetmaster.png'),
-  'industrial-engineering': require('../../assets/home-cards/industrial-engineering.png'),
-  maintenance: require('../../assets/home-cards/maintenance.png'),
-  vacancies: require('../../assets/home-cards/vacancies.png'),
-  orders: require('../../assets/home-cards/orders.png'),
-  shop: require('../../assets/home-cards/shop.png'),
+  services: require('../../assets/home-cards/call-master-card.png'),
+  emergency: require('../../assets/home-cards/emergency-master-card.png'),
+  estimate: require('../../assets/home-cards/smetmaster-card.png'),
+  'industrial-engineering': require('../../assets/home-cards/industrial-engineering-card.png'),
+  maintenance: require('../../assets/home-cards/maintenance-card.png'),
+  vacancies: require('../../assets/home-cards/vacancies-card.png'),
+  orders: require('../../assets/home-cards/orders-card.png'),
+  shop: require('../../assets/home-cards/shop-card.png'),
 };
 
 export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) => {
