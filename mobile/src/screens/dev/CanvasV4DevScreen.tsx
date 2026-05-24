@@ -25,6 +25,9 @@ type TemplateCategory = 'apartment' | 'house' | 'cottage';
 type ApartmentTemplateVariant = 'one-room' | 'two-room' | 'three-room';
 type TemplateVariant = ApartmentTemplateVariant;
 type TemplateAvailability = 'ready' | 'stub';
+type ProjectValidationState = 'idle' | 'empty' | 'invalid' | 'valid';
+type RoomDetectionState = 'idle' | 'blocked' | 'detected';
+type RoomStatus = 'detected';
 
 type CanvasV4WallSegment = {
   entityId: string;
@@ -78,17 +81,55 @@ type CanvasV4Window = {
   createdAt: number;
 };
 
+type CanvasV4RoomCandidate = {
+  candidateId: string;
+  candidateContour: Point[];
+  candidateArea: number;
+  candidateSegments: string[];
+  candidateCenter: Point;
+  candidateBounds: BoundingBox;
+};
+
+type CanvasV4RoomEntity = {
+  roomId: string;
+  roomContour: Point[];
+  roomSegments: string[];
+  roomArea: number;
+  roomCenter: Point;
+  roomBounds: BoundingBox;
+  roomLabel: string;
+  roomStatus: RoomStatus;
+};
+
+type CanvasV4ProjectValidationResult = {
+  projectValidationState: ProjectValidationState;
+  roomDetectionState: RoomDetectionState;
+  closedContours: ProjectContourInfo[];
+  openContourSegmentIds: string[];
+  orphanSegmentIds: string[];
+  roomCandidates: CanvasV4RoomCandidate[];
+  rooms: CanvasV4RoomEntity[];
+  lastValidationError: string | null;
+};
+
 type CanvasV4ProjectGeometrySnapshot = {
   frozenAt: number;
   entities: CanvasV4LineEntity[];
   doors: CanvasV4Door[];
   windows: CanvasV4Window[];
+  roomCandidates: CanvasV4RoomCandidate[];
+  rooms: CanvasV4RoomEntity[];
+  validationState: ProjectValidationState;
 };
 
 type CanvasV4ProjectState = {
   projectId: string;
   createdAt: number;
   geometrySnapshot: CanvasV4ProjectGeometrySnapshot;
+  roomCandidates: CanvasV4RoomCandidate[];
+  rooms: CanvasV4RoomEntity[];
+  validationState: ProjectValidationState;
+  validationError: string | null;
 };
 
 type HistoryAction =
@@ -129,7 +170,7 @@ type EndpointSnapTarget = {
 };
 
 type InteractionMode = 'idle' | 'pan' | 'selection-box' | 'move-selection' | 'resize-line' | 'resize-selection' | 'move-door' | 'move-window';
-type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'door-geometry' | 'window-geometry' | 'empty-canvas';
+type HitTestTargetType = 'resize-handle' | 'selected-geometry' | 'wall-geometry' | 'door-geometry' | 'window-geometry' | 'room-overlay' | 'empty-canvas';
 type SelectionMode = 'single' | 'box' | 'move';
 type LastInteractionType =
   | 'init'
@@ -246,6 +287,9 @@ const DEFAULT_WINDOW_WIDTH_MM = 1200;
 const DEFAULT_WINDOW_HEIGHT_MM = 1400;
 const DEFAULT_WINDOW_BOTTOM_OFFSET_MM = 900;
 const MIN_WINDOW_WIDTH_MM = 100;
+const MIN_ROOM_AREA_MM2 = 500000;
+const PROJECT_EMPTY_CANVAS_MESSAGE = 'Чертёж отсутствует';
+const PROJECT_NO_ROOM_MESSAGE = 'Не найдено помещение. Замкните контур.';
 const DOOR_HIT_TOLERANCE_PX = 16;
 const WINDOW_HIT_TOLERANCE_PX = 14;
 const DOOR_SWING_ARC_VISUAL_SCALE = 0.68;
@@ -1458,7 +1502,34 @@ const getClosedPolylineInfoForEntity = (entity: CanvasV4LineEntity, entities: Ca
   };
 };
 
-const cloneCanvasV4ProjectGeometrySnapshot = (entities: CanvasV4LineEntity[], doors: CanvasV4Door[], windows: CanvasV4Window[]): CanvasV4ProjectGeometrySnapshot => ({
+const clonePoint = (point: Point): Point => ({ ...point });
+
+const cloneBoundingBox = (box: BoundingBox): BoundingBox => ({ ...box });
+
+const cloneRoomCandidate = (candidate: CanvasV4RoomCandidate): CanvasV4RoomCandidate => ({
+  ...candidate,
+  candidateContour: candidate.candidateContour.map(clonePoint),
+  candidateSegments: [...candidate.candidateSegments],
+  candidateCenter: clonePoint(candidate.candidateCenter),
+  candidateBounds: cloneBoundingBox(candidate.candidateBounds),
+});
+
+const cloneRoomEntity = (room: CanvasV4RoomEntity): CanvasV4RoomEntity => ({
+  ...room,
+  roomContour: room.roomContour.map(clonePoint),
+  roomSegments: [...room.roomSegments],
+  roomCenter: clonePoint(room.roomCenter),
+  roomBounds: cloneBoundingBox(room.roomBounds),
+});
+
+const cloneCanvasV4ProjectGeometrySnapshot = (
+  entities: CanvasV4LineEntity[],
+  doors: CanvasV4Door[],
+  windows: CanvasV4Window[],
+  roomCandidates: CanvasV4RoomCandidate[] = [],
+  rooms: CanvasV4RoomEntity[] = [],
+  validationState: ProjectValidationState = 'idle',
+): CanvasV4ProjectGeometrySnapshot => ({
   frozenAt: Date.now(),
   entities: entities.map((entity) => ({
     ...entity,
@@ -1473,26 +1544,329 @@ const cloneCanvasV4ProjectGeometrySnapshot = (entities: CanvasV4LineEntity[], do
   })),
   doors: doors.map((door) => ({ ...door })),
   windows: windows.map((window) => ({ ...window })),
+  roomCandidates: roomCandidates.map(cloneRoomCandidate),
+  rooms: rooms.map(cloneRoomEntity),
+  validationState,
 });
+
+const getContourSignature = (segmentIds: string[]) => [...segmentIds].sort().join('|');
+
+const createProjectContourInfo = (contourId: string, vertices: Point[], segmentIds: string[], polylineId: string): ProjectContourInfo | null => {
+  const signedArea = getPolygonSignedArea(vertices);
+  const centroid = getPolygonCentroid(vertices);
+
+  if (!centroid || Math.abs(signedArea) <= MIN_ROOM_AREA_MM2) {
+    return null;
+  }
+
+  return {
+    polylineId,
+    vertices,
+    signedArea,
+    orientation: signedArea > 0 ? 'clockwise' : 'counter-clockwise',
+    centroid,
+    contourId,
+    segmentIds,
+  };
+};
+
+const recognizeClosedGraphContours = (entities: CanvasV4LineEntity[]): ProjectContourInfo[] => {
+  const nodePointByKey = new Map<string, Point>();
+  const nodeNeighbors = new Map<string, Set<string>>();
+  const edgeSegmentIds = new Map<string, string>();
+
+  const addNode = (point: Point) => {
+    const key = getConnectionNodeId(point);
+    if (!nodePointByKey.has(key)) {
+      nodePointByKey.set(key, point);
+    }
+    if (!nodeNeighbors.has(key)) {
+      nodeNeighbors.set(key, new Set());
+    }
+    return key;
+  };
+
+  entities.forEach((entity) => {
+    const startKey = addNode(entity.startPoint);
+    const endKey = addNode(entity.endPoint);
+    const edgeKey = [startKey, endKey].sort().join('|');
+    nodeNeighbors.get(startKey)?.add(endKey);
+    nodeNeighbors.get(endKey)?.add(startKey);
+    edgeSegmentIds.set(edgeKey, entity.segmentId);
+  });
+
+  const contours: ProjectContourInfo[] = [];
+  const seenCycleSignatures = new Set<string>();
+  const nodeKeys = Array.from(nodeNeighbors.keys()).sort();
+  const nodeOrder = new Map(nodeKeys.map((nodeKey, index) => [nodeKey, index]));
+
+  const createContourFromNodePath = (nodePath: string[]) => {
+    const segmentIds: string[] = [];
+
+    nodePath.forEach((nodeKey, index) => {
+      const nextNodeKey = nodePath[(index + 1) % nodePath.length];
+      const segmentId = edgeSegmentIds.get([nodeKey, nextNodeKey].sort().join('|'));
+
+      if (segmentId) {
+        segmentIds.push(segmentId);
+      }
+    });
+
+    if (segmentIds.length !== nodePath.length) {
+      return;
+    }
+
+    const signature = getContourSignature(segmentIds);
+
+    if (seenCycleSignatures.has(signature)) {
+      return;
+    }
+
+    const vertices = nodePath.map((nodeKey) => nodePointByKey.get(nodeKey)).filter((point): point is Point => Boolean(point));
+
+    if (vertices.length !== nodePath.length) {
+      return;
+    }
+
+    const contour = createProjectContourInfo(
+      `project-contour-graph-${contours.length + 1}`,
+      vertices,
+      segmentIds,
+      `graph-loop-${contours.length + 1}`,
+    );
+
+    if (contour) {
+      seenCycleSignatures.add(signature);
+      contours.push(contour);
+    }
+  };
+
+  const walkCycles = (startKey: string, currentKey: string, path: string[]) => {
+    if (path.length > entities.length || contours.length > 128) {
+      return;
+    }
+
+    const neighbors = Array.from(nodeNeighbors.get(currentKey) ?? []).sort();
+
+    neighbors.forEach((neighborKey) => {
+      const neighborOrder = nodeOrder.get(neighborKey) ?? 0;
+      const startOrder = nodeOrder.get(startKey) ?? 0;
+
+      if (neighborKey === startKey && path.length >= 3) {
+        createContourFromNodePath(path);
+        return;
+      }
+
+      if (path.includes(neighborKey) || neighborOrder < startOrder) {
+        return;
+      }
+
+      walkCycles(startKey, neighborKey, [...path, neighborKey]);
+    });
+  };
+
+  nodeKeys.forEach((startKey) => walkCycles(startKey, startKey, [startKey]));
+
+  return contours;
+};
 
 const recognizeProjectContours = (entities: CanvasV4LineEntity[]): ProjectContourInfo[] => {
   const polylineIds = Array.from(new Set(entities.map((entity) => entity.polylineId).filter((polylineId): polylineId is string => Boolean(polylineId))));
+  const seenContourSignatures = new Set<string>();
+  const contours: ProjectContourInfo[] = [];
 
-  return polylineIds.flatMap((polylineId) => {
+  polylineIds.forEach((polylineId) => {
     const contourSegments = entities.filter((entity) => entity.polylineId === polylineId);
     const sourceContour = contourSegments[0] ? getClosedPolylineInfoForEntity(contourSegments[0], entities) : null;
 
     if (!sourceContour) {
-      return [];
+      return;
     }
 
-    return [{
+    const contour = {
       ...sourceContour,
       contourId: `project-contour-${polylineId}`,
       segmentIds: contourSegments.map((segment) => segment.segmentId),
-    }];
+    };
+    const signature = getContourSignature(contour.segmentIds);
+    seenContourSignatures.add(signature);
+    contours.push(contour);
   });
+
+  recognizeClosedGraphContours(entities).forEach((contour) => {
+    const signature = getContourSignature(contour.segmentIds);
+
+    if (!seenContourSignatures.has(signature)) {
+      seenContourSignatures.add(signature);
+      contours.push(contour);
+    }
+  });
+
+  return contours;
 };
+
+const getContourSegmentIdSet = (contours: ProjectContourInfo[]) => {
+  const segmentIds = new Set<string>();
+  contours.forEach((contour) => contour.segmentIds.forEach((segmentId) => segmentIds.add(segmentId)));
+  return segmentIds;
+};
+
+const getEndpointUsageCount = (entities: CanvasV4LineEntity[]) => {
+  const endpointUsage = new Map<string, number>();
+
+  entities.forEach((entity) => {
+    [entity.startPoint, entity.endPoint].forEach((point) => {
+      const key = getConnectionNodeId(point);
+      endpointUsage.set(key, (endpointUsage.get(key) ?? 0) + 1);
+    });
+  });
+
+  return endpointUsage;
+};
+
+const getCanvasV4GeometryWarnings = (entities: CanvasV4LineEntity[], closedContours: ProjectContourInfo[]) => {
+  const closedSegmentIds = getContourSegmentIdSet(closedContours);
+  const endpointUsage = getEndpointUsageCount(entities);
+  const orphanSegmentIds: string[] = [];
+  const openContourSegmentIds: string[] = [];
+
+  entities.forEach((entity) => {
+    if (closedSegmentIds.has(entity.segmentId)) {
+      return;
+    }
+
+    const startUsage = endpointUsage.get(getConnectionNodeId(entity.startPoint)) ?? 0;
+    const endUsage = endpointUsage.get(getConnectionNodeId(entity.endPoint)) ?? 0;
+
+    if (startUsage <= 1 && endUsage <= 1) {
+      orphanSegmentIds.push(entity.segmentId);
+      return;
+    }
+
+    openContourSegmentIds.push(entity.segmentId);
+  });
+
+  return {
+    orphanSegmentIds,
+    openContourSegmentIds,
+  };
+};
+
+const getBoundingBoxForPoints = (points: Point[]): BoundingBox | null => {
+  if (points.length === 0) {
+    return null;
+  }
+
+  return points.reduce<BoundingBox>(
+    (box, point) => ({
+      minX: Math.min(box.minX, point.x),
+      maxX: Math.max(box.maxX, point.x),
+      minY: Math.min(box.minY, point.y),
+      maxY: Math.max(box.maxY, point.y),
+    }),
+    { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY },
+  );
+};
+
+const createRoomCandidatesFromContours = (closedContours: ProjectContourInfo[]): CanvasV4RoomCandidate[] =>
+  closedContours
+    .map((contour, index) => {
+      const bounds = getBoundingBoxForPoints(contour.vertices);
+
+      if (!bounds) {
+        return null;
+      }
+
+      return {
+        candidateId: `room-candidate-${index + 1}-${contour.contourId}`,
+        candidateContour: contour.vertices.map(clonePoint),
+        candidateArea: Math.abs(contour.signedArea),
+        candidateSegments: [...contour.segmentIds],
+        candidateCenter: clonePoint(contour.centroid),
+        candidateBounds: bounds,
+      };
+    })
+    .filter((candidate): candidate is CanvasV4RoomCandidate => Boolean(candidate));
+
+const createRoomsFromCandidates = (roomCandidates: CanvasV4RoomCandidate[]): CanvasV4RoomEntity[] =>
+  roomCandidates.map((candidate, index) => ({
+    roomId: `room-${index + 1}-${candidate.candidateId}`,
+    roomContour: candidate.candidateContour.map(clonePoint),
+    roomSegments: [...candidate.candidateSegments],
+    roomArea: candidate.candidateArea,
+    roomCenter: clonePoint(candidate.candidateCenter),
+    roomBounds: cloneBoundingBox(candidate.candidateBounds),
+    roomLabel: `Помещение ${index + 1}`,
+    roomStatus: 'detected',
+  }));
+
+const detectCanvasV4ProjectInterpretation = (entities: CanvasV4LineEntity[]): CanvasV4ProjectValidationResult => {
+  if (entities.length === 0) {
+    return {
+      projectValidationState: 'empty',
+      roomDetectionState: 'blocked',
+      closedContours: [],
+      openContourSegmentIds: [],
+      orphanSegmentIds: [],
+      roomCandidates: [],
+      rooms: [],
+      lastValidationError: PROJECT_EMPTY_CANVAS_MESSAGE,
+    };
+  }
+
+  const closedContours = recognizeProjectContours(entities);
+  const warnings = getCanvasV4GeometryWarnings(entities, closedContours);
+
+  if (closedContours.length === 0) {
+    return {
+      projectValidationState: 'invalid',
+      roomDetectionState: 'blocked',
+      closedContours,
+      openContourSegmentIds: warnings.openContourSegmentIds,
+      orphanSegmentIds: warnings.orphanSegmentIds,
+      roomCandidates: [],
+      rooms: [],
+      lastValidationError: PROJECT_NO_ROOM_MESSAGE,
+    };
+  }
+
+  const roomCandidates = createRoomCandidatesFromContours(closedContours);
+  const rooms = createRoomsFromCandidates(roomCandidates);
+
+  return {
+    projectValidationState: 'valid',
+    roomDetectionState: rooms.length > 0 ? 'detected' : 'blocked',
+    closedContours,
+    openContourSegmentIds: warnings.openContourSegmentIds,
+    orphanSegmentIds: warnings.orphanSegmentIds,
+    roomCandidates,
+    rooms,
+    lastValidationError: rooms.length > 0 ? null : PROJECT_NO_ROOM_MESSAGE,
+  };
+};
+
+const isPointInsidePolygon = (point: Point, polygon: Point[]) => {
+  if (polygon.length < 3) {
+    return false;
+  }
+
+  let inside = false;
+
+  for (let index = 0, previousIndex = polygon.length - 1; index < polygon.length; previousIndex = index++) {
+    const current = polygon[index];
+    const previous = polygon[previousIndex];
+    const intersects = (current.y > point.y) !== (previous.y > point.y)
+      && point.x < ((previous.x - current.x) * (point.y - current.y)) / ((previous.y - current.y) || 1) + current.x;
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+};
+
+const formatRoomArea = (areaMm2: number) => `${(areaMm2 / 1000000).toFixed(1)} м²`;
 
 const getClosedContourOutwardNormal = (entity: CanvasV4LineEntity, contourInfo: ClosedContourInfo): Point => {
   const { leftNormal } = getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint);
@@ -2011,6 +2385,9 @@ export const CanvasV4DevScreen = () => {
   const [lastHitTestEntityId, setLastHitTestEntityId] = useState<string | null>(null);
   const [currentCanvasMode, setCurrentCanvasMode] = useState<CanvasV4Mode>('plan');
   const [projectState, setProjectState] = useState<CanvasV4ProjectState | null>(null);
+  const [projectValidationMessage, setProjectValidationMessage] = useState<string | null>(null);
+  const [lastValidationError, setLastValidationError] = useState<string | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
 
   const projectCreated = currentCanvasMode === 'project' && Boolean(projectState);
 
@@ -2034,9 +2411,20 @@ export const CanvasV4DevScreen = () => {
   const activeDrawingStartPoint = currentToolMode === 'line' ? lineStartPoint : currentToolMode === 'polyline' ? polylineLastPoint : null;
   const activeShapeStartPoint = isShapeToolMode(currentToolMode) ? shapeStartPoint : null;
 
+  const projectInterpretation = useMemo(() => detectCanvasV4ProjectInterpretation(entities), [entities]);
   const projectContours = useMemo(
-    () => (currentCanvasMode === 'project' ? recognizeProjectContours(entities) : []),
-    [currentCanvasMode, entities],
+    () => (currentCanvasMode === 'project' ? projectInterpretation.closedContours : []),
+    [currentCanvasMode, projectInterpretation.closedContours],
+  );
+  const projectRooms = useMemo(
+    () => (currentCanvasMode === 'project' ? projectInterpretation.rooms : []),
+    [currentCanvasMode, projectInterpretation.rooms],
+  );
+  const projectWarningSegmentIds = useMemo(
+    () => (currentCanvasMode === 'project'
+      ? new Set([...projectInterpretation.openContourSegmentIds, ...projectInterpretation.orphanSegmentIds])
+      : new Set<string>()),
+    [currentCanvasMode, projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds],
   );
   const shapeGroups = useMemo(() => getShapeGroups(entities), [entities]);
   const shapeGroupById = useMemo(() => new Map(shapeGroups.map((group) => [group.shapeId, group])), [shapeGroups]);
@@ -2059,8 +2447,20 @@ export const CanvasV4DevScreen = () => {
   const circleVisualMode: CircleVisualMode = dimensionDisplayMode === 'full' ? 'segmented' : 'smooth';
 
   const createProjectStub = useCallback(() => {
-    if (entities.length === 0) {
-      setLastActionType('CREATE_PROJECT_SKIPPED_EMPTY_GEOMETRY');
+    if (projectInterpretation.projectValidationState === 'empty') {
+      setProjectValidationMessage(PROJECT_EMPTY_CANVAS_MESSAGE);
+      setLastValidationError(PROJECT_EMPTY_CANVAS_MESSAGE);
+      setSelectedRoomId(null);
+      setLastActionType('CREATE_PROJECT_BLOCKED_EMPTY_CANVAS');
+      return;
+    }
+
+    if (projectInterpretation.projectValidationState !== 'valid' || projectInterpretation.rooms.length === 0) {
+      const validationError = projectInterpretation.lastValidationError ?? PROJECT_NO_ROOM_MESSAGE;
+      setProjectValidationMessage(validationError);
+      setLastValidationError(validationError);
+      setSelectedRoomId(null);
+      setLastActionType('CREATE_PROJECT_BLOCKED_NO_ROOM');
       return;
     }
 
@@ -2069,16 +2469,30 @@ export const CanvasV4DevScreen = () => {
     setProjectState({
       projectId: `canvas-v4-project-${activatedAt}`,
       createdAt: activatedAt,
-      geometrySnapshot: cloneCanvasV4ProjectGeometrySnapshot(entities, doors, windows),
+      geometrySnapshot: cloneCanvasV4ProjectGeometrySnapshot(
+        entities,
+        doors,
+        windows,
+        projectInterpretation.roomCandidates,
+        projectInterpretation.rooms,
+        projectInterpretation.projectValidationState,
+      ),
+      roomCandidates: projectInterpretation.roomCandidates.map(cloneRoomCandidate),
+      rooms: projectInterpretation.rooms.map(cloneRoomEntity),
+      validationState: projectInterpretation.projectValidationState,
+      validationError: null,
     });
     setCurrentCanvasMode('project');
-    setLastActionType('CREATE_PROJECT_STUB_V1');
+    setProjectValidationMessage(null);
+    setLastValidationError(null);
+    setSelectedRoomId(null);
+    setLastActionType('CREATE_PROJECT_ROOM_DETECTION_V1');
     setLineStartPoint(null);
     setPolylineLastPoint(null);
     setActivePolylineId(null);
     setShapeStartPoint(null);
     setSelectionBox(null);
-  }, [doors, entities, windows]);
+  }, [doors, entities, projectInterpretation, windows]);
 
   const openManualDrawFlow = useCallback(() => {
     setCanvasEntryStep('canvas');
@@ -2093,6 +2507,9 @@ export const CanvasV4DevScreen = () => {
     setSelectedEntityIds([]);
     setSelectedDoorId(null);
     setSelectedWindowId(null);
+    setSelectedRoomId(null);
+    setProjectValidationMessage(null);
+    setLastValidationError(null);
     setSelectionBox(null);
     setLastTemplateAction('OPEN_MANUAL_DRAW');
     setLastActionType('OPEN_MANUAL_DRAW_FLOW');
@@ -2126,6 +2543,7 @@ export const CanvasV4DevScreen = () => {
     setSelectedEntityIds(generatedGeometry.selectedEntityIds);
     setSelectedDoorId(null);
     setSelectedWindowId(null);
+    setSelectedRoomId(null);
     setWindowWidthInput(String(DEFAULT_WINDOW_WIDTH_MM));
     setCameraZoom(DEFAULT_ZOOM);
     setPan({ x: 0, y: 0 });
@@ -2148,6 +2566,8 @@ export const CanvasV4DevScreen = () => {
     setLastUndoAction('null');
     setLastRedoAction('null');
     setProjectState(null);
+    setProjectValidationMessage(null);
+    setLastValidationError(null);
     setCurrentCanvasMode('plan');
     setCurrentToolMode('select');
     setShowLineDimensions(true);
@@ -2740,6 +3160,7 @@ export const CanvasV4DevScreen = () => {
 
   const selectedDoor = useMemo(() => doors.find((door) => door.doorId === selectedDoorId) ?? null, [doors, selectedDoorId]);
   const selectedWindow = useMemo(() => windows.find((window) => window.windowId === selectedWindowId) ?? null, [selectedWindowId, windows]);
+  const selectedRoom = useMemo(() => projectRooms.find((room) => room.roomId === selectedRoomId) ?? null, [projectRooms, selectedRoomId]);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
@@ -2763,6 +3184,16 @@ export const CanvasV4DevScreen = () => {
   const selectedCircleDiameter = selectedShapeType === 'circle'
     ? selectedShapeGroup?.diameter ?? selectedSegment?.shapeDiameter ?? null
     : null;
+  const findRoomAtWorldPoint = useCallback(
+    (point: Point) => {
+      if (currentCanvasMode !== 'project') {
+        return null;
+      }
+
+      return [...projectRooms].reverse().find((room) => isPointInsidePolygon(point, room.roomContour))?.roomId ?? null;
+    },
+    [currentCanvasMode, projectRooms],
+  );
   const shapeDimensionMode = !showLineDimensions
     ? 'hidden'
     : dimensionDisplayMode === 'full'
@@ -2772,6 +3203,18 @@ export const CanvasV4DevScreen = () => {
   useEffect(() => {
     setWindowWidthInput(selectedWindow ? String(Math.round(selectedWindow.width)) : String(DEFAULT_WINDOW_WIDTH_MM));
   }, [selectedWindow]);
+
+  useEffect(() => {
+    if (selectedRoomId && !projectRooms.some((room) => room.roomId === selectedRoomId)) {
+      setSelectedRoomId(null);
+    }
+  }, [projectRooms, selectedRoomId]);
+
+  useEffect(() => {
+    if (projectValidationMessage) {
+      setProjectValidationMessage(null);
+    }
+  }, [entities]);
 
   const transformHandles = useMemo(() => {
     if (!selectedDoorId && !selectedWindowId && selectedEntities.length === 1) {
@@ -3398,16 +3841,18 @@ export const CanvasV4DevScreen = () => {
           ? shapeGroupById.get(hitEntity.shapeId) ?? null
           : null;
         const hitShapeGroup = hitCircleGroup ?? hitEntityShapeGroup;
+        const hitRoomId = hitDoorId || hitWindowId || hitShapeGroup || hitEntityId ? null : findRoomAtWorldPoint(rawWorldPoint);
         const isHitShapeSelected = hitShapeGroup ? hitShapeGroup.segments.some((entity) => selectedEntityIds.includes(entity.entityId)) : false;
         const isHitEntitySelected = hitEntityId ? selectedEntityIds.includes(hitEntityId) : false;
         const now = Date.now();
-        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitWindowId ? 'window-geometry' : isHitShapeSelected || isHitEntitySelected ? 'selected-geometry' : hitShapeGroup || hitEntityId ? 'wall-geometry' : 'empty-canvas');
-        setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitShapeGroup?.shapeId ?? hitEntityId);
+        setHitTestTargetType(hitDoorId ? 'door-geometry' : hitWindowId ? 'window-geometry' : isHitShapeSelected || isHitEntitySelected ? 'selected-geometry' : hitShapeGroup || hitEntityId ? 'wall-geometry' : hitRoomId ? 'room-overlay' : 'empty-canvas');
+        setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitShapeGroup?.shapeId ?? hitEntityId ?? hitRoomId);
 
         if (hitDoorId) {
           setSelectedDoorId(hitDoorId);
           setSelectedWindowId(null);
           setSelectedEntityIds([]);
+          setSelectedRoomId(null);
           setSelectionMode('single');
           setLastActionType('SELECT_DOOR');
           setLastSelectedShapeAction('null');
@@ -3420,6 +3865,7 @@ export const CanvasV4DevScreen = () => {
           setSelectedWindowId(hitWindowId);
           setSelectedDoorId(null);
           setSelectedEntityIds([]);
+          setSelectedRoomId(null);
           setSelectionMode('single');
           setLastActionType('SELECT_WINDOW');
           setLastSelectedShapeAction('null');
@@ -3432,6 +3878,7 @@ export const CanvasV4DevScreen = () => {
           setSelectedEntityIds(hitShapeGroup.segments.map((entity) => entity.entityId));
           setSelectedDoorId(null);
           setSelectedWindowId(null);
+          setSelectedRoomId(null);
           setSelectionMode('single');
           setLastActionType(`SELECT_${hitShapeGroup.shapeType.toUpperCase()}_SHAPE`);
           setLastSelectedShapeAction(`SELECT_${hitShapeGroup.shapeType.toUpperCase()}_GROUP`);
@@ -3444,8 +3891,22 @@ export const CanvasV4DevScreen = () => {
           setSelectedEntityIds([hitEntityId]);
           setSelectedDoorId(null);
           setSelectedWindowId(null);
+          setSelectedRoomId(null);
           setSelectionMode('single');
           setLastActionType('SELECT_ENTITY');
+          setLastSelectedShapeAction('null');
+          setLastInteractionType('tap-select');
+          lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
+          return;
+        }
+
+        if (hitRoomId) {
+          setSelectedRoomId(hitRoomId);
+          setSelectedEntityIds([]);
+          setSelectedDoorId(null);
+          setSelectedWindowId(null);
+          setSelectionMode('single');
+          setLastActionType('SELECT_ROOM');
           setLastSelectedShapeAction('null');
           setLastInteractionType('tap-select');
           lastTapRef.current = { time: now, point: screenPoint, wasEmpty: false };
@@ -3462,6 +3923,7 @@ export const CanvasV4DevScreen = () => {
           setSelectedEntityIds([]);
           setSelectedDoorId(null);
           setSelectedWindowId(null);
+          setSelectedRoomId(null);
           setSelectionMode('single');
           setLastActionType('DOUBLE_TAP_CLEAR_SELECTION');
           setLastSelectedShapeAction('null');
@@ -3475,7 +3937,7 @@ export const CanvasV4DevScreen = () => {
         lastTapRef.current = { time: now, point: screenPoint, wasEmpty: true };
       }
     },
-    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findCircleShapeAtWorldPoint, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, shapeGroupById, shapeStartPoint, windows.length],
+    [activePolylineId, currentToolMode, doors.length, endpointSnapThreshold, entities, findCircleShapeAtWorldPoint, findDoorAtWorldPoint, findEntityAtWorldPoint, findNearestSegmentProjection, findRoomAtWorldPoint, findWindowAtWorldPoint, lineStartPoint, newSegmentType, polylineLastPoint, pushHistoryAction, screenToWorld, selectedEntityIds, shapeGroupById, shapeStartPoint, windows.length],
   );
 
   const changeSelectedDoorHingeSide = useCallback(() => {
@@ -3565,6 +4027,7 @@ export const CanvasV4DevScreen = () => {
     setSelectionBox(null);
     setSelectedDoorId(null);
     setSelectedWindowId(null);
+    setSelectedRoomId(null);
     setInteractionMode('idle');
     setIsPanningCanvas(false);
     setLastInteractionType('tool-change');
@@ -3599,6 +4062,7 @@ export const CanvasV4DevScreen = () => {
         ? hitSelectedCircleEntityId ?? [...selectedEntities].reverse().find((entity) => getDistanceToSegment(rawWorldPoint, entity.startPoint, entity.endPoint) <= tolerance)?.entityId ?? null
         : null;
       const hitEntityId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle ? hitSelectedEntityId ?? hitCircleGroup?.segments[0]?.entityId ?? findEntityAtWorldPoint(rawWorldPoint) : null;
+      const hitRoomId = isNavigationSelectionMode && !hitDoorId && !hitWindowId && !transformHandle && !hitEntityId ? findRoomAtWorldPoint(rawWorldPoint) : null;
       const shouldMoveDoor = isNavigationSelectionMode && !!hitDoorId && selectedDoorId === hitDoorId;
       const shouldMoveWindow = isNavigationSelectionMode && !!hitWindowId && selectedWindowId === hitWindowId;
       const shouldMoveSelection = isNavigationSelectionMode && !!hitSelectedEntityId && selectedSet.has(hitSelectedEntityId);
@@ -3612,8 +4076,10 @@ export const CanvasV4DevScreen = () => {
               ? 'selected-geometry'
               : hitEntityId
                 ? 'wall-geometry'
+                : hitRoomId
+                  ? 'room-overlay'
                 : 'empty-canvas';
-      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitDoorId && !hitWindowId && !hitEntityId;
+      const canStartSelectionBox = isNavigationSelectionMode && !transformHandle && !hitDoorId && !hitWindowId && !hitEntityId && !hitRoomId;
       const initialInteractionMode: InteractionMode = isLineResize
         ? 'resize-line'
         : isSelectionResize
@@ -3658,7 +4124,7 @@ export const CanvasV4DevScreen = () => {
       };
       setPointerWorldPoint(rawWorldPoint);
       setHitTestTargetType(hitTargetType);
-      setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitCircleShapeId ?? hitEntityId);
+      setLastHitTestEntityId(hitDoorId ?? hitWindowId ?? hitCircleShapeId ?? hitEntityId ?? hitRoomId);
       setInteractionMode(initialInteractionMode);
       setIsPanningCanvas(false);
       setSelectionBox(null);
@@ -3670,7 +4136,7 @@ export const CanvasV4DevScreen = () => {
       setResizeAxis(transformHandle?.axis ?? 'none');
       setResizeScale({ x: 1, y: 1 });
     },
-    [cameraZoom, currentToolMode, doors, findCircleShapeAtWorldPoint, findDoorAtWorldPoint, findEntityAtWorldPoint, findTransformHandleAtScreenPoint, findWindowAtWorldPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds, selectedWindowId, shapeGroupById, windows],
+    [cameraZoom, currentToolMode, doors, findCircleShapeAtWorldPoint, findDoorAtWorldPoint, findEntityAtWorldPoint, findRoomAtWorldPoint, findTransformHandleAtScreenPoint, findWindowAtWorldPoint, screenToWorld, selectedBoundingBox, selectedDoorId, selectedEntities, selectedEntityIds, selectedWindowId, shapeGroupById, windows],
   );
 
   const moveInteraction = useCallback(
@@ -4195,7 +4661,18 @@ export const CanvasV4DevScreen = () => {
       `currentCanvasMode: ${currentCanvasMode}`,
       `projectCreated: ${projectCreated ? 'true' : 'false'}`,
       `projectId: ${projectState?.projectId ?? 'null'}`,
-      `projectGeometrySnapshot: ${projectState ? `entities=${projectState.geometrySnapshot.entities.length}, doors=${projectState.geometrySnapshot.doors.length}, windows=${projectState.geometrySnapshot.windows.length}, frozenAt=${new Date(projectState.geometrySnapshot.frozenAt).toISOString()}` : 'null'}`,
+      `projectGeometrySnapshot: ${projectState ? `entities=${projectState.geometrySnapshot.entities.length}, doors=${projectState.geometrySnapshot.doors.length}, windows=${projectState.geometrySnapshot.windows.length}, rooms=${projectState.geometrySnapshot.rooms.length}, frozenAt=${new Date(projectState.geometrySnapshot.frozenAt).toISOString()}` : 'null'}`,
+      `projectValidationState: ${projectInterpretation.projectValidationState}`,
+      `closedContoursCount: ${projectInterpretation.closedContours.length}`,
+      `openContoursCount: ${projectInterpretation.openContourSegmentIds.length}`,
+      `orphanSegmentsCount: ${projectInterpretation.orphanSegmentIds.length}`,
+      `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
+      `roomCount: ${projectRooms.length}`,
+      `selectedRoomId: ${selectedRoom?.roomId ?? 'null'}`,
+      `selectedRoomArea: ${selectedRoom ? formatRoomArea(selectedRoom.roomArea) : 'null'}`,
+      `selectedRoomSegmentsCount: ${selectedRoom?.roomSegments.length ?? 0}`,
+      `roomDetectionState: ${projectInterpretation.roomDetectionState}`,
+      `lastValidationError: ${lastValidationError ?? projectInterpretation.lastValidationError ?? 'null'}`,
       `projectContoursCount: ${projectContours.length}`,
       `projectModeActivatedAt: ${projectState ? new Date(projectState.createdAt).toISOString() : 'null'}`,
       `currentToolMode: ${currentToolMode}`,
@@ -4270,7 +4747,7 @@ export const CanvasV4DevScreen = () => {
       `segmentAngle: ${selectedSegment ? `${formatAngle(selectedSegment.angle).toFixed(0)}°` : 'null'}`,
       `doorIds: [${selectedSegment?.doorIds.join(', ') || 'empty'}]`,
       `windowIds: [${selectedSegment?.windowIds.join(', ') || 'empty'}]`,
-      `selectedCount: ${selectedEntityIds.length + (selectedDoor ? 1 : 0) + (selectedWindow ? 1 : 0)}`,
+      `selectedCount: ${selectedEntityIds.length + (selectedDoor ? 1 : 0) + (selectedWindow ? 1 : 0) + (selectedRoom ? 1 : 0)}`,
       `transformMode: ${transformMode}`,
       `selectedBoundingBox: ${selectedBoundingBox ? `(${selectedBoundingBox.minX.toFixed(0)}, ${selectedBoundingBox.minY.toFixed(0)}) - (${selectedBoundingBox.maxX.toFixed(0)}, ${selectedBoundingBox.maxY.toFixed(0)})` : 'null'}`,
       `activeHandleId: ${activeHandleId ?? 'null'}`,
@@ -4376,6 +4853,8 @@ export const CanvasV4DevScreen = () => {
       liveDimensionPreviewItems.length,
       projectContours.length,
       projectCreated,
+      projectInterpretation,
+      projectRooms.length,
       projectState,
       redoStack.length,
       resizeAxis,
@@ -4384,6 +4863,7 @@ export const CanvasV4DevScreen = () => {
       selectedBoundingBox,
       selectedLineLength,
       selectedDoor,
+      selectedRoom,
       selectedWindow,
       selectedEntityIds,
       selectedSegment,
@@ -4394,6 +4874,7 @@ export const CanvasV4DevScreen = () => {
       undoStack.length,
       isResizing,
       lastTemplateAction,
+      lastValidationError,
       selectedTemplateCategory,
       selectedTemplateVariant,
     ],
@@ -4602,6 +5083,12 @@ export const CanvasV4DevScreen = () => {
           ) : null}
         </View>
 
+        {projectValidationMessage ? (
+          <View style={styles.projectValidationBanner}>
+            <Text style={styles.projectValidationBannerText}>{projectValidationMessage}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.canvasShell}>
           <View style={styles.projectRail} pointerEvents="box-none">
             {projectTabs.map((tab) => (
@@ -4659,6 +5146,39 @@ export const CanvasV4DevScreen = () => {
             <View pointerEvents="none" style={[styles.axisLine, { left: worldToScreen({ x: 0, y: 0 }).x, top: 0, height: viewport.height, width: 1 }]} />
             <View pointerEvents="none" style={[styles.axisLine, { top: worldToScreen({ x: 0, y: 0 }).y, left: 0, width: viewport.width, height: 1 }]} />
 
+            {projectRooms.map((room) => {
+              const topLeft = worldToScreen({ x: room.roomBounds.minX, y: room.roomBounds.minY });
+              const bottomRight = worldToScreen({ x: room.roomBounds.maxX, y: room.roomBounds.maxY });
+              const labelPoint = worldToScreen(room.roomCenter);
+              const isSelected = selectedRoomId === room.roomId;
+              const roomWidthPx = Math.max(Math.abs(bottomRight.x - topLeft.x), 1);
+              const roomHeightPx = Math.max(Math.abs(bottomRight.y - topLeft.y), 1);
+              const isCircleRoom = room.roomSegments.length > 0 && room.roomSegments.every((segmentId) => entityBySegmentId.get(segmentId)?.shapeType === 'circle');
+
+              return (
+                <React.Fragment key={room.roomId}>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.roomOverlayFill,
+                      isSelected ? styles.roomOverlayFillSelected : null,
+                      {
+                        left: Math.min(topLeft.x, bottomRight.x),
+                        top: Math.min(topLeft.y, bottomRight.y),
+                        width: roomWidthPx,
+                        height: roomHeightPx,
+                        borderRadius: isCircleRoom ? Math.max(roomWidthPx, roomHeightPx) / 2 : 6,
+                      },
+                    ]}
+                  />
+                  <View pointerEvents="none" style={[styles.roomOverlayLabel, isSelected ? styles.roomOverlayLabelSelected : null, { left: labelPoint.x - 54, top: labelPoint.y - 22 }]}>
+                    <Text style={styles.roomOverlayLabelTitle}>{room.roomLabel}</Text>
+                    <Text style={styles.roomOverlayLabelArea}>{formatRoomArea(room.roomArea)}</Text>
+                  </View>
+                </React.Fragment>
+              );
+            })}
+
             {smoothCircleShapeGroups.map((group) => {
               if (!group.centerPoint || !group.radiusX || !group.radiusY) {
                 return null;
@@ -4695,6 +5215,7 @@ export const CanvasV4DevScreen = () => {
 
               const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
               const isSelected = selectedEntityIdSet.has(entity.entityId);
+              const isProjectWarning = projectWarningSegmentIds.has(entity.segmentId);
 
               return (
                 <React.Fragment key={entity.entityId}>
@@ -4703,6 +5224,7 @@ export const CanvasV4DevScreen = () => {
                     style={[
                       styles.wallSegmentCenterLine,
                       entity.segmentType === 'external' ? styles.externalWallLine : styles.internalWallLine,
+                      isProjectWarning ? styles.wallSegmentWarningLine : null,
                       isSelected ? styles.wallSegmentCenterLineSelected : null,
                       {
                         width: Math.max(geometry.length, 1),
@@ -5007,7 +5529,6 @@ export const CanvasV4DevScreen = () => {
             })}
 
             {projectContours.map((contour) => {
-              const screenCentroid = worldToScreen(contour.centroid);
               const isCircleContour = contour.segmentIds.length > 0 && contour.segmentIds.every((segmentId) => entityBySegmentId.get(segmentId)?.shapeType === 'circle');
               const shouldRenderContourEdges = !(isCircleContour && dimensionDisplayMode !== 'full');
 
@@ -5026,9 +5547,6 @@ export const CanvasV4DevScreen = () => {
                       />
                     );
                   }) : null}
-                  <View pointerEvents="none" style={[styles.projectContourBadge, { left: screenCentroid.x - 13, top: screenCentroid.y - 13 }]}>
-                    <Text style={styles.projectContourBadgeText}>P</Text>
-                  </View>
                 </React.Fragment>
               );
             })}
@@ -5461,6 +5979,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#DCE3F2',
   },
+  projectValidationBanner: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  projectValidationBannerText: {
+    color: '#92400E',
+    fontWeight: '900',
+  },
   controlButton: {
     minHeight: 40,
     paddingHorizontal: 12,
@@ -5702,6 +6232,42 @@ const styles = StyleSheet.create({
     position: 'absolute',
     backgroundColor: 'rgba(15, 23, 42, 0.25)',
   },
+  roomOverlayFill: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: 'rgba(51, 65, 85, 0.20)',
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+  },
+  roomOverlayFillSelected: {
+    borderColor: 'rgba(37, 99, 235, 0.48)',
+    backgroundColor: 'rgba(37, 99, 235, 0.10)',
+  },
+  roomOverlayLabel: {
+    position: 'absolute',
+    width: 108,
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(51, 65, 85, 0.18)',
+    backgroundColor: 'rgba(255, 255, 255, 0.84)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  roomOverlayLabelSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: 'rgba(239, 246, 255, 0.92)',
+  },
+  roomOverlayLabelTitle: {
+    color: '#334155',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  roomOverlayLabelArea: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '900',
+  },
   wallSegmentBody: {
     position: 'absolute',
     borderRadius: 2,
@@ -5741,6 +6307,9 @@ const styles = StyleSheet.create({
   },
   wallSegmentCenterLineSelected: {
     backgroundColor: '#2563EB',
+  },
+  wallSegmentWarningLine: {
+    backgroundColor: '#D97706',
   },
   circleShapeVisual: {
     position: 'absolute',
