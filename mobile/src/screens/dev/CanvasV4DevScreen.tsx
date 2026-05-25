@@ -213,11 +213,24 @@ type CanvasV4ManualTopologyGap = {
   distance: number;
 };
 
+type CanvasV4LogicalWallChain = {
+  chainId: string;
+  segmentIds: string[];
+  gapCount: number;
+};
+
 type CanvasV4TopologyNormalizationSummary = {
   autoConnectedJunctions: CanvasV4ManualTopologyJunction[];
   floatingGaps: CanvasV4ManualTopologyGap[];
   invalidTopologyNodeIds: string[];
   partitionEdgeIds: string[];
+  logicalWallChains: CanvasV4LogicalWallChain[];
+  normalizedEdgeCount: number;
+  logicalWallChainCount: number;
+  collinearMergedSegmentCount: number;
+  virtualSplitNodeCount: number;
+  shapeEdgesInTopologyCount: number;
+  ignoredShapeEdgeCount: number;
 };
 
 type CanvasV4PlanarNode = {
@@ -230,6 +243,8 @@ type CanvasV4PlanarNode = {
 type CanvasV4PlanarEdge = {
   edgeId: string;
   segmentId: string;
+  sourceSegmentIds: string[];
+  sourceOffsetsBySegmentId: Record<string, { startOffset: number; endOffset: number }>;
   startNodeId: string;
   endNodeId: string;
   startPoint: Point;
@@ -359,6 +374,13 @@ type CanvasV4Topology = {
   isolatedRoomsCount: number;
   invalidWindowPlacements: number;
   roomNeighborCount: number;
+  normalizedEdgeCount: number;
+  logicalWallChainCount: number;
+  collinearMergedSegmentCount: number;
+  virtualSplitNodeCount: number;
+  shapeEdgesInTopologyCount: number;
+  ignoredShapeEdgeCount: number;
+  topologyWarningsCount: number;
 };
 
 type CanvasV4ProjectValidationResult = {
@@ -567,6 +589,9 @@ const TOPOLOGY_MIN_EDGE_LENGTH_MM = 1;
 const TOPOLOGY_FACE_GUARD_FACTOR = 8;
 const MANUAL_TOPOLOGY_AUTO_CONNECT_TOLERANCE_MM = 120;
 const MANUAL_TOPOLOGY_FLOATING_GAP_TOLERANCE_MM = 320;
+const TOPOLOGY_COLLINEAR_ANGLE_TOLERANCE_DEG = 2;
+const TOPOLOGY_COLLINEAR_DISTANCE_TOLERANCE_MM = 8;
+const TOPOLOGY_COLLINEAR_GAP_TOLERANCE_MM = MANUAL_TOPOLOGY_AUTO_CONNECT_TOLERANCE_MM;
 const PROJECT_EMPTY_CANVAS_MESSAGE = 'Чертёж отсутствует';
 const PROJECT_NO_ROOM_MESSAGE = 'Не найдено помещение. Замкните контур.';
 const DOOR_HIT_TOLERANCE_PX = 16;
@@ -1987,6 +2012,10 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
     })),
     edges: topology.planarGraph.edges.map((edge) => ({
       ...edge,
+      sourceSegmentIds: [...edge.sourceSegmentIds],
+      sourceOffsetsBySegmentId: Object.fromEntries(
+        Object.entries(edge.sourceOffsetsBySegmentId).map(([segmentId, offsets]) => [segmentId, { ...offsets }]),
+      ),
       startPoint: clonePoint(edge.startPoint),
       endPoint: clonePoint(edge.endPoint),
       roomIds: [...edge.roomIds],
@@ -2023,6 +2052,16 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
       })),
       invalidTopologyNodeIds: [...topology.planarGraph.normalization.invalidTopologyNodeIds],
       partitionEdgeIds: [...topology.planarGraph.normalization.partitionEdgeIds],
+      logicalWallChains: topology.planarGraph.normalization.logicalWallChains.map((chain) => ({
+        ...chain,
+        segmentIds: [...chain.segmentIds],
+      })),
+      normalizedEdgeCount: topology.planarGraph.normalization.normalizedEdgeCount,
+      logicalWallChainCount: topology.planarGraph.normalization.logicalWallChainCount,
+      collinearMergedSegmentCount: topology.planarGraph.normalization.collinearMergedSegmentCount,
+      virtualSplitNodeCount: topology.planarGraph.normalization.virtualSplitNodeCount,
+      shapeEdgesInTopologyCount: topology.planarGraph.normalization.shapeEdgesInTopologyCount,
+      ignoredShapeEdgeCount: topology.planarGraph.normalization.ignoredShapeEdgeCount,
     },
     buildTimeMs: topology.planarGraph.buildTimeMs,
   },
@@ -2047,6 +2086,13 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
   isolatedRoomsCount: topology.isolatedRoomsCount,
   invalidWindowPlacements: topology.invalidWindowPlacements,
   roomNeighborCount: topology.roomNeighborCount,
+  normalizedEdgeCount: topology.normalizedEdgeCount,
+  logicalWallChainCount: topology.logicalWallChainCount,
+  collinearMergedSegmentCount: topology.collinearMergedSegmentCount,
+  virtualSplitNodeCount: topology.virtualSplitNodeCount,
+  shapeEdgesInTopologyCount: topology.shapeEdgesInTopologyCount,
+  ignoredShapeEdgeCount: topology.ignoredShapeEdgeCount,
+  topologyWarningsCount: topology.topologyWarningsCount,
 });
 
 const getWallTopologyMetadata = (topology: CanvasV4Topology) =>
@@ -2351,6 +2397,13 @@ const createEmptyTopologyNormalization = (): CanvasV4TopologyNormalizationSummar
   floatingGaps: [],
   invalidTopologyNodeIds: [],
   partitionEdgeIds: [],
+  logicalWallChains: [],
+  normalizedEdgeCount: 0,
+  logicalWallChainCount: 0,
+  collinearMergedSegmentCount: 0,
+  virtualSplitNodeCount: 0,
+  shapeEdgesInTopologyCount: 0,
+  ignoredShapeEdgeCount: 0,
 });
 
 const isEndpointAlreadyTopologicallyConnected = (
@@ -2373,6 +2426,239 @@ const findNearestTopologyTarget = (
     projection: projectPointToSegment(point, candidate),
   }))
   .sort((first, second) => first.projection.distance - second.projection.distance)[0] ?? null;
+
+const getTopologyAxisAngle = (angle: number) => {
+  const normalized = normalizeAngle(angle);
+  return normalized >= 180 ? normalized - 180 : normalized;
+};
+
+const getTopologyAxisAngleDistance = (firstAngle: number, secondAngle: number) => {
+  const diff = Math.abs(getTopologyAxisAngle(firstAngle) - getTopologyAxisAngle(secondAngle));
+  return Math.min(diff, 180 - diff);
+};
+
+const getSegmentUnitVector = (segment: CanvasV4LineEntity): Point => {
+  const length = Math.max(segment.length, 1);
+
+  return {
+    x: (segment.endPoint.x - segment.startPoint.x) / length,
+    y: (segment.endPoint.y - segment.startPoint.y) / length,
+  };
+};
+
+const getDistanceToInfiniteSegmentLine = (point: Point, segment: CanvasV4LineEntity) => {
+  const dx = segment.endPoint.x - segment.startPoint.x;
+  const dy = segment.endPoint.y - segment.startPoint.y;
+  const length = Math.hypot(dx, dy);
+
+  if (length <= TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+    return Math.hypot(point.x - segment.startPoint.x, point.y - segment.startPoint.y);
+  }
+
+  return Math.abs((point.x - segment.startPoint.x) * dy - (point.y - segment.startPoint.y) * dx) / length;
+};
+
+const getProjectionOnTopologyAxis = (point: Point, origin: Point, unit: Point) =>
+  (point.x - origin.x) * unit.x + (point.y - origin.y) * unit.y;
+
+const getSegmentProjectionRangeOnAxis = (segment: CanvasV4LineEntity, origin: Point, unit: Point) => {
+  const startProjection = getProjectionOnTopologyAxis(segment.startPoint, origin, unit);
+  const endProjection = getProjectionOnTopologyAxis(segment.endPoint, origin, unit);
+
+  return {
+    min: Math.min(startProjection, endProjection),
+    max: Math.max(startProjection, endProjection),
+  };
+};
+
+const getProjectionRangeGap = (
+  first: { min: number; max: number },
+  second: { min: number; max: number },
+) => Math.max(0, Math.max(first.min, second.min) - Math.min(first.max, second.max));
+
+const areSegmentsCollinearForTopology = (first: CanvasV4LineEntity, second: CanvasV4LineEntity) => {
+  if (first.length <= TOPOLOGY_MIN_EDGE_LENGTH_MM || second.length <= TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+    return false;
+  }
+
+  return getTopologyAxisAngleDistance(first.angle, second.angle) <= TOPOLOGY_COLLINEAR_ANGLE_TOLERANCE_DEG
+    && getDistanceToInfiniteSegmentLine(second.startPoint, first) <= TOPOLOGY_COLLINEAR_DISTANCE_TOLERANCE_MM
+    && getDistanceToInfiniteSegmentLine(second.endPoint, first) <= TOPOLOGY_COLLINEAR_DISTANCE_TOLERANCE_MM;
+};
+
+const hasTopologyBlockingOpening = (segment: CanvasV4LineEntity) => segment.doorIds.length > 0 || segment.windowIds.length > 0;
+
+const buildLogicalWallChains = (entities: CanvasV4LineEntity[]): CanvasV4LogicalWallChain[] => {
+  const parentBySegmentId = new Map(entities.map((entity) => [entity.segmentId, entity.segmentId]));
+  const entityBySegmentId = new Map(entities.map((entity) => [entity.segmentId, entity]));
+
+  const findRoot = (segmentId: string): string => {
+    const parent = parentBySegmentId.get(segmentId);
+
+    if (!parent || parent === segmentId) {
+      return segmentId;
+    }
+
+    const root = findRoot(parent);
+    parentBySegmentId.set(segmentId, root);
+    return root;
+  };
+
+  const unionSegments = (firstSegmentId: string, secondSegmentId: string) => {
+    const firstRoot = findRoot(firstSegmentId);
+    const secondRoot = findRoot(secondSegmentId);
+
+    if (firstRoot !== secondRoot) {
+      parentBySegmentId.set(secondRoot, firstRoot);
+    }
+  };
+
+  entities.forEach((first, firstIndex) => {
+    entities.slice(firstIndex + 1).forEach((second) => {
+      if (!areSegmentsCollinearForTopology(first, second)) {
+        return;
+      }
+
+      const unit = getSegmentUnitVector(first);
+      const firstRange = getSegmentProjectionRangeOnAxis(first, first.startPoint, unit);
+      const secondRange = getSegmentProjectionRangeOnAxis(second, first.startPoint, unit);
+      const gap = getProjectionRangeGap(firstRange, secondRange);
+
+      if (gap > TOPOLOGY_COLLINEAR_GAP_TOLERANCE_MM) {
+        return;
+      }
+
+      if (gap > TOPOLOGY_NODE_TOLERANCE_MM && (hasTopologyBlockingOpening(first) || hasTopologyBlockingOpening(second))) {
+        return;
+      }
+
+      unionSegments(first.segmentId, second.segmentId);
+    });
+  });
+
+  const groupsByRoot = new Map<string, string[]>();
+
+  entities.forEach((entity) => {
+    const root = findRoot(entity.segmentId);
+    groupsByRoot.set(root, [...(groupsByRoot.get(root) ?? []), entity.segmentId]);
+  });
+
+  return Array.from(groupsByRoot.values())
+    .filter((segmentIds) => segmentIds.length > 1)
+    .map((segmentIds, index) => {
+      const firstSegment = entityBySegmentId.get(segmentIds[0]);
+      const unit = firstSegment ? getSegmentUnitVector(firstSegment) : { x: 1, y: 0 };
+      const origin = firstSegment?.startPoint ?? { x: 0, y: 0 };
+      const sortedSegmentIds = [...segmentIds].sort((firstId, secondId) => {
+        const firstSegmentEntity = entityBySegmentId.get(firstId);
+        const secondSegmentEntity = entityBySegmentId.get(secondId);
+        const firstRange = firstSegmentEntity ? getSegmentProjectionRangeOnAxis(firstSegmentEntity, origin, unit) : { min: 0, max: 0 };
+        const secondRange = secondSegmentEntity ? getSegmentProjectionRangeOnAxis(secondSegmentEntity, origin, unit) : { min: 0, max: 0 };
+
+        return firstRange.min - secondRange.min;
+      });
+
+      const gapCount = sortedSegmentIds.reduce((count, segmentId, segmentIndex) => {
+        const currentSegment = entityBySegmentId.get(segmentId);
+        const nextSegment = entityBySegmentId.get(sortedSegmentIds[segmentIndex + 1]);
+
+        if (!currentSegment || !nextSegment) {
+          return count;
+        }
+
+        const currentRange = getSegmentProjectionRangeOnAxis(currentSegment, origin, unit);
+        const nextRange = getSegmentProjectionRangeOnAxis(nextSegment, origin, unit);
+
+        return count + (getProjectionRangeGap(currentRange, nextRange) > TOPOLOGY_NODE_TOLERANCE_MM ? 1 : 0);
+      }, 0);
+
+      return {
+        chainId: `logical-wall-chain-${index + 1}`,
+        segmentIds: sortedSegmentIds,
+        gapCount,
+      };
+    });
+};
+
+const getEndpointForProjection = (segment: CanvasV4LineEntity, projection: number, origin: Point, unit: Point): 'start' | 'end' => {
+  const startProjection = getProjectionOnTopologyAxis(segment.startPoint, origin, unit);
+  const endProjection = getProjectionOnTopologyAxis(segment.endPoint, origin, unit);
+
+  return Math.abs(startProjection - projection) <= Math.abs(endProjection - projection) ? 'start' : 'end';
+};
+
+const replaceSegmentEndpoint = (
+  segment: CanvasV4LineEntity,
+  endpoint: 'start' | 'end',
+  point: Point,
+) => updateLineEntityGeometry(
+  segment,
+  endpoint === 'start' ? clonePoint(point) : segment.startPoint,
+  endpoint === 'end' ? clonePoint(point) : segment.endPoint,
+);
+
+const applyLogicalWallContinuity = (
+  normalizedBySegmentId: Map<string, CanvasV4LineEntity>,
+  normalization: CanvasV4TopologyNormalizationSummary,
+) => {
+  const logicalWallChains = buildLogicalWallChains(Array.from(normalizedBySegmentId.values()));
+
+  normalization.logicalWallChains = logicalWallChains;
+  normalization.logicalWallChainCount = logicalWallChains.length;
+  normalization.collinearMergedSegmentCount = logicalWallChains.reduce((sum, chain) => sum + Math.max(0, chain.segmentIds.length - 1), 0);
+
+  logicalWallChains.forEach((chain) => {
+    const firstSegment = normalizedBySegmentId.get(chain.segmentIds[0]);
+
+    if (!firstSegment) {
+      return;
+    }
+
+    const unit = getSegmentUnitVector(firstSegment);
+    const origin = firstSegment.startPoint;
+
+    chain.segmentIds.forEach((segmentId, segmentIndex) => {
+      const currentSegment = normalizedBySegmentId.get(segmentId);
+      const nextSegment = normalizedBySegmentId.get(chain.segmentIds[segmentIndex + 1]);
+
+      if (!currentSegment || !nextSegment) {
+        return;
+      }
+
+      const currentRange = getSegmentProjectionRangeOnAxis(currentSegment, origin, unit);
+      const nextRange = getSegmentProjectionRangeOnAxis(nextSegment, origin, unit);
+      const gap = getProjectionRangeGap(currentRange, nextRange);
+
+      if (gap <= TOPOLOGY_NODE_TOLERANCE_MM || gap > TOPOLOGY_COLLINEAR_GAP_TOLERANCE_MM) {
+        return;
+      }
+
+      if (hasTopologyBlockingOpening(currentSegment) || hasTopologyBlockingOpening(nextSegment)) {
+        return;
+      }
+
+      const currentGapProjection = currentRange.max < nextRange.min ? currentRange.max : currentRange.min;
+      const nextGapProjection = currentRange.max < nextRange.min ? nextRange.min : nextRange.max;
+      const bridgeProjection = (currentGapProjection + nextGapProjection) / 2;
+      const bridgePoint = {
+        x: origin.x + unit.x * bridgeProjection,
+        y: origin.y + unit.y * bridgeProjection,
+      };
+      const currentEndpoint = getEndpointForProjection(currentSegment, currentGapProjection, origin, unit);
+      const nextEndpoint = getEndpointForProjection(nextSegment, nextGapProjection, origin, unit);
+      const nextCurrentSegment = replaceSegmentEndpoint(currentSegment, currentEndpoint, bridgePoint);
+      const nextNextSegment = replaceSegmentEndpoint(nextSegment, nextEndpoint, bridgePoint);
+
+      if (nextCurrentSegment.length > TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+        normalizedBySegmentId.set(currentSegment.segmentId, nextCurrentSegment);
+      }
+
+      if (nextNextSegment.length > TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+        normalizedBySegmentId.set(nextSegment.segmentId, nextNextSegment);
+      }
+    });
+  });
+};
 
 const normalizeManualTopologyEntities = (entities: CanvasV4LineEntity[]) => {
   const normalization = createEmptyTopologyNormalization();
@@ -2439,6 +2725,8 @@ const normalizeManualTopologyEntities = (entities: CanvasV4LineEntity[]) => {
       }
     });
   });
+
+  applyLogicalWallContinuity(normalizedBySegmentId, normalization);
 
   return {
     normalizedEntities: Array.from(normalizedBySegmentId.values()),
@@ -2510,6 +2798,63 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
   };
 
   const edges: CanvasV4PlanarEdge[] = [];
+  const edgeByNodePairKey = new Map<string, CanvasV4PlanarEdge>();
+  const getNodePairKey = (firstNodeId: string, secondNodeId: string) => [firstNodeId, secondNodeId].sort().join('::');
+  const addTopologyEdge = (
+    entity: CanvasV4LineEntity,
+    startNode: CanvasV4PlanarNode,
+    endNode: CanvasV4PlanarNode,
+    startOffset: number,
+    endOffset: number,
+  ) => {
+    const nodePairKey = getNodePairKey(startNode.nodeId, endNode.nodeId);
+    const normalizedStartOffset = Math.min(startOffset, endOffset);
+    const normalizedEndOffset = Math.max(startOffset, endOffset);
+    const existingEdge = edgeByNodePairKey.get(nodePairKey);
+
+    if (existingEdge) {
+      if (!existingEdge.sourceSegmentIds.includes(entity.segmentId)) {
+        existingEdge.sourceSegmentIds.push(entity.segmentId);
+      }
+
+      existingEdge.sourceOffsetsBySegmentId[entity.segmentId] = {
+        startOffset: normalizedStartOffset,
+        endOffset: normalizedEndOffset,
+      };
+      return;
+    }
+
+    const length = Math.hypot(endNode.point.x - startNode.point.x, endNode.point.y - startNode.point.y);
+
+    if (length <= TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+      return;
+    }
+
+    const edge: CanvasV4PlanarEdge = {
+      edgeId: `topology-edge-${edges.length + 1}`,
+      segmentId: entity.segmentId,
+      sourceSegmentIds: [entity.segmentId],
+      sourceOffsetsBySegmentId: {
+        [entity.segmentId]: {
+          startOffset: normalizedStartOffset,
+          endOffset: normalizedEndOffset,
+        },
+      },
+      startNodeId: startNode.nodeId,
+      endNodeId: endNode.nodeId,
+      startPoint: clonePoint(startNode.point),
+      endPoint: clonePoint(endNode.point),
+      startOffset: normalizedStartOffset,
+      endOffset: normalizedEndOffset,
+      length,
+      angle: Math.atan2(endNode.point.y - startNode.point.y, endNode.point.x - startNode.point.x),
+      roomIds: [],
+      wallRole: 'external',
+    };
+
+    edges.push(edge);
+    edgeByNodePairKey.set(nodePairKey, edge);
+  };
 
   normalizedEntities.forEach((entity) => {
     const splitPoints = [...(splitPointsBySegmentId.get(entity.segmentId) ?? [])]
@@ -2532,20 +2877,7 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
         continue;
       }
 
-      edges.push({
-        edgeId: `topology-edge-${entity.segmentId}-${index + 1}`,
-        segmentId: entity.segmentId,
-        startNodeId: startNode.nodeId,
-        endNodeId: endNode.nodeId,
-        startPoint: clonePoint(startNode.point),
-        endPoint: clonePoint(endNode.point),
-        startOffset: Math.min(startSplit.offset, endSplit.offset),
-        endOffset: Math.max(startSplit.offset, endSplit.offset),
-        length,
-        angle: Math.atan2(endNode.point.y - startNode.point.y, endNode.point.x - startNode.point.x),
-        roomIds: [],
-        wallRole: 'external',
-      });
+      addTopologyEdge(entity, startNode, endNode, startSplit.offset, endSplit.offset);
     }
   });
 
@@ -2567,12 +2899,29 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
     .filter((node) => (outgoingByNodeId.get(node.nodeId)?.length ?? 0) <= 1)
     .map((node) => node.nodeId);
   const partitionEdgeIds = edges
-    .filter((edge) => segmentById.get(edge.segmentId)?.segmentType === 'internal')
+    .filter((edge) => edge.sourceSegmentIds.some((segmentId) => segmentById.get(segmentId)?.segmentType === 'internal'))
     .map((edge) => edge.edgeId);
+  const edgeSourceSegmentIds = new Set(edges.flatMap((edge) => edge.sourceSegmentIds));
+  const shapeSourceSegmentIds = new Set(normalizedEntities.filter((entity) => entity.shapeId).map((entity) => entity.segmentId));
+  const shapeEdgesInTopologyCount = Array.from(shapeSourceSegmentIds).filter((segmentId) => edgeSourceSegmentIds.has(segmentId)).length;
+  const virtualSplitNodeCount = nodes.filter((node) => node.segmentIds.some((segmentId) => {
+    const segment = segmentById.get(segmentId);
+
+    if (!segment) {
+      return false;
+    }
+
+    return Math.hypot(node.point.x - segment.startPoint.x, node.point.y - segment.startPoint.y) > TOPOLOGY_NODE_TOLERANCE_MM
+      && Math.hypot(node.point.x - segment.endPoint.x, node.point.y - segment.endPoint.y) > TOPOLOGY_NODE_TOLERANCE_MM;
+  })).length;
   const normalization: CanvasV4TopologyNormalizationSummary = {
     ...baseNormalization,
     invalidTopologyNodeIds,
     partitionEdgeIds,
+    normalizedEdgeCount: edges.length,
+    virtualSplitNodeCount,
+    shapeEdgesInTopologyCount,
+    ignoredShapeEdgeCount: Math.max(0, shapeSourceSegmentIds.size - shapeEdgesInTopologyCount),
   };
   const directedEdges = Array.from(outgoingByNodeId.values()).flat();
   const visitedDirectedEdges = new Set<string>();
@@ -2608,7 +2957,7 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
       visitedDirectedEdges.add(directedKey);
       vertices.push(clonePoint(fromNode.point));
       topologyEdgeIds.push(currentEdge.edgeId);
-      segmentIds.push(currentEdge.segmentId);
+      segmentIds.push(...currentEdge.sourceSegmentIds);
 
       const outgoing = outgoingByNodeId.get(currentDirectedEdge.toNodeId) ?? [];
       const reverseIndex = outgoing.findIndex((edge) =>
@@ -2656,7 +3005,7 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
     : faces.filter((face) => !face.isOuterFace);
   const roomTopologyEdgeIds = new Set(roomFaces.flatMap((face) => face.topologyEdgeIds));
   const orphanSegmentIds = normalizedEntities
-    .filter((entity) => !edges.some((edge) => edge.segmentId === entity.segmentId && roomTopologyEdgeIds.has(edge.edgeId)))
+    .filter((entity) => !edges.some((edge) => edge.sourceSegmentIds.includes(entity.segmentId) && roomTopologyEdgeIds.has(edge.edgeId)))
     .map((entity) => entity.segmentId);
   const openContourSegmentIds = roomFaces.length === 0 ? normalizedEntities.map((entity) => entity.segmentId) : [];
   const roomSplitMode: RoomSplitMode = roomFaces.length === 0 ? 'none' : roomFaces.length === 1 ? 'single-room' : 'multi-room';
@@ -3114,6 +3463,13 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
       floatingGaps: [],
       invalidTopologyNodeIds: [],
       partitionEdgeIds: [],
+      logicalWallChains: [],
+      normalizedEdgeCount: 0,
+      logicalWallChainCount: 0,
+      collinearMergedSegmentCount: 0,
+      virtualSplitNodeCount: 0,
+      shapeEdgesInTopologyCount: 0,
+      ignoredShapeEdgeCount: 0,
     },
     buildTimeMs,
   },
@@ -3138,6 +3494,13 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   isolatedRoomsCount: 0,
   invalidWindowPlacements: 0,
   roomNeighborCount: 0,
+  normalizedEdgeCount: 0,
+  logicalWallChainCount: 0,
+  collinearMergedSegmentCount: 0,
+  virtualSplitNodeCount: 0,
+  shapeEdgesInTopologyCount: 0,
+  ignoredShapeEdgeCount: 0,
+  topologyWarningsCount: 0,
 });
 
 const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
@@ -3210,7 +3573,7 @@ const createWallGraph = (
   const roomIdsBySegmentId = getRoomIdsBySegmentId(rooms);
   const walls = entities.map<CanvasV4WallGraphItem>((entity) => {
     const roomIds = roomIdsBySegmentId.get(entity.segmentId) ?? [];
-    const topologyEdges = planarGraph.edges.filter((edge) => edge.segmentId === entity.segmentId);
+    const topologyEdges = planarGraph.edges.filter((edge) => edge.sourceSegmentIds.includes(entity.segmentId));
     const topologyEdgeIds = topologyEdges.map((edge) => edge.edgeId);
     const hasSharedEdge = topologyEdges.some((edge) => edge.wallRole === 'shared');
     const hasExternalEdge = topologyEdges.some((edge) => edge.wallRole === 'external');
@@ -3244,9 +3607,9 @@ const findTopologyEdgeForOpening = (
   const openingEnd = opening.positionOnSegment + opening.width / 2;
 
   return planarGraph.edges.find((edge) =>
-    edge.segmentId === opening.segmentId &&
-    openingStart >= edge.startOffset - TOPOLOGY_NODE_TOLERANCE_MM &&
-    openingEnd <= edge.endOffset + TOPOLOGY_NODE_TOLERANCE_MM,
+    edge.sourceSegmentIds.includes(opening.segmentId) &&
+    openingStart >= (edge.sourceOffsetsBySegmentId[opening.segmentId]?.startOffset ?? edge.startOffset) - TOPOLOGY_NODE_TOLERANCE_MM &&
+    openingEnd <= (edge.sourceOffsetsBySegmentId[opening.segmentId]?.endOffset ?? edge.endOffset) + TOPOLOGY_NODE_TOLERANCE_MM,
   ) ?? null;
 };
 
@@ -3338,6 +3701,12 @@ const createRoomConnectionGraph = (
       if (!connection.sharedWallSegmentIds.includes(edge.segmentId)) {
         connection.sharedWallSegmentIds.push(edge.segmentId);
       }
+
+      edge.sourceSegmentIds.forEach((segmentId) => {
+        if (!connection.sharedWallSegmentIds.includes(segmentId)) {
+          connection.sharedWallSegmentIds.push(segmentId);
+        }
+      });
     });
 
   connectionGraph.doorConnections
@@ -3443,13 +3812,16 @@ const validateOpeningPosition = (
   const endGap = segment.length - (opening.positionOnSegment + opening.width / 2);
   const openingStart = opening.positionOnSegment - opening.width / 2;
   const openingEnd = opening.positionOnSegment + opening.width / 2;
+  const topologyEdgeOffsets = topologyEdge?.sourceOffsetsBySegmentId[opening.segmentId];
+  const topologyStartOffset = topologyEdgeOffsets?.startOffset ?? topologyEdge?.startOffset ?? 0;
+  const topologyEndOffset = topologyEdgeOffsets?.endOffset ?? topologyEdge?.endOffset ?? 0;
   const isOutsideSegment = startGap < -TOPOLOGY_NODE_TOLERANCE_MM || endGap < -TOPOLOGY_NODE_TOLERANCE_MM;
   const isOutsideTopologyEdge = !topologyEdge ||
-    openingStart < topologyEdge.startOffset - TOPOLOGY_NODE_TOLERANCE_MM ||
-    openingEnd > topologyEdge.endOffset + TOPOLOGY_NODE_TOLERANCE_MM;
+    openingStart < topologyStartOffset - TOPOLOGY_NODE_TOLERANCE_MM ||
+    openingEnd > topologyEndOffset + TOPOLOGY_NODE_TOLERANCE_MM;
   const isNearJoint = !topologyEdge ||
-    openingStart < topologyEdge.startOffset + ATTACHMENT_EDGE_CLEARANCE_MM ||
-    openingEnd > topologyEdge.endOffset - ATTACHMENT_EDGE_CLEARANCE_MM;
+    openingStart < topologyStartOffset + ATTACHMENT_EDGE_CLEARANCE_MM ||
+    openingEnd > topologyEndOffset - ATTACHMENT_EDGE_CLEARANCE_MM;
   const hasOverlap = allOpeningsOnSegment.some((candidate) =>
     candidate.id !== opening.id && openingSpansOverlap(opening, candidate, ATTACHMENT_OVERLAP_CLEARANCE_MM / 2),
   );
@@ -3642,6 +4014,13 @@ const buildCanvasV4Topology = (
     isolatedRoomsCount: roomConnectionGraph.isolatedRoomIds.length,
     invalidWindowPlacements: invalidWindowCount,
     roomNeighborCount: Object.values(roomConnectionGraph.neighborRoomIdsByRoomId).reduce((sum, neighbors) => sum + neighbors.length, 0),
+    normalizedEdgeCount: planarGraph.normalization.normalizedEdgeCount,
+    logicalWallChainCount: planarGraph.normalization.logicalWallChainCount,
+    collinearMergedSegmentCount: planarGraph.normalization.collinearMergedSegmentCount,
+    virtualSplitNodeCount: planarGraph.normalization.virtualSplitNodeCount,
+    shapeEdgesInTopologyCount: planarGraph.normalization.shapeEdgesInTopologyCount,
+    ignoredShapeEdgeCount: planarGraph.normalization.ignoredShapeEdgeCount,
+    topologyWarningsCount: warnings.length,
   };
 };
 
@@ -4044,6 +4423,38 @@ const getDimensionSpatialAnalysis = (entity: CanvasV4LineEntity, entities: Canva
     neighborInfo,
     isHorizontalLike,
     isVerticalLike,
+  };
+};
+
+const getOutsideDimensionSpatialAnalysis = (
+  entity: CanvasV4LineEntity,
+  entities: CanvasV4LineEntity[],
+  spatialAnalysis: DimensionSpatialAnalysis,
+): DimensionSpatialAnalysis => {
+  const projectBox = getDimensionProjectBoundingBox(entities);
+
+  if (!projectBox || (!spatialAnalysis.isHorizontalLike && !spatialAnalysis.isVerticalLike)) {
+    return spatialAnalysis;
+  }
+
+  const entityBox = getEntityBoundingBox(entity);
+  let side = spatialAnalysis.side;
+
+  if (spatialAnalysis.isHorizontalLike) {
+    const distanceToTop = Math.abs(entityBox.minY - projectBox.minY);
+    const distanceToBottom = Math.abs(projectBox.maxY - entityBox.maxY);
+    side = distanceToTop <= distanceToBottom ? 'top' : 'bottom';
+  }
+
+  if (spatialAnalysis.isVerticalLike) {
+    const distanceToLeft = Math.abs(entityBox.minX - projectBox.minX);
+    const distanceToRight = Math.abs(projectBox.maxX - entityBox.maxX);
+    side = distanceToLeft <= distanceToRight ? 'left' : 'right';
+  }
+
+  return {
+    ...spatialAnalysis,
+    side,
   };
 };
 
@@ -4695,8 +5106,12 @@ export const CanvasV4DevScreen = () => {
       const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
       const outwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
       const spatialAnalysis = getDimensionSpatialAnalysis(entity, entities, outwardNormal);
-      const baseOffset = spatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX;
-      return getDimensionPlacement(geometry, outwardNormal, baseOffset, spatialAnalysis);
+      const level = getDimensionLevel(entity, spatialAnalysis);
+      const placementSpatialAnalysis = level === 'external'
+        ? spatialAnalysis
+        : getOutsideDimensionSpatialAnalysis(entity, entities, spatialAnalysis);
+      const baseOffset = placementSpatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX;
+      return getDimensionPlacement(geometry, outwardNormal, baseOffset, placementSpatialAnalysis);
     },
     [entities],
   );
@@ -4873,8 +5288,11 @@ export const CanvasV4DevScreen = () => {
     const dimensionCandidates = entities.map((entity) => {
       const contourInfo = getClosedPolylineInfoForEntity(entity, entities);
       const closedContourOutwardNormal = contourInfo ? getClosedContourOutwardNormal(entity, contourInfo) : null;
-      const spatialAnalysis = getDimensionSpatialAnalysis(entity, entities, closedContourOutwardNormal);
-      const level = getDimensionLevel(entity, spatialAnalysis);
+      const rawSpatialAnalysis = getDimensionSpatialAnalysis(entity, entities, closedContourOutwardNormal);
+      const level = getDimensionLevel(entity, rawSpatialAnalysis);
+      const spatialAnalysis = level === 'external'
+        ? rawSpatialAnalysis
+        : getOutsideDimensionSpatialAnalysis(entity, entities, rawSpatialAnalysis);
 
       return {
         entity,
@@ -6693,6 +7111,12 @@ export const CanvasV4DevScreen = () => {
       `topologyNodesCount: ${projectInterpretation.topology.topologyNodeCount}`,
       `topologyEdgeCount: ${projectInterpretation.topology.topologyEdgeCount}`,
       `detectedFaceCount: ${projectInterpretation.topology.detectedFaceCount}`,
+      `normalizedEdgeCount: ${projectInterpretation.topology.normalizedEdgeCount}`,
+      `logicalWallChainCount: ${projectInterpretation.topology.logicalWallChainCount}`,
+      `collinearMergedSegmentCount: ${projectInterpretation.topology.collinearMergedSegmentCount}`,
+      `virtualSplitNodeCount: ${projectInterpretation.topology.virtualSplitNodeCount}`,
+      `shapeEdgesInTopologyCount: ${projectInterpretation.topology.shapeEdgesInTopologyCount}`,
+      `ignoredShapeEdgeCount: ${projectInterpretation.topology.ignoredShapeEdgeCount}`,
       `outerFaceId: ${projectInterpretation.topology.outerFaceId ?? 'null'}`,
       `detectedRoomCount: ${projectRooms.length}`,
       `detectedRoomsCount: ${projectRooms.length}`,
@@ -6720,6 +7144,7 @@ export const CanvasV4DevScreen = () => {
       `selectedRoomArea: ${selectedRoom ? formatRoomArea(selectedRoom.roomArea) : 'null'}`,
       `selectedRoomSegmentsCount: ${selectedRoom?.roomSegments.length ?? 0}`,
       `topologyWarnings: ${projectTopologyWarnings.length}`,
+      `topologyWarningsCount: ${projectInterpretation.topology.topologyWarningsCount}`,
       `topologyBuildTime: ${projectInterpretation.topologyBuildTimeMs} ms`,
       `topologyBuildTimeMs: ${projectInterpretation.topologyBuildTimeMs}`,
       `roomDetectionState: ${projectInterpretation.roomDetectionState}`,
@@ -6749,7 +7174,7 @@ export const CanvasV4DevScreen = () => {
       `lastInteractionType: ${lastInteractionType}`,
       `showLineDimensions: ${showLineDimensions ? 'true' : 'false'}`,
       `dimensionDisplayMode: ${dimensionDisplayMode}`,
-      'dimensionPlacementEngine: spatial-v1',
+      'dimensionPlacementEngine: spatial-v2-outside-detail',
       `visibleDimensionsCount: ${visibleDimensions.length}`,
       `liveDimensionsPreviewCount: ${liveDimensionPreviewItems.length}`,
       `dimensionCollisionAvoidance: ${dimensionCollisionAvoidance ? 'true' : 'false'}`,
@@ -7228,8 +7653,9 @@ export const CanvasV4DevScreen = () => {
                     <View style={styles.projectDataRoomNameBlock}>
                       <Text style={styles.projectDataRoomName}>{room.displayName || `Помещение ${index + 1}`}</Text>
                       <Text style={styles.projectDataRoomMeta}>
-                        {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomPerimeter(room.perimeter)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
+                        {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomArea(room.area)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
                       </Text>
+                      <Text style={styles.projectDataRoomMeta}>Периметр: {formatRoomPerimeter(room.perimeter)}</Text>
                       <Text style={styles.projectDataRoomMeta}>Связи: {room.neighborRoomIds.length > 0 ? room.neighborRoomIds.map((roomId) => roomDisplayNameById.get(roomId) ?? roomId).join(', ') : 'нет'}</Text>
                       {room.warnings.length > 0 ? (
                         <Text style={styles.projectDataRoomWarning}>{room.warnings.map((warning) => warning.message).join(', ')}</Text>
