@@ -40,6 +40,7 @@ const homeCardImages: Record<string, ImageSourcePropType> = {
 
 export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) => {
   const { userLocation, setUserLocation } = useAppStore();
+  const isLocationBlockVisible = false;
   const categories = useMemo<HomeCategory[]>(
     () => [
       { id: 'services', title: 'Вызвать мастера', route: 'Services' },
@@ -92,11 +93,13 @@ export const HomeScreen = ({ onMenuPress, onCategoryPress }: HomeScreenProps) =>
       <AppHeader onMenuPress={onMenuPress} isHome />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.locationBlock}>
-          <Text style={styles.locationTitle}>Укажите местоположение</Text>
-          <Text style={styles.locationSubtitle}>Чтобы найти мастеров рядом</Text>
-          <LocationPicker title="Местоположение" value={userLocation} onChange={(next) => void setUserLocation(next)} />
-        </View>
+        {isLocationBlockVisible ? (
+          <View style={styles.locationBlock}>
+            <Text style={styles.locationTitle}>Укажите местоположение</Text>
+            <Text style={styles.locationSubtitle}>Чтобы найти мастеров рядом</Text>
+            <LocationPicker title="Местоположение" value={userLocation} onChange={(next) => void setUserLocation(next)} />
+          </View>
+        ) : null}
 
         <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>

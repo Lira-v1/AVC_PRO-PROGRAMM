@@ -44,10 +44,7 @@ export const CompactCardGrid = <T extends GridItem,>({ items, onItemPress }: Com
                     style={styles.cardImage}
                     imageStyle={styles.cardImageRadius}
                     resizeMode="cover"
-                  >
-                    <View style={styles.imageOverlay} />
-                    <Text style={[styles.cardTitle, styles.imageCardTitle]}>{item.title}</Text>
-                  </ImageBackground>
+                  />
                 ) : (
                   <>
                     <View style={styles.iconPlaceholder} />
