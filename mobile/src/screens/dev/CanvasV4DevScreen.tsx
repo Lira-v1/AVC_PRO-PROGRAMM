@@ -19,7 +19,7 @@ type CornerJoinMode = 'bevel';
 type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
 type SegmentSpatialRole = 'external-like' | 'internal-like' | 'unknown';
 type CanvasV4Mode = 'plan' | 'project';
-type CanvasV4ViewMode = 'plan' | 'clean-plan' | 'project-data';
+type CanvasV4ViewMode = 'plan' | 'project-data' | 'executive' | 'inside-view';
 type CircleVisualMode = 'smooth' | 'segmented';
 type CanvasEntryStep = 'start' | 'template-categories' | 'apartment-gallery' | 'canvas';
 type TemplateCategory = 'apartment' | 'house' | 'cottage';
@@ -569,6 +569,9 @@ const SNAP_PRIORITY_LABEL = 'endpoint > grid > angle';
 const DIMENSION_BASE_OFFSET_PX = 34;
 const DIMENSION_INTERNAL_OFFSET_PX = 22;
 const DIMENSION_COLLISION_STEP_PX = 16;
+const DIMENSION_BASE_OFFSET_MM = DIMENSION_BASE_OFFSET_PX / DEFAULT_ZOOM;
+const DIMENSION_INTERNAL_OFFSET_MM = DIMENSION_INTERNAL_OFFSET_PX / DEFAULT_ZOOM;
+const DIMENSION_COLLISION_STEP_MM = DIMENSION_COLLISION_STEP_PX / DEFAULT_ZOOM;
 const DIMENSION_MAX_COLLISION_PASSES = 5;
 const DIMENSION_SPATIAL_NEIGHBOR_DISTANCE_MM = 1200;
 const DIMENSION_SPATIAL_PROJECTION_PADDING_MM = 120;
@@ -637,10 +640,21 @@ const CANVAS_V4_PLAN_VIEW_STATE: CanvasV4ViewState = {
   showSurfaceLayer: false,
   showPrintableMode: false,
 };
-const CANVAS_V4_CLEAN_PLAN_VIEW_STATE: CanvasV4ViewState = {
-  currentViewMode: 'clean-plan',
-  showRoomLabels: false,
-  showRoomAreas: false,
+const CANVAS_V4_PROJECT_DATA_VIEW_STATE: CanvasV4ViewState = {
+  currentViewMode: 'project-data',
+  showRoomLabels: true,
+  showRoomAreas: true,
+  showDimensions: false,
+  showWarnings: true,
+  showProjectOverlays: false,
+  showEngineeringLayer: true,
+  showSurfaceLayer: false,
+  showPrintableMode: true,
+};
+const CANVAS_V4_EXECUTIVE_VIEW_STATE: CanvasV4ViewState = {
+  currentViewMode: 'executive',
+  showRoomLabels: true,
+  showRoomAreas: true,
   showDimensions: true,
   showWarnings: false,
   showProjectOverlays: false,
@@ -648,29 +662,45 @@ const CANVAS_V4_CLEAN_PLAN_VIEW_STATE: CanvasV4ViewState = {
   showSurfaceLayer: false,
   showPrintableMode: true,
 };
-const CANVAS_V4_PROJECT_DATA_VIEW_STATE: CanvasV4ViewState = {
-  currentViewMode: 'project-data',
+const CANVAS_V4_INSIDE_VIEW_STATE: CanvasV4ViewState = {
+  currentViewMode: 'inside-view',
   showRoomLabels: false,
   showRoomAreas: false,
   showDimensions: false,
   showWarnings: false,
   showProjectOverlays: false,
   showEngineeringLayer: true,
-  showSurfaceLayer: false,
-  showPrintableMode: true,
+  showSurfaceLayer: true,
+  showPrintableMode: false,
 };
 
 const getDefaultCanvasV4ViewState = (viewMode: CanvasV4ViewMode): CanvasV4ViewState => {
   switch (viewMode) {
-    case 'clean-plan':
-      return { ...CANVAS_V4_CLEAN_PLAN_VIEW_STATE };
     case 'project-data':
       return { ...CANVAS_V4_PROJECT_DATA_VIEW_STATE };
+    case 'executive':
+      return { ...CANVAS_V4_EXECUTIVE_VIEW_STATE };
+    case 'inside-view':
+      return { ...CANVAS_V4_INSIDE_VIEW_STATE };
     case 'plan':
     default:
       return { ...CANVAS_V4_PLAN_VIEW_STATE };
   }
 };
+
+const applyCanvasV4ViewMode = (current: CanvasV4ViewState, viewMode: CanvasV4ViewMode): CanvasV4ViewState => {
+  const modeDefaults = getDefaultCanvasV4ViewState(viewMode);
+
+  return {
+    ...current,
+    currentViewMode: viewMode,
+    showEngineeringLayer: modeDefaults.showEngineeringLayer,
+    showSurfaceLayer: modeDefaults.showSurfaceLayer,
+    showPrintableMode: modeDefaults.showPrintableMode,
+  };
+};
+
+const getWorldSpaceDimensionOffsetPx = (offsetMm: number, zoom: number) => Math.max(12, offsetMm * zoom);
 
 type LineScreenGeometry = {
   length: number;
@@ -735,6 +765,7 @@ type DimensionSpatialAnalysis = {
   neighborInfo: DimensionNeighborInfo;
   isHorizontalLike: boolean;
   isVerticalLike: boolean;
+  offsetNormal?: Point;
 };
 
 type DimensionLabelPlacement = {
@@ -4326,6 +4357,16 @@ const getDimensionSideNormal = (side: DimensionSide): Point => {
   }
 };
 
+const getDimensionSideFromNormal = (normal: Point): DimensionSide => {
+  const normalized = normalizeVector(normal);
+
+  if (Math.abs(normalized.x) > Math.abs(normalized.y)) {
+    return normalized.x < 0 ? 'left' : 'right';
+  }
+
+  return normalized.y < 0 ? 'top' : 'bottom';
+};
+
 const getEntityBoundingBox = (entity: CanvasV4LineEntity): BoundingBox => ({
   minX: Math.min(entity.startPoint.x, entity.endPoint.x),
   maxX: Math.max(entity.startPoint.x, entity.endPoint.x),
@@ -4348,6 +4389,37 @@ const getDimensionProjectBoundingBox = (entities: CanvasV4LineEntity[]): Boundin
       maxY: Math.max(box.maxY, entityBox.maxY),
     };
   }, getEntityBoundingBox(entities[0]));
+};
+
+const getStableDiagonalDimensionNormal = (entity: CanvasV4LineEntity, projectBox: BoundingBox, fallbackNormal: Point): Point => {
+  const { leftNormal } = getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint);
+  const entityBox = getEntityBoundingBox(entity);
+  const entityCenter = {
+    x: (entityBox.minX + entityBox.maxX) / 2,
+    y: (entityBox.minY + entityBox.maxY) / 2,
+  };
+  const projectCenter = {
+    x: (projectBox.minX + projectBox.maxX) / 2,
+    y: (projectBox.minY + projectBox.maxY) / 2,
+  };
+  const projectOutward = normalizeVector({
+    x: entityCenter.x - projectCenter.x,
+    y: entityCenter.y - projectCenter.y,
+  });
+  const candidateNormal = normalizeVector(leftNormal);
+  const fallback = normalizeVector(fallbackNormal);
+  const candidateDot = candidateNormal.x * projectOutward.x + candidateNormal.y * projectOutward.y;
+
+  if (Math.abs(projectOutward.x) < 0.000001 && Math.abs(projectOutward.y) < 0.000001) {
+    return fallback;
+  }
+
+  if (Math.abs(candidateDot) < 0.12) {
+    const fallbackDot = fallback.x * projectOutward.x + fallback.y * projectOutward.y;
+    return fallbackDot < 0 ? { x: -fallback.x, y: -fallback.y } : fallback;
+  }
+
+  return candidateDot < 0 ? { x: -candidateNormal.x, y: -candidateNormal.y } : candidateNormal;
 };
 
 const rangesOverlap = (aMin: number, aMax: number, bMin: number, bMax: number, padding = 0) => aMax + padding >= bMin && bMax + padding >= aMin;
@@ -4414,18 +4486,32 @@ const getDimensionSpatialAnalysis = (entity: CanvasV4LineEntity, entities: Canva
   const fallbackNormal = closedContourOutwardNormal ?? getPreferredOpenLineNormal(getSegmentUnitAndLeftNormal(entity.startPoint, entity.endPoint).leftNormal);
   const fallback = getDefaultDimensionSpatialAnalysis(fallbackNormal);
   const projectBox = getDimensionProjectBoundingBox(entities);
+  const neighborInfo = getNearestNeighborInfo(entity, entities);
 
-  if (!projectBox || (!isHorizontalLike && !isVerticalLike)) {
+  if (!projectBox) {
     return {
       ...fallback,
-      neighborInfo: getNearestNeighborInfo(entity, entities),
+      neighborInfo,
       isHorizontalLike,
       isVerticalLike,
+      offsetNormal: fallbackNormal,
+    };
+  }
+
+  if (!isHorizontalLike && !isVerticalLike) {
+    const offsetNormal = getStableDiagonalDimensionNormal(entity, projectBox, fallbackNormal);
+
+    return {
+      ...fallback,
+      side: getDimensionSideFromNormal(offsetNormal),
+      neighborInfo,
+      isHorizontalLike,
+      isVerticalLike,
+      offsetNormal,
     };
   }
 
   const entityBox = getEntityBoundingBox(entity);
-  const neighborInfo = getNearestNeighborInfo(entity, entities);
   const touchesTopBoundary = Math.abs(entityBox.minY - projectBox.minY) <= DIMENSION_BOUNDARY_EPSILON_MM;
   const touchesBottomBoundary = Math.abs(entityBox.maxY - projectBox.maxY) <= DIMENSION_BOUNDARY_EPSILON_MM;
   const touchesLeftBoundary = Math.abs(entityBox.minX - projectBox.minX) <= DIMENSION_BOUNDARY_EPSILON_MM;
@@ -4481,6 +4567,7 @@ const getDimensionSpatialAnalysis = (entity: CanvasV4LineEntity, entities: Canva
     neighborInfo,
     isHorizontalLike,
     isVerticalLike,
+    offsetNormal: getDimensionSideNormal(side),
   };
 };
 
@@ -4491,8 +4578,22 @@ const getOutsideDimensionSpatialAnalysis = (
 ): DimensionSpatialAnalysis => {
   const projectBox = getDimensionProjectBoundingBox(entities);
 
-  if (!projectBox || (!spatialAnalysis.isHorizontalLike && !spatialAnalysis.isVerticalLike)) {
+  if (!projectBox) {
     return spatialAnalysis;
+  }
+
+  if (!spatialAnalysis.isHorizontalLike && !spatialAnalysis.isVerticalLike) {
+    const offsetNormal = getStableDiagonalDimensionNormal(
+      entity,
+      projectBox,
+      spatialAnalysis.offsetNormal ?? getDimensionSideNormal(spatialAnalysis.side),
+    );
+
+    return {
+      ...spatialAnalysis,
+      side: getDimensionSideFromNormal(offsetNormal),
+      offsetNormal,
+    };
   }
 
   const entityBox = getEntityBoundingBox(entity);
@@ -4513,6 +4614,7 @@ const getOutsideDimensionSpatialAnalysis = (
   return {
     ...spatialAnalysis,
     side,
+    offsetNormal: getDimensionSideNormal(side),
   };
 };
 
@@ -4618,7 +4720,7 @@ const getDimensionPlacement = (
   let placementMode: DimensionLabelPlacementMode = 'line-normal-offset';
 
   if (spatialAnalysis) {
-    offsetNormal = getDimensionSideNormal(spatialAnalysis.side);
+    offsetNormal = normalizeVector(spatialAnalysis.offsetNormal ?? getDimensionSideNormal(spatialAnalysis.side));
     placementMode = 'closed-contour-outside';
   } else if (closedContourOutwardNormalScreen) {
     offsetNormal = normalizeVector(closedContourOutwardNormalScreen);
@@ -4746,14 +4848,19 @@ export const CanvasV4DevScreen = () => {
   const [customRoomNames, setCustomRoomNames] = useState<Record<string, string>>({});
 
   const projectCreated = Boolean(projectState);
+  const isPlanViewMode = viewState.currentViewMode === 'plan';
+  const isExecutiveViewMode = viewState.currentViewMode === 'executive';
   const isProjectDataPanelOpen = projectCreated && viewState.currentViewMode === 'project-data';
   const projectSpatialDataAvailable = projectCreated;
-  const projectIntelligenceVisible = projectCreated && viewState.showProjectOverlays;
-  const roomPresentationVisible = projectCreated && (viewState.showProjectOverlays || viewState.showRoomLabels || viewState.showRoomAreas);
-  const roomLabelsVisible = projectCreated && viewState.showRoomLabels;
-  const roomAreasVisible = projectCreated && viewState.showRoomAreas;
-  const warningLayerVisible = projectCreated && viewState.showWarnings;
-  const dimensionLayerVisible = showLineDimensions && viewState.showDimensions;
+  const projectIntelligenceVisible = projectCreated && isPlanViewMode && viewState.showProjectOverlays;
+  const roomPresentationVisible = projectCreated && isPlanViewMode && (viewState.showProjectOverlays || viewState.showRoomLabels || viewState.showRoomAreas);
+  const roomLabelsVisible = projectCreated && isPlanViewMode && viewState.showRoomLabels;
+  const roomAreasVisible = projectCreated && isPlanViewMode && viewState.showRoomAreas;
+  const warningLayerVisible = projectCreated && isPlanViewMode && viewState.showWarnings;
+  const dimensionLayerVisible = showLineDimensions && viewState.showDimensions && (isPlanViewMode || isExecutiveViewMode);
+  const dimensionBaseOffsetPx = getWorldSpaceDimensionOffsetPx(DIMENSION_BASE_OFFSET_MM, cameraZoom);
+  const dimensionInternalOffsetPx = getWorldSpaceDimensionOffsetPx(DIMENSION_INTERNAL_OFFSET_MM, cameraZoom);
+  const dimensionCollisionStepPx = getWorldSpaceDimensionOffsetPx(DIMENSION_COLLISION_STEP_MM, cameraZoom);
   const projectDataModeActive = isProjectDataPanelOpen;
   const isMobileProjectDataLayout = windowWidth < 720;
 
@@ -4905,19 +5012,8 @@ export const CanvasV4DevScreen = () => {
     }
 
     setCurrentCanvasMode('project');
-    setViewState(getDefaultCanvasV4ViewState('plan'));
+    setViewState((current) => applyCanvasV4ViewMode(current, 'plan'));
     setLastActionType('VIEW_MODE_PLAN');
-  }, [projectState]);
-
-  const openCleanPlanViewMode = useCallback(() => {
-    if (!projectState) {
-      return;
-    }
-
-    setCurrentCanvasMode('project');
-    setViewState(getDefaultCanvasV4ViewState('clean-plan'));
-    setSelectedRoomId(null);
-    setLastActionType('VIEW_MODE_CLEAN_PLAN');
   }, [projectState]);
 
   const openProjectDataMode = useCallback(() => {
@@ -4926,8 +5022,31 @@ export const CanvasV4DevScreen = () => {
     }
 
     setCurrentCanvasMode('project');
-    setViewState(getDefaultCanvasV4ViewState('project-data'));
+    setViewState((current) => applyCanvasV4ViewMode(current, 'project-data'));
+    setSelectedRoomId(null);
     setLastActionType('VIEW_MODE_PROJECT_DATA');
+  }, [projectState]);
+
+  const openExecutiveViewMode = useCallback(() => {
+    if (!projectState) {
+      return;
+    }
+
+    setCurrentCanvasMode('project');
+    setViewState((current) => applyCanvasV4ViewMode(current, 'executive'));
+    setSelectedRoomId(null);
+    setLastActionType('VIEW_MODE_EXECUTIVE');
+  }, [projectState]);
+
+  const openInsideViewMode = useCallback(() => {
+    if (!projectState) {
+      return;
+    }
+
+    setCurrentCanvasMode('project');
+    setViewState((current) => applyCanvasV4ViewMode(current, 'inside-view'));
+    setSelectedRoomId(null);
+    setLastActionType('VIEW_MODE_INSIDE_VIEW');
   }, [projectState]);
 
   const toggleViewLayer = useCallback((layer: 'showRoomLabels' | 'showRoomAreas' | 'showDimensions' | 'showWarnings' | 'showProjectOverlays') => {
@@ -5199,15 +5318,15 @@ export const CanvasV4DevScreen = () => {
       const placementSpatialAnalysis = level === 'external'
         ? spatialAnalysis
         : getOutsideDimensionSpatialAnalysis(entity, entities, spatialAnalysis);
-      const baseOffset = placementSpatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX;
+      const baseOffset = placementSpatialAnalysis.role === 'internal-like' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx;
       return getDimensionPlacement(geometry, outwardNormal, baseOffset, placementSpatialAnalysis);
     },
-    [entities],
+    [dimensionBaseOffsetPx, dimensionInternalOffsetPx, entities],
   );
 
   const getPreviewDimensionLabelPlacement = useCallback(
-    (geometry: LineScreenGeometry) => getDimensionPlacement(geometry, null, DIMENSION_INTERNAL_OFFSET_PX),
-    [],
+    (geometry: LineScreenGeometry) => getDimensionPlacement(geometry, null, dimensionInternalOffsetPx),
+    [dimensionInternalOffsetPx],
   );
 
   const visibleDimensions = useMemo<DimensionScreenItem[]>(() => {
@@ -5215,7 +5334,7 @@ export const CanvasV4DevScreen = () => {
       return [];
     }
 
-    const activeDimensionDisplayMode = viewState.currentViewMode === 'clean-plan' ? 'minimal' : dimensionDisplayMode;
+    const activeDimensionDisplayMode = viewState.currentViewMode === 'executive' ? 'minimal' : dimensionDisplayMode;
     const selectedDimensionEntityIds = new Set(selectedEntityIds);
     const selectedShapeIds = new Set(selectedEntityIds.map((entityId) => entities.find((entity) => entity.entityId === entityId)?.shapeId).filter((shapeId): shapeId is string => Boolean(shapeId)));
     const openingRects: ScreenRect[] = [...doors.map((door) => {
@@ -5251,6 +5370,18 @@ export const CanvasV4DevScreen = () => {
         bottom: center.y + 14,
       };
     })].filter((rect): rect is ScreenRect => Boolean(rect));
+    const roomLabelRects: ScreenRect[] = roomPresentationVisible && (roomLabelsVisible || roomAreasVisible)
+      ? projectRooms.map((room) => {
+        const labelPoint = worldToScreen(room.roomCenter);
+
+        return {
+          left: labelPoint.x - 54,
+          top: labelPoint.y - 22,
+          right: labelPoint.x + 54,
+          bottom: labelPoint.y + 22,
+        };
+      })
+      : [];
     const wallRects = entities.map((entity) => {
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
       const wallPadding = Math.max(entity.wallThickness * cameraZoom, 8);
@@ -5267,12 +5398,12 @@ export const CanvasV4DevScreen = () => {
         isHorizontalLike: side === 'top' || side === 'bottom',
         isVerticalLike: side === 'left' || side === 'right',
       };
-      return getDimensionPlacement(geometry, null, DIMENSION_BASE_OFFSET_PX, spatialAnalysis);
+      return getDimensionPlacement(geometry, null, dimensionBaseOffsetPx, spatialAnalysis);
     };
     const countDimensionCollisions = (placement: DimensionLabelPlacement) => {
       const labelRect = getDimensionLabelRect(placement);
       const lineRect = getLineScreenRect(placement.lineStart, placement.lineEnd, 3);
-      const labelCollisions = [...openingRects, ...placedLabelRects, ...wallRects].filter((rect) => rectsOverlap(labelRect, rect, 6)).length;
+      const labelCollisions = [...openingRects, ...placedLabelRects, ...roomLabelRects, ...wallRects].filter((rect) => rectsOverlap(labelRect, rect, 6)).length;
       const lineCollisions = [...openingRects, ...placedLineRects, ...wallRects].filter((rect) => rectsOverlap(lineRect, rect, 6)).length;
 
       return labelCollisions + lineCollisions;
@@ -5355,7 +5486,7 @@ export const CanvasV4DevScreen = () => {
           screenStart,
           screenEnd,
         };
-        const placement = getDimensionPlacement(geometry, null, DIMENSION_BASE_OFFSET_PX, {
+        const placement = getDimensionPlacement(geometry, null, dimensionBaseOffsetPx, {
           side: isHorizontalDiameter ? 'top' : 'right',
           role: 'external-like',
           neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
@@ -5429,15 +5560,15 @@ export const CanvasV4DevScreen = () => {
       const isSelected = selectedDimensionEntityIds.has(entity.entityId);
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
       const baseOffset = activeDimensionDisplayMode === 'full'
-        ? (spatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX + 8)
-        : (level === 'internal' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX);
-      const collisionStep = activeDimensionDisplayMode === 'architectural' && level === 'internal' ? 6 : DIMENSION_COLLISION_STEP_PX;
+        ? (spatialAnalysis.role === 'internal-like' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx + getWorldSpaceDimensionOffsetPx(100, cameraZoom))
+        : (level === 'internal' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx);
+      const collisionStep = activeDimensionDisplayMode === 'architectural' && level === 'internal' ? Math.max(4, dimensionCollisionStepPx * 0.375) : dimensionCollisionStepPx;
       const maxOffset = activeDimensionDisplayMode === 'architectural' && level === 'internal'
-        ? DIMENSION_BASE_OFFSET_PX - 4
+        ? Math.max(baseOffset, dimensionBaseOffsetPx - getWorldSpaceDimensionOffsetPx(50, cameraZoom))
         : Number.POSITIVE_INFINITY;
       let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset, spatialAnalysis);
       let collisionAvoidancePasses = 0;
-      const labelObstacles = activeDimensionDisplayMode === 'full' ? [...openingRects, ...placedLabelRects] : [...openingRects, ...placedLabelRects, ...wallRects];
+      const labelObstacles = activeDimensionDisplayMode === 'full' ? [...openingRects, ...placedLabelRects, ...roomLabelRects] : [...openingRects, ...placedLabelRects, ...roomLabelRects, ...wallRects];
       const lineObstacles = activeDimensionDisplayMode === 'full' ? [...openingRects, ...placedLineRects] : [...openingRects, ...placedLineRects, ...wallRects];
       let hasCollision = labelObstacles.some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
         || lineObstacles.some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6));
@@ -5473,12 +5604,19 @@ export const CanvasV4DevScreen = () => {
     });
 
     return [...shapeDimensions, ...segmentDimensions];
-  }, [cameraZoom, dimensionDisplayMode, dimensionLayerVisible, doors, entities, getLineScreenGeometry, selectedEntityIds, shapeGroups, viewState.currentViewMode, windows, worldToScreen]);
+  }, [cameraZoom, dimensionBaseOffsetPx, dimensionCollisionStepPx, dimensionDisplayMode, dimensionInternalOffsetPx, dimensionLayerVisible, doors, entities, getLineScreenGeometry, projectRooms, roomAreasVisible, roomLabelsVisible, roomPresentationVisible, selectedEntityIds, shapeGroups, viewState.currentViewMode, windows, worldToScreen]);
 
-  const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.placement.spatialRole === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX));
+  const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.placement.spatialRole === 'internal-like' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx));
   const dimensionOffsetPx = visibleDimensions.length > 0
     ? Math.max(...visibleDimensions.map((dimension) => dimension.placement.offsetPx))
     : 0;
+  const diagonalDimensionCount = visibleDimensions.filter((dimension) => {
+    const angle = normalizeAngle(dimension.entity.angle);
+    const isHorizontalLike = angularDistance(angle, 0) <= DIMENSION_AXIS_TOLERANCE_DEG || angularDistance(angle, 180) <= DIMENSION_AXIS_TOLERANCE_DEG;
+    const isVerticalLike = angularDistance(angle, 90) <= DIMENSION_AXIS_TOLERANCE_DEG || angularDistance(angle, 270) <= DIMENSION_AXIS_TOLERANCE_DEG;
+
+    return !isHorizontalLike && !isVerticalLike;
+  }).length;
 
   const cycleDimensionDisplayMode = useCallback(() => {
     setDimensionDisplayMode((current) => {
@@ -7131,7 +7269,7 @@ export const CanvasV4DevScreen = () => {
       return [
         {
           id: 'live-rectangle-width',
-          placement: getDimensionPlacement(widthGeometry, null, DIMENSION_INTERNAL_OFFSET_PX, {
+          placement: getDimensionPlacement(widthGeometry, null, dimensionInternalOffsetPx, {
             side: 'top',
             role: 'external-like',
             neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
@@ -7142,7 +7280,7 @@ export const CanvasV4DevScreen = () => {
         },
         {
           id: 'live-rectangle-height',
-          placement: getDimensionPlacement(heightGeometry, null, DIMENSION_INTERNAL_OFFSET_PX, {
+          placement: getDimensionPlacement(heightGeometry, null, dimensionInternalOffsetPx, {
             side: 'right',
             role: 'external-like',
             neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
@@ -7168,7 +7306,7 @@ export const CanvasV4DevScreen = () => {
 
     return [{
       id: 'live-circle-diameter',
-      placement: getDimensionPlacement(diameterGeometry, null, DIMENSION_INTERNAL_OFFSET_PX, {
+      placement: getDimensionPlacement(diameterGeometry, null, dimensionInternalOffsetPx, {
         side: 'top',
         role: 'external-like',
         neighborInfo: EMPTY_DIMENSION_NEIGHBOR_INFO,
@@ -7177,7 +7315,7 @@ export const CanvasV4DevScreen = () => {
       }),
       label: `Ø ${formatLineLength(diameter)}`,
     }];
-  }, [getLineScreenGeometry, previewDimensionLabelPlacement, previewLine, shapePreview]);
+  }, [dimensionInternalOffsetPx, getLineScreenGeometry, previewDimensionLabelPlacement, previewLine, shapePreview]);
   const selectedDimensionLabelPlacement = selectedEntities.length === 1
     ? getEntityDimensionLabelPlacement(selectedEntities[0], getLineScreenGeometry(selectedEntities[0].startPoint, selectedEntities[0].endPoint))
     : null;
@@ -7193,27 +7331,29 @@ export const CanvasV4DevScreen = () => {
       `currentCanvasMode: ${currentCanvasMode}`,
       `currentViewMode: ${viewState.currentViewMode}`,
       `visibleLayerCount: ${[
-        viewState.showRoomLabels,
-        viewState.showRoomAreas,
+        roomLabelsVisible,
+        roomAreasVisible,
         dimensionLayerVisible,
-        viewState.showWarnings,
-        viewState.showProjectOverlays,
+        warningLayerVisible,
+        projectIntelligenceVisible,
         viewState.showEngineeringLayer,
         viewState.showSurfaceLayer,
         viewState.showPrintableMode,
       ].filter(Boolean).length}`,
       `hiddenLayerCount: ${[
-        viewState.showRoomLabels,
-        viewState.showRoomAreas,
+        roomLabelsVisible,
+        roomAreasVisible,
         dimensionLayerVisible,
-        viewState.showWarnings,
-        viewState.showProjectOverlays,
+        warningLayerVisible,
+        projectIntelligenceVisible,
         viewState.showEngineeringLayer,
         viewState.showSurfaceLayer,
         viewState.showPrintableMode,
       ].filter((visible) => !visible).length}`,
       `roomLabelVisibility: ${roomLabelsVisible ? 'visible' : 'hidden'}`,
       `dimensionVisibility: ${dimensionLayerVisible ? 'visible' : 'hidden'}`,
+      'worldSpaceDimensionMode: true',
+      `diagonalDimensionCount: ${diagonalDimensionCount}`,
       `projectDataModeActive: ${projectDataModeActive ? 'true' : 'false'}`,
       `projectCreated: ${projectCreated ? 'true' : 'false'}`,
       `projectId: ${projectState?.projectId ?? 'null'}`,
@@ -7392,6 +7532,7 @@ export const CanvasV4DevScreen = () => {
       cameraZoom,
       canvasEntryStep,
       currentCanvasMode,
+      diagonalDimensionCount,
       dimensionLayerVisible,
       currentToolMode,
       dimensionCollisionAvoidance,
@@ -7445,9 +7586,11 @@ export const CanvasV4DevScreen = () => {
       projectContours.length,
       projectCreated,
       projectInterpretation,
+      projectIntelligenceVisible,
       projectRooms.length,
       projectTopologyWarnings.length,
       roomAssignmentPending,
+      roomAreasVisible,
       roomLabelsVisible,
       projectDataModeActive,
       projectState,
@@ -7473,6 +7616,7 @@ export const CanvasV4DevScreen = () => {
       selectedTemplateCategory,
       selectedTemplateVariant,
       viewState,
+      warningLayerVisible,
     ],
   );
 
@@ -7491,8 +7635,9 @@ export const CanvasV4DevScreen = () => {
   const projectTabs = projectCreated
     ? [
         { id: 'plan' as CanvasV4ViewMode, icon: '▦', label: 'План', active: viewState.currentViewMode === 'plan', onPress: openPlanViewMode },
-        { id: 'clean-plan' as CanvasV4ViewMode, icon: '□', label: 'Чистый план', active: viewState.currentViewMode === 'clean-plan', onPress: openCleanPlanViewMode },
         { id: 'project-data' as CanvasV4ViewMode, icon: 'i', label: 'Данные', active: viewState.currentViewMode === 'project-data', onPress: openProjectDataMode },
+        { id: 'executive' as CanvasV4ViewMode, icon: 'E', label: 'Executive', active: viewState.currentViewMode === 'executive', onPress: openExecutiveViewMode },
+        { id: 'inside-view' as CanvasV4ViewMode, icon: 'I', label: 'Inside', active: viewState.currentViewMode === 'inside-view', onPress: openInsideViewMode },
       ]
     : [
         { id: 'plan' as CanvasV4ViewMode, icon: '▦', label: 'План', active: true, onPress: undefined },
@@ -7504,7 +7649,7 @@ export const CanvasV4DevScreen = () => {
     : null;
   const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
   const canvasHeaderTitle = canvasEntryStep === 'canvas'
-    ? `Canvas V4 — ${viewState.currentViewMode === 'clean-plan' ? 'CLEAN PLAN' : viewState.currentViewMode === 'project-data' ? 'PROJECT DATA' : 'PLAN MODE'}`
+    ? `Canvas V4 — ${viewState.currentViewMode === 'project-data' ? 'PROJECT DATA' : viewState.currentViewMode === 'executive' ? 'EXECUTIVE' : viewState.currentViewMode === 'inside-view' ? 'INSIDE VIEW' : 'PLAN MODE'}`
     : 'Canvas V4 — старт';
 
   const renderApartmentTemplatePreview = (variant: ApartmentTemplateVariant) => {
@@ -7695,6 +7840,9 @@ export const CanvasV4DevScreen = () => {
             </Pressable>
             <Pressable style={[styles.viewLayerButton, viewState.showRoomAreas ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showRoomAreas')}>
               <Text style={[styles.viewLayerButtonText, viewState.showRoomAreas ? styles.viewLayerButtonTextActive : null]}>Площади</Text>
+            </Pressable>
+            <Pressable style={[styles.viewLayerButton, viewState.showDimensions ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showDimensions')}>
+              <Text style={[styles.viewLayerButtonText, viewState.showDimensions ? styles.viewLayerButtonTextActive : null]}>Dimensions</Text>
             </Pressable>
             <Pressable style={[styles.viewLayerButton, viewState.showWarnings ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showWarnings')}>
               <Text style={[styles.viewLayerButtonText, viewState.showWarnings ? styles.viewLayerButtonTextActive : null]}>Warnings</Text>
