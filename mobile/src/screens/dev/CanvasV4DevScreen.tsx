@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import type { DimensionValue } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 
 type Point = {
@@ -346,8 +347,12 @@ type CanvasV4WindowConnection = {
 type OpeningSurfaceRef = {
   openingId: string;
   type: 'door' | 'window';
+  segmentId: string;
+  topologyEdgeId: string;
+  positionOnSegment: number;
   width: number;
   height: number;
+  sillHeight: number;
   area: number;
 };
 
@@ -390,6 +395,45 @@ type CanvasV4SurfaceGraph = {
   wallSurfaceCount: number;
 };
 
+type ProjectedOpening = {
+  openingId: string;
+  type: 'door' | 'window';
+  localX: number;
+  width: number;
+  height: number;
+  sillHeight: number;
+  topOffset: number;
+};
+
+type WallPlane = {
+  wallPlaneId: string;
+  roomId: string;
+  wallSurfaceId: string;
+  direction: SurfaceDirection;
+  directionLabel: string;
+  width: number;
+  height: number;
+  localOrigin: Point;
+  openings: OpeningSurfaceRef[];
+  projectedOpenings: ProjectedOpening[];
+  wallOrderIndex: number;
+};
+
+type RoomWallSequence = {
+  roomId: string;
+  wallPlaneIds: string[];
+  wallSurfaceIds: string[];
+  directions: SurfaceDirection[];
+};
+
+type CanvasV4WallUnwrapGraph = {
+  roomWallSequences: RoomWallSequence[];
+  wallPlanes: WallPlane[];
+  projectedOpeningCount: number;
+  wallPlaneCount: number;
+  wallSequenceCount: number;
+};
+
 type CanvasV4ConnectionGraph = {
   doorConnections: CanvasV4DoorConnection[];
   windowConnections: CanvasV4WindowConnection[];
@@ -418,6 +462,7 @@ type CanvasV4Topology = {
   connectionGraph: CanvasV4ConnectionGraph;
   roomConnectionGraph: CanvasV4RoomConnectionGraph;
   surfaceGraph: CanvasV4SurfaceGraph;
+  wallUnwrapGraph: CanvasV4WallUnwrapGraph;
   planarGraph: CanvasV4PlanarGraph;
   warnings: CanvasV4TopologyWarning[];
   buildTimeMs: number;
@@ -455,6 +500,10 @@ type CanvasV4Topology = {
   totalGrossWallArea: number;
   totalNetWallArea: number;
   defaultRoomHeightMm: number;
+  unwrapEngineEnabled: boolean;
+  wallPlaneCount: number;
+  projectedOpeningCount: number;
+  wallSequenceCount: number;
 };
 
 type CanvasV4ProjectValidationResult = {
@@ -2127,6 +2176,24 @@ const cloneSurfaceGraph = (surfaceGraph: CanvasV4SurfaceGraph): CanvasV4SurfaceG
   wallSurfaceCount: surfaceGraph.wallSurfaceCount,
 });
 
+const cloneWallUnwrapGraph = (wallUnwrapGraph: CanvasV4WallUnwrapGraph): CanvasV4WallUnwrapGraph => ({
+  roomWallSequences: wallUnwrapGraph.roomWallSequences.map((sequence) => ({
+    ...sequence,
+    wallPlaneIds: [...sequence.wallPlaneIds],
+    wallSurfaceIds: [...sequence.wallSurfaceIds],
+    directions: [...sequence.directions],
+  })),
+  wallPlanes: wallUnwrapGraph.wallPlanes.map((wallPlane) => ({
+    ...wallPlane,
+    localOrigin: clonePoint(wallPlane.localOrigin),
+    openings: wallPlane.openings.map((opening) => ({ ...opening })),
+    projectedOpenings: wallPlane.projectedOpenings.map((opening) => ({ ...opening })),
+  })),
+  projectedOpeningCount: wallUnwrapGraph.projectedOpeningCount,
+  wallPlaneCount: wallUnwrapGraph.wallPlaneCount,
+  wallSequenceCount: wallUnwrapGraph.wallSequenceCount,
+});
+
 const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => ({
   roomGraph: {
     rooms: topology.roomGraph.rooms.map(cloneRoomEntity),
@@ -2175,6 +2242,7 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
     ),
   },
   surfaceGraph: cloneSurfaceGraph(topology.surfaceGraph),
+  wallUnwrapGraph: cloneWallUnwrapGraph(topology.wallUnwrapGraph),
   planarGraph: {
     nodes: topology.planarGraph.nodes.map((node) => ({
       ...node,
@@ -2272,6 +2340,10 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
   totalGrossWallArea: topology.totalGrossWallArea,
   totalNetWallArea: topology.totalNetWallArea,
   defaultRoomHeightMm: topology.defaultRoomHeightMm,
+  unwrapEngineEnabled: topology.unwrapEngineEnabled,
+  wallPlaneCount: topology.wallPlaneCount,
+  projectedOpeningCount: topology.projectedOpeningCount,
+  wallSequenceCount: topology.wallSequenceCount,
 });
 
 const getWallTopologyMetadata = (topology: CanvasV4Topology) =>
@@ -3638,6 +3710,13 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
     totalNetWallArea: 0,
     wallSurfaceCount: 0,
   },
+  wallUnwrapGraph: {
+    roomWallSequences: [],
+    wallPlanes: [],
+    projectedOpeningCount: 0,
+    wallPlaneCount: 0,
+    wallSequenceCount: 0,
+  },
   planarGraph: {
     nodes: [],
     edges: [],
@@ -3698,6 +3777,10 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   totalGrossWallArea: 0,
   totalNetWallArea: 0,
   defaultRoomHeightMm: DEFAULT_ROOM_HEIGHT_MM,
+  unwrapEngineEnabled: true,
+  wallPlaneCount: 0,
+  projectedOpeningCount: 0,
+  wallSequenceCount: 0,
 });
 
 const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
@@ -4014,14 +4097,63 @@ const getSurfaceDirectionFromRoomVector = (vector: Point, compassRotationDeg = 0
   return directionsByAngle[directionIndex];
 };
 
-const createOpeningSurfaceRef = (opening: CanvasV4Door | CanvasV4Window, type: 'door' | 'window'): OpeningSurfaceRef => {
+const clampToRange = (value: number, min: number, max: number) => {
+  if (max <= min) {
+    return min;
+  }
+
+  return Math.max(min, Math.min(max, value));
+};
+
+const formatPercentStyleValue = (value: number): DimensionValue => `${clampToRange(value, 0, 100).toFixed(3)}%` as DimensionValue;
+
+const getOpeningLocalXOnTopologyEdge = (opening: OpeningSurfaceRef, edge: CanvasV4PlanarEdge) => {
+  const edgeOffsets = edge.sourceOffsetsBySegmentId[opening.segmentId];
+  const topologyStartOffset = edgeOffsets?.startOffset ?? edge.startOffset ?? 0;
+  const rawLocalX = opening.positionOnSegment - topologyStartOffset;
+  const minimumLocalX = Math.min(opening.width / 2, edge.length / 2);
+  const maximumLocalX = Math.max(minimumLocalX, edge.length - minimumLocalX);
+
+  if (!Number.isFinite(rawLocalX)) {
+    return edge.length / 2;
+  }
+
+  return clampToRange(rawLocalX, minimumLocalX, maximumLocalX);
+};
+
+const createProjectedOpening = (opening: OpeningSurfaceRef, edge: CanvasV4PlanarEdge, wallHeight: number): ProjectedOpening => {
+  const sillHeight = opening.type === 'window' ? opening.sillHeight : 0;
+  const localX = getOpeningLocalXOnTopologyEdge(opening, edge);
+  const topOffset = Math.max(0, wallHeight - sillHeight - opening.height);
+
+  return {
+    openingId: opening.openingId,
+    type: opening.type,
+    localX,
+    width: Math.min(opening.width, edge.length),
+    height: opening.height,
+    sillHeight,
+    topOffset,
+  };
+};
+
+const createOpeningSurfaceRef = (
+  opening: CanvasV4Door | CanvasV4Window,
+  type: 'door' | 'window',
+  topologyEdgeId: string,
+): OpeningSurfaceRef => {
   const height = type === 'door' ? DEFAULT_DOOR_HEIGHT_MM : ('height' in opening ? opening.height : DEFAULT_WINDOW_HEIGHT_MM);
+  const sillHeight = type === 'window' && 'bottomOffset' in opening ? opening.bottomOffset : 0;
 
   return {
     openingId: type === 'door' ? (opening as CanvasV4Door).doorId : (opening as CanvasV4Window).windowId,
     type,
+    segmentId: opening.segmentId,
+    topologyEdgeId,
+    positionOnSegment: opening.positionOnSegment,
     width: opening.width,
     height,
+    sillHeight,
     area: opening.width * height,
   };
 };
@@ -4085,12 +4217,12 @@ const createCanvasV4SurfaceGraph = (
           .filter((connection) => connection.roomIds.includes(room.roomId))
           .map((connection) => doorById.get(connection.doorId))
           .filter((door): door is CanvasV4Door => Boolean(door))
-          .map((door) => createOpeningSurfaceRef(door, 'door'));
+          .map((door) => createOpeningSurfaceRef(door, 'door', edge.edgeId));
         const windowOpenings = (windowConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
           .filter((connection) => connection.roomIds.includes(room.roomId))
           .map((connection) => windowById.get(connection.windowId))
           .filter((window): window is CanvasV4Window => Boolean(window))
-          .map((window) => createOpeningSurfaceRef(window, 'window'));
+          .map((window) => createOpeningSurfaceRef(window, 'window', edge.edgeId));
         const openings = [...doorOpenings, ...windowOpenings];
         const doorArea = doorOpenings.reduce((sum, opening) => sum + opening.area, 0);
         const windowArea = windowOpenings.reduce((sum, opening) => sum + opening.area, 0);
@@ -4148,6 +4280,58 @@ const createCanvasV4SurfaceGraph = (
     totalGrossWallArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.reduce((wallSum, surface) => wallSum + surface.grossArea, 0), 0),
     totalNetWallArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.reduce((wallSum, surface) => wallSum + surface.netArea, 0), 0),
     wallSurfaceCount: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.length, 0),
+  };
+};
+
+const createCanvasV4WallUnwrapGraph = (
+  surfaceGraph: CanvasV4SurfaceGraph,
+  planarGraph: CanvasV4PlanarGraph,
+): CanvasV4WallUnwrapGraph => {
+  const topologyEdgeById = new Map(planarGraph.edges.map((edge) => [edge.edgeId, edge]));
+  const wallPlanes: WallPlane[] = [];
+  const roomWallSequences: RoomWallSequence[] = surfaceGraph.roomSurfaceSummaries.map((summary) => {
+    const sequenceWallPlanes = summary.wallSurfaces
+      .map((surface, wallOrderIndex) => {
+        const edge = topologyEdgeById.get(surface.topologyEdgeId);
+
+        if (!edge) {
+          return null;
+        }
+
+        const projectedOpenings = surface.openings.map((opening) => createProjectedOpening(opening, edge, surface.height));
+        const wallPlane: WallPlane = {
+          wallPlaneId: `wall-plane-${summary.roomId}-${surface.topologyEdgeId}`,
+          roomId: summary.roomId,
+          wallSurfaceId: surface.surfaceId,
+          direction: surface.direction,
+          directionLabel: surface.directionLabel,
+          width: surface.length,
+          height: surface.height,
+          localOrigin: clonePoint(edge.startPoint),
+          openings: surface.openings.map((opening) => ({ ...opening })),
+          projectedOpenings,
+          wallOrderIndex,
+        };
+
+        wallPlanes.push(wallPlane);
+        return wallPlane;
+      })
+      .filter((wallPlane): wallPlane is WallPlane => Boolean(wallPlane));
+
+    return {
+      roomId: summary.roomId,
+      wallPlaneIds: sequenceWallPlanes.map((wallPlane) => wallPlane.wallPlaneId),
+      wallSurfaceIds: sequenceWallPlanes.map((wallPlane) => wallPlane.wallSurfaceId),
+      directions: sequenceWallPlanes.map((wallPlane) => wallPlane.direction),
+    };
+  });
+
+  return {
+    roomWallSequences,
+    wallPlanes,
+    projectedOpeningCount: wallPlanes.reduce((sum, wallPlane) => sum + wallPlane.projectedOpenings.length, 0),
+    wallPlaneCount: wallPlanes.length,
+    wallSequenceCount: roomWallSequences.length,
   };
 };
 
@@ -4333,6 +4517,7 @@ const buildCanvasV4Topology = (
   const warnings = createTopologyWarnings(entities, roomsWithSpatialMetadata, doors, windows, connectionGraph, roomConnectionGraph, planarGraph);
   const rooms = attachWarningsToRooms(roomsWithSpatialMetadata, warnings);
   const surfaceGraph = createCanvasV4SurfaceGraph(rooms, doors, windows, planarGraph, connectionGraph, DEFAULT_ROOM_HEIGHT_MM);
+  const wallUnwrapGraph = createCanvasV4WallUnwrapGraph(surfaceGraph, planarGraph);
   const invalidDoorCount = new Set(warnings
     .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
     .map((warning) => warning.openingId as string)).size;
@@ -4351,6 +4536,7 @@ const buildCanvasV4Topology = (
     connectionGraph,
     roomConnectionGraph,
     surfaceGraph,
+    wallUnwrapGraph,
     planarGraph,
     warnings,
     buildTimeMs: Math.max(1, Date.now() - startedAt),
@@ -4388,6 +4574,10 @@ const buildCanvasV4Topology = (
     totalGrossWallArea: surfaceGraph.totalGrossWallArea,
     totalNetWallArea: surfaceGraph.totalNetWallArea,
     defaultRoomHeightMm: surfaceGraph.defaultRoomHeightMm,
+    unwrapEngineEnabled: true,
+    wallPlaneCount: wallUnwrapGraph.wallPlaneCount,
+    projectedOpeningCount: wallUnwrapGraph.projectedOpeningCount,
+    wallSequenceCount: wallUnwrapGraph.wallSequenceCount,
   };
 };
 
@@ -5155,6 +5345,8 @@ export const CanvasV4DevScreen = () => {
   const [projectValidationMessage, setProjectValidationMessage] = useState<string | null>(null);
   const [lastValidationError, setLastValidationError] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [insideViewRoomId, setInsideViewRoomId] = useState<string | null>(null);
+  const [insideViewWallPlaneId, setInsideViewWallPlaneId] = useState<string | null>(null);
   const [viewState, setViewState] = useState<CanvasV4ViewState>(() => getDefaultCanvasV4ViewState('plan'));
   const [roomTypeAssignments, setRoomTypeAssignments] = useState<Record<string, CanvasV4RoomType>>({});
   const [customRoomNames, setCustomRoomNames] = useState<Record<string, string>>({});
@@ -5162,6 +5354,7 @@ export const CanvasV4DevScreen = () => {
   const projectCreated = Boolean(projectState);
   const isPlanViewMode = viewState.currentViewMode === 'plan';
   const isExecutiveViewMode = viewState.currentViewMode === 'executive';
+  const isInsideViewMode = viewState.currentViewMode === 'inside-view';
   const isProjectDataPanelOpen = projectCreated && viewState.currentViewMode === 'project-data';
   const projectSpatialDataAvailable = projectCreated;
   const projectIntelligenceVisible = projectCreated && isPlanViewMode && viewState.showProjectOverlays;
@@ -5355,11 +5548,14 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
+    const nextRoomId = insideViewRoomId ?? selectedRoomId ?? projectRooms[0]?.roomId ?? null;
     setCurrentCanvasMode('project');
     setViewState((current) => applyCanvasV4ViewMode(current, 'inside-view'));
-    setSelectedRoomId(null);
+    setInsideViewRoomId(nextRoomId);
+    setInsideViewWallPlaneId(null);
+    setSelectedRoomId(nextRoomId);
     setLastActionType('VIEW_MODE_INSIDE_VIEW');
-  }, [projectState]);
+  }, [insideViewRoomId, projectRooms, projectState, selectedRoomId]);
 
   const toggleViewLayer = useCallback((layer: 'showRoomLabels' | 'showRoomAreas' | 'showDimensions' | 'showWarnings' | 'showProjectOverlays') => {
     setViewState((current) => ({
@@ -6104,6 +6300,35 @@ export const CanvasV4DevScreen = () => {
     () => projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries.find((summary) => summary.roomId === selectedRoomId) ?? null,
     [projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries, selectedRoomId],
   );
+  const wallPlanesByRoomId = useMemo(() => {
+    const groups = new Map<string, WallPlane[]>();
+
+    projectInterpretation.topology.wallUnwrapGraph.wallPlanes.forEach((wallPlane) => {
+      groups.set(wallPlane.roomId, [...(groups.get(wallPlane.roomId) ?? []), wallPlane]);
+    });
+
+    groups.forEach((wallPlanes, roomId) => {
+      groups.set(roomId, [...wallPlanes].sort((a, b) => a.wallOrderIndex - b.wallOrderIndex));
+    });
+
+    return groups;
+  }, [projectInterpretation.topology.wallUnwrapGraph.wallPlanes]);
+  const insideViewRoomIdResolved = useMemo(
+    () => insideViewRoomId ?? selectedRoomId ?? projectRooms[0]?.roomId ?? null,
+    [insideViewRoomId, projectRooms, selectedRoomId],
+  );
+  const insideViewWallPlanes = useMemo(
+    () => (insideViewRoomIdResolved ? wallPlanesByRoomId.get(insideViewRoomIdResolved) ?? [] : []),
+    [insideViewRoomIdResolved, wallPlanesByRoomId],
+  );
+  const selectedInsideWallPlane = useMemo(
+    () => insideViewWallPlanes.find((wallPlane) => wallPlane.wallPlaneId === insideViewWallPlaneId) ?? insideViewWallPlanes[0] ?? null,
+    [insideViewWallPlaneId, insideViewWallPlanes],
+  );
+  const selectedRoomWallPlanes = useMemo(
+    () => (selectedRoomId ? wallPlanesByRoomId.get(selectedRoomId) ?? [] : []),
+    [selectedRoomId, wallPlanesByRoomId],
+  );
   const roomAssignmentPending = projectCreated && projectRooms.some((room) => !room.roomType);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
@@ -6153,6 +6378,34 @@ export const CanvasV4DevScreen = () => {
       setSelectedRoomId(null);
     }
   }, [projectRooms, selectedRoomId]);
+
+  useEffect(() => {
+    if (!projectCreated) {
+      setInsideViewRoomId(null);
+      setInsideViewWallPlaneId(null);
+      return;
+    }
+
+    if (insideViewRoomId && !projectRooms.some((room) => room.roomId === insideViewRoomId)) {
+      setInsideViewRoomId(projectRooms[0]?.roomId ?? null);
+      setInsideViewWallPlaneId(null);
+    }
+  }, [insideViewRoomId, projectCreated, projectRooms]);
+
+  useEffect(() => {
+    if (!isInsideViewMode || !projectCreated) {
+      return;
+    }
+
+    if (!insideViewRoomIdResolved && projectRooms[0]?.roomId) {
+      setInsideViewRoomId(projectRooms[0].roomId);
+      return;
+    }
+
+    if (selectedInsideWallPlane && selectedInsideWallPlane.wallPlaneId !== insideViewWallPlaneId) {
+      setInsideViewWallPlaneId(selectedInsideWallPlane.wallPlaneId);
+    }
+  }, [insideViewRoomIdResolved, insideViewWallPlaneId, isInsideViewMode, projectCreated, projectRooms, selectedInsideWallPlane]);
 
   useEffect(() => {
     if (projectValidationMessage) {
@@ -7722,6 +7975,12 @@ export const CanvasV4DevScreen = () => {
       `totalGrossWallArea: ${formatRoomArea(projectInterpretation.topology.totalGrossWallArea)}`,
       `totalNetWallArea: ${formatRoomArea(projectInterpretation.topology.totalNetWallArea)}`,
       `defaultRoomHeightMm: ${projectInterpretation.topology.defaultRoomHeightMm}`,
+      `unwrapEngineEnabled: ${projectInterpretation.topology.unwrapEngineEnabled ? 'true' : 'false'}`,
+      `wallPlaneCount: ${projectInterpretation.topology.wallPlaneCount}`,
+      `projectedOpeningCount: ${projectInterpretation.topology.projectedOpeningCount}`,
+      `insideViewRoomId: ${insideViewRoomIdResolved ?? 'null'}`,
+      `insideViewWallPlaneId: ${selectedInsideWallPlane?.wallPlaneId ?? 'null'}`,
+      `wallSequenceCount: ${projectInterpretation.topology.wallSequenceCount}`,
       `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
       `roomCount: ${projectRooms.length}`,
       `selectedRoomId: ${selectedRoom?.roomId ?? 'null'}`,
@@ -7865,6 +8124,7 @@ export const CanvasV4DevScreen = () => {
       diagonalDimensionCount,
       dimensionLayerVisible,
       currentToolMode,
+      insideViewRoomIdResolved,
       dimensionCollisionAvoidance,
       dimensionDisplayMode,
       dimensionOffsetPx,
@@ -7932,6 +8192,7 @@ export const CanvasV4DevScreen = () => {
       selectedLineLength,
       selectedDoor,
       selectedRoom,
+      selectedInsideWallPlane,
       selectedWindow,
       selectedEntityIds,
       selectedSegment,
@@ -8323,6 +8584,20 @@ export const CanvasV4DevScreen = () => {
                         </View>
                       ))}
                     </View>
+                    <Text style={styles.projectDataSectionTitle}>Wall planes</Text>
+                    <View style={styles.projectDataSurfaceWallList}>
+                      {selectedRoomWallPlanes.length > 0 ? selectedRoomWallPlanes.map((wallPlane) => (
+                        <View key={`project-data-${wallPlane.wallPlaneId}`} style={styles.projectDataSurfaceWallCard}>
+                          <Text style={styles.projectDataSurfaceWallTitle}>
+                            {wallPlane.wallOrderIndex + 1}. {wallPlane.directionLabel}: {formatLineLength(wallPlane.width)} x {formatLineLength(wallPlane.height)}
+                          </Text>
+                          <Text style={styles.projectDataRoomMeta}>Projected openings: {wallPlane.projectedOpenings.length}</Text>
+                          <Text style={styles.projectDataRoomMeta}>Local origin: {wallPlane.localOrigin.x.toFixed(0)}, {wallPlane.localOrigin.y.toFixed(0)} мм</Text>
+                        </View>
+                      )) : (
+                        <Text style={styles.projectDataEmptyText}>Wall planes для помещения не найдены</Text>
+                      )}
+                    </View>
                   </View>
                 ) : (
                   <View style={styles.projectDataPlaceholderCard}>
@@ -8334,6 +8609,125 @@ export const CanvasV4DevScreen = () => {
                 <View style={styles.projectDataPlaceholderCard}>
                   <Text style={styles.projectDataPlaceholderText}>Engineering layers foundation: электрические, сантехнические и route-слои пока не активированы.</Text>
                 </View>
+              </ScrollView>
+            </View>
+          ) : null}
+
+          {projectCreated && isInsideViewMode ? (
+            <View style={styles.insideViewPanel}>
+              <View style={styles.insideViewHeader}>
+                <View>
+                  <Text style={styles.insideViewKicker}>Inside View Foundation</Text>
+                  <Text style={styles.insideViewTitle}>Wall planes</Text>
+                </View>
+                <Pressable style={styles.projectDataCloseButton} onPress={openPlanViewMode} accessibilityLabel="Закрыть Inside View">
+                  <Text style={styles.projectDataCloseButtonText}>×</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView style={styles.insideViewScroll} contentContainerStyle={styles.insideViewScrollContent}>
+                <Text style={styles.insideViewSectionTitle}>Room</Text>
+                <View style={styles.insideViewChipRow}>
+                  {projectRooms.length > 0 ? projectRooms.map((room) => {
+                    const isActiveRoom = insideViewRoomIdResolved === room.roomId;
+
+                    return (
+                      <Pressable
+                        key={`inside-room-${room.roomId}`}
+                        style={[styles.insideViewChip, isActiveRoom ? styles.insideViewChipActive : null]}
+                        onPress={() => {
+                          setInsideViewRoomId(room.roomId);
+                          setInsideViewWallPlaneId(null);
+                          setSelectedRoomId(room.roomId);
+                        }}
+                        accessibilityLabel={room.displayName}
+                      >
+                        <Text style={[styles.insideViewChipText, isActiveRoom ? styles.insideViewChipTextActive : null]}>{room.displayName}</Text>
+                      </Pressable>
+                    );
+                  }) : (
+                    <Text style={styles.projectDataEmptyText}>Помещения не определены</Text>
+                  )}
+                </View>
+
+                <Text style={styles.insideViewSectionTitle}>Wall sequence</Text>
+                <View style={styles.insideViewChipRow}>
+                  {insideViewWallPlanes.length > 0 ? insideViewWallPlanes.map((wallPlane) => {
+                    const isActiveWall = selectedInsideWallPlane?.wallPlaneId === wallPlane.wallPlaneId;
+
+                    return (
+                      <Pressable
+                        key={wallPlane.wallPlaneId}
+                        style={[styles.insideViewChip, isActiveWall ? styles.insideViewChipActive : null]}
+                        onPress={() => setInsideViewWallPlaneId(wallPlane.wallPlaneId)}
+                        accessibilityLabel={wallPlane.directionLabel}
+                      >
+                        <Text style={[styles.insideViewChipText, isActiveWall ? styles.insideViewChipTextActive : null]}>
+                          {wallPlane.wallOrderIndex + 1}. {wallPlane.directionLabel}
+                        </Text>
+                      </Pressable>
+                    );
+                  }) : (
+                    <Text style={styles.projectDataEmptyText}>Wall planes не найдены</Text>
+                  )}
+                </View>
+
+                {selectedInsideWallPlane ? (
+                  <View style={styles.insideWallCard}>
+                    <View style={styles.insideWallCardHeader}>
+                      <Text style={styles.insideWallTitle}>{selectedInsideWallPlane.directionLabel}</Text>
+                      <Text style={styles.insideWallMeta}>
+                        {formatLineLength(selectedInsideWallPlane.width)} × {formatLineLength(selectedInsideWallPlane.height)}
+                      </Text>
+                    </View>
+                    <View style={styles.insideWallPreview}>
+                      {selectedInsideWallPlane.projectedOpenings.map((opening) => {
+                        const leftPercent = selectedInsideWallPlane.width > 0
+                          ? ((opening.localX - opening.width / 2) / selectedInsideWallPlane.width) * 100
+                          : 0;
+                        const widthPercent = selectedInsideWallPlane.width > 0
+                          ? (opening.width / selectedInsideWallPlane.width) * 100
+                          : 0;
+                        const bottomPercent = selectedInsideWallPlane.height > 0
+                          ? (opening.sillHeight / selectedInsideWallPlane.height) * 100
+                          : 0;
+                        const heightPercent = selectedInsideWallPlane.height > 0
+                          ? (opening.height / selectedInsideWallPlane.height) * 100
+                          : 0;
+
+                        return (
+                          <View
+                            key={`${selectedInsideWallPlane.wallPlaneId}-${opening.openingId}`}
+                            style={[
+                              styles.insideWallOpening,
+                              opening.type === 'door' ? styles.insideWallDoor : styles.insideWallWindow,
+                              {
+                                left: formatPercentStyleValue(leftPercent),
+                                width: formatPercentStyleValue(widthPercent),
+                                bottom: formatPercentStyleValue(bottomPercent),
+                                height: formatPercentStyleValue(heightPercent),
+                              },
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
+                    <Text style={styles.insideWallMeta}>Local origin: {selectedInsideWallPlane.localOrigin.x.toFixed(0)}, {selectedInsideWallPlane.localOrigin.y.toFixed(0)} мм</Text>
+                    <View style={styles.insideOpeningList}>
+                      {selectedInsideWallPlane.projectedOpenings.length > 0 ? selectedInsideWallPlane.projectedOpenings.map((opening) => (
+                        <Text key={`inside-opening-${opening.openingId}`} style={styles.insideWallMeta}>
+                          {opening.type === 'door' ? 'Дверь' : 'Окно'} {opening.openingId}: X {formatLineLength(opening.localX)}, {formatLineLength(opening.width)} × {formatLineLength(opening.height)}
+                        </Text>
+                      )) : (
+                        <Text style={styles.insideWallMeta}>Проёмов на этой wall plane нет</Text>
+                      )}
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.projectDataPlaceholderCard}>
+                    <Text style={styles.projectDataPlaceholderText}>Выберите комнату и стену, чтобы увидеть инженерную плоскость.</Text>
+                  </View>
+                )}
               </ScrollView>
             </View>
           ) : null}
@@ -9755,6 +10149,130 @@ const styles = StyleSheet.create({
     color: '#166534',
     fontSize: 11,
     fontWeight: '800',
+  },
+  insideViewPanel: {
+    position: 'absolute',
+    zIndex: 12,
+    top: 18,
+    right: 18,
+    bottom: 18,
+    width: 420,
+    maxWidth: '82%',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    padding: 12,
+    gap: 10,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+  },
+  insideViewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  insideViewKicker: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  insideViewTitle: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  insideViewScroll: {
+    flex: 1,
+  },
+  insideViewScrollContent: {
+    gap: 10,
+    paddingBottom: 18,
+  },
+  insideViewSectionTitle: {
+    color: '#334155',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  insideViewChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  insideViewChip: {
+    minHeight: 30,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  insideViewChipActive: {
+    borderColor: '#94A3B8',
+    backgroundColor: '#F1F5F9',
+  },
+  insideViewChipText: {
+    color: '#334155',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  insideViewChipTextActive: {
+    color: '#0F172A',
+  },
+  insideWallCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    gap: 8,
+  },
+  insideWallCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  insideWallTitle: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '900',
+    flex: 1,
+  },
+  insideWallMeta: {
+    color: '#64748B',
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  insideWallPreview: {
+    height: 180,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  insideWallOpening: {
+    position: 'absolute',
+    borderWidth: 1,
+  },
+  insideWallDoor: {
+    borderColor: '#334155',
+    backgroundColor: 'rgba(203, 213, 225, 0.72)',
+  },
+  insideWallWindow: {
+    borderColor: '#2563EB',
+    backgroundColor: 'rgba(191, 219, 254, 0.72)',
+  },
+  insideOpeningList: {
+    gap: 3,
   },
   drawingToolbar: {
     position: 'absolute',
