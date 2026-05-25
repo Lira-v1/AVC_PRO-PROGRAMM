@@ -19,6 +19,7 @@ type CornerJoinMode = 'bevel';
 type DimensionSide = 'top' | 'bottom' | 'left' | 'right';
 type SegmentSpatialRole = 'external-like' | 'internal-like' | 'unknown';
 type CanvasV4Mode = 'plan' | 'project';
+type CanvasV4ViewMode = 'plan' | 'clean-plan' | 'project-data';
 type CircleVisualMode = 'smooth' | 'segmented';
 type CanvasEntryStep = 'start' | 'template-categories' | 'apartment-gallery' | 'canvas';
 type TemplateCategory = 'apartment' | 'house' | 'cottage';
@@ -194,6 +195,18 @@ type CanvasV4RoomNamingHint = {
   displayName: string;
   roomType: CanvasV4RoomType;
   point: Point;
+};
+
+type CanvasV4ViewState = {
+  currentViewMode: CanvasV4ViewMode;
+  showRoomLabels: boolean;
+  showRoomAreas: boolean;
+  showDimensions: boolean;
+  showWarnings: boolean;
+  showProjectOverlays: boolean;
+  showEngineeringLayer: boolean;
+  showSurfaceLayer: boolean;
+  showPrintableMode: boolean;
 };
 
 type CanvasV4ManualTopologyJunction = {
@@ -613,6 +626,51 @@ const APARTMENT_TEMPLATE_CARDS: ApartmentTemplateCard[] = [
   { id: 'two-room', title: '2-комнатная', areaLabel: '45-65 м²', roomsLabel: 'зал, спальня, кухня, санузел, коридор' },
   { id: 'three-room', title: '3-комнатная', areaLabel: '65-90 м²', roomsLabel: 'зал, две спальни, кухня, санузел, прихожая' },
 ];
+const CANVAS_V4_PLAN_VIEW_STATE: CanvasV4ViewState = {
+  currentViewMode: 'plan',
+  showRoomLabels: true,
+  showRoomAreas: true,
+  showDimensions: true,
+  showWarnings: true,
+  showProjectOverlays: true,
+  showEngineeringLayer: false,
+  showSurfaceLayer: false,
+  showPrintableMode: false,
+};
+const CANVAS_V4_CLEAN_PLAN_VIEW_STATE: CanvasV4ViewState = {
+  currentViewMode: 'clean-plan',
+  showRoomLabels: false,
+  showRoomAreas: false,
+  showDimensions: true,
+  showWarnings: false,
+  showProjectOverlays: false,
+  showEngineeringLayer: false,
+  showSurfaceLayer: false,
+  showPrintableMode: true,
+};
+const CANVAS_V4_PROJECT_DATA_VIEW_STATE: CanvasV4ViewState = {
+  currentViewMode: 'project-data',
+  showRoomLabels: false,
+  showRoomAreas: false,
+  showDimensions: false,
+  showWarnings: false,
+  showProjectOverlays: false,
+  showEngineeringLayer: true,
+  showSurfaceLayer: false,
+  showPrintableMode: true,
+};
+
+const getDefaultCanvasV4ViewState = (viewMode: CanvasV4ViewMode): CanvasV4ViewState => {
+  switch (viewMode) {
+    case 'clean-plan':
+      return { ...CANVAS_V4_CLEAN_PLAN_VIEW_STATE };
+    case 'project-data':
+      return { ...CANVAS_V4_PROJECT_DATA_VIEW_STATE };
+    case 'plan':
+    default:
+      return { ...CANVAS_V4_PLAN_VIEW_STATE };
+  }
+};
 
 type LineScreenGeometry = {
   length: number;
@@ -4621,7 +4679,7 @@ export const CanvasV4DevScreen = () => {
   const canvasRef = useRef<View | null>(null);
   const dragSessionRef = useRef<DragSession>(EMPTY_DRAG_SESSION);
   const lastTapRef = useRef<{ time: number; point: Point; wasEmpty: boolean } | null>(null);
-  const { height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [cameraZoom, setCameraZoom] = useState(DEFAULT_ZOOM);
@@ -4683,13 +4741,21 @@ export const CanvasV4DevScreen = () => {
   const [projectValidationMessage, setProjectValidationMessage] = useState<string | null>(null);
   const [lastValidationError, setLastValidationError] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
-  const [isProjectDataPanelOpen, setProjectDataPanelOpen] = useState(false);
+  const [viewState, setViewState] = useState<CanvasV4ViewState>(() => getDefaultCanvasV4ViewState('plan'));
   const [roomTypeAssignments, setRoomTypeAssignments] = useState<Record<string, CanvasV4RoomType>>({});
   const [customRoomNames, setCustomRoomNames] = useState<Record<string, string>>({});
 
   const projectCreated = Boolean(projectState);
-  const projectIntelligenceVisible = projectCreated && currentCanvasMode === 'project';
-  const projectSpatialDataAvailable = projectCreated && (currentCanvasMode === 'project' || isProjectDataPanelOpen);
+  const isProjectDataPanelOpen = projectCreated && viewState.currentViewMode === 'project-data';
+  const projectSpatialDataAvailable = projectCreated;
+  const projectIntelligenceVisible = projectCreated && viewState.showProjectOverlays;
+  const roomPresentationVisible = projectCreated && (viewState.showProjectOverlays || viewState.showRoomLabels || viewState.showRoomAreas);
+  const roomLabelsVisible = projectCreated && viewState.showRoomLabels;
+  const roomAreasVisible = projectCreated && viewState.showRoomAreas;
+  const warningLayerVisible = projectCreated && viewState.showWarnings;
+  const dimensionLayerVisible = showLineDimensions && viewState.showDimensions;
+  const projectDataModeActive = isProjectDataPanelOpen;
+  const isMobileProjectDataLayout = windowWidth < 720;
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -4732,7 +4798,7 @@ export const CanvasV4DevScreen = () => {
   );
   const projectWarningSegmentIds = useMemo(
     () => {
-      if (!projectIntelligenceVisible) {
+      if (!warningLayerVisible) {
         return new Set<string>();
       }
 
@@ -4742,19 +4808,19 @@ export const CanvasV4DevScreen = () => {
 
       return new Set([...projectInterpretation.openContourSegmentIds, ...projectInterpretation.orphanSegmentIds, ...warningSegmentIds]);
     },
-    [projectIntelligenceVisible, projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds, projectInterpretation.topologyWarnings],
+    [projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds, projectInterpretation.topologyWarnings, warningLayerVisible],
   );
   const invalidDoorIds = useMemo(
-    () => new Set((projectIntelligenceVisible ? projectTopologyWarnings : [])
+    () => new Set((warningLayerVisible ? projectTopologyWarnings : [])
       .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
       .map((warning) => warning.openingId as string)),
-    [projectIntelligenceVisible, projectTopologyWarnings],
+    [projectTopologyWarnings, warningLayerVisible],
   );
   const invalidWindowIds = useMemo(
-    () => new Set((projectIntelligenceVisible ? projectTopologyWarnings : [])
+    () => new Set((warningLayerVisible ? projectTopologyWarnings : [])
       .filter((warning) => (warning.code === 'invalid-window-placement' || warning.code === 'internal-window-placement') && warning.openingId)
       .map((warning) => warning.openingId as string)),
-    [projectIntelligenceVisible, projectTopologyWarnings],
+    [projectTopologyWarnings, warningLayerVisible],
   );
   const shapeGroups = useMemo(() => getShapeGroups(entities), [entities]);
   const shapeGroupById = useMemo(() => new Map(shapeGroups.map((group) => [group.shapeId, group])), [shapeGroups]);
@@ -4819,7 +4885,7 @@ export const CanvasV4DevScreen = () => {
       validationError: null,
     });
     setCurrentCanvasMode('project');
-    setProjectDataPanelOpen(true);
+    setViewState(getDefaultCanvasV4ViewState('plan'));
     setRoomTypeAssignments({});
     setCustomRoomNames({});
     setProjectValidationMessage(null);
@@ -4833,21 +4899,44 @@ export const CanvasV4DevScreen = () => {
     setSelectionBox(null);
   }, [doors, entities, selectedTemplateVariant, windows]);
 
-  const showCleanProjectPlan = useCallback(() => {
-    setCurrentCanvasMode('plan');
-    setProjectDataPanelOpen(false);
+  const openPlanViewMode = useCallback(() => {
+    if (!projectState) {
+      return;
+    }
+
+    setCurrentCanvasMode('project');
+    setViewState(getDefaultCanvasV4ViewState('plan'));
+    setLastActionType('VIEW_MODE_PLAN');
+  }, [projectState]);
+
+  const openCleanPlanViewMode = useCallback(() => {
+    if (!projectState) {
+      return;
+    }
+
+    setCurrentCanvasMode('project');
+    setViewState(getDefaultCanvasV4ViewState('clean-plan'));
     setSelectedRoomId(null);
-    setLastActionType('PROJECT_PLAN_MODE_CLEAN_VIEW');
-  }, []);
+    setLastActionType('VIEW_MODE_CLEAN_PLAN');
+  }, [projectState]);
 
   const openProjectDataMode = useCallback(() => {
     if (!projectState) {
       return;
     }
 
-    setProjectDataPanelOpen(true);
-    setLastActionType('PROJECT_DATA_MODE_OPEN');
+    setCurrentCanvasMode('project');
+    setViewState(getDefaultCanvasV4ViewState('project-data'));
+    setLastActionType('VIEW_MODE_PROJECT_DATA');
   }, [projectState]);
+
+  const toggleViewLayer = useCallback((layer: 'showRoomLabels' | 'showRoomAreas' | 'showDimensions' | 'showWarnings' | 'showProjectOverlays') => {
+    setViewState((current) => ({
+      ...current,
+      [layer]: !current[layer],
+    }));
+    setLastActionType(`TOGGLE_VIEW_LAYER_${layer.toUpperCase()}`);
+  }, []);
 
   const assignRoomType = useCallback((roomId: string, roomType: CanvasV4RoomType) => {
     setRoomTypeAssignments((current) => ({
@@ -4887,7 +4976,7 @@ export const CanvasV4DevScreen = () => {
     setSelectedDoorId(null);
     setSelectedWindowId(null);
     setSelectedRoomId(null);
-    setProjectDataPanelOpen(false);
+    setViewState(getDefaultCanvasV4ViewState('plan'));
     setRoomTypeAssignments({});
     setCustomRoomNames({});
     setProjectValidationMessage(null);
@@ -4948,7 +5037,7 @@ export const CanvasV4DevScreen = () => {
     setLastUndoAction('null');
     setLastRedoAction('null');
     setProjectState(null);
-    setProjectDataPanelOpen(false);
+    setViewState(getDefaultCanvasV4ViewState('plan'));
     setRoomTypeAssignments({});
     setCustomRoomNames({});
     setProjectValidationMessage(null);
@@ -5122,10 +5211,11 @@ export const CanvasV4DevScreen = () => {
   );
 
   const visibleDimensions = useMemo<DimensionScreenItem[]>(() => {
-    if (!showLineDimensions) {
+    if (!dimensionLayerVisible) {
       return [];
     }
 
+    const activeDimensionDisplayMode = viewState.currentViewMode === 'clean-plan' ? 'minimal' : dimensionDisplayMode;
     const selectedDimensionEntityIds = new Set(selectedEntityIds);
     const selectedShapeIds = new Set(selectedEntityIds.map((entityId) => entities.find((entity) => entity.entityId === entityId)?.shapeId).filter((shapeId): shapeId is string => Boolean(shapeId)));
     const openingRects: ScreenRect[] = [...doors.map((door) => {
@@ -5195,7 +5285,7 @@ export const CanvasV4DevScreen = () => {
 
       return placements.sort((first, second) => countDimensionCollisions(first.placement) - countDimensionCollisions(second.placement))[0] ?? null;
     };
-    const shapeDimensions = dimensionDisplayMode === 'full'
+    const shapeDimensions = activeDimensionDisplayMode === 'full'
       ? []
       : shapeGroups.flatMap<DimensionScreenItem>((group) => {
         const shapeBox = group.boundingBox ?? getEntitiesBoundingBox(group.segments);
@@ -5302,7 +5392,7 @@ export const CanvasV4DevScreen = () => {
       };
     });
     const visibleCandidates = dimensionCandidates.filter((candidate) => {
-      if (dimensionDisplayMode === 'full') {
+      if (activeDimensionDisplayMode === 'full') {
         return true;
       }
 
@@ -5338,17 +5428,17 @@ export const CanvasV4DevScreen = () => {
       const { entity, closedContourOutwardNormal, level, spatialAnalysis } = candidate;
       const isSelected = selectedDimensionEntityIds.has(entity.entityId);
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
-      const baseOffset = dimensionDisplayMode === 'full'
+      const baseOffset = activeDimensionDisplayMode === 'full'
         ? (spatialAnalysis.role === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX + 8)
         : (level === 'internal' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX);
-      const collisionStep = dimensionDisplayMode === 'architectural' && level === 'internal' ? 6 : DIMENSION_COLLISION_STEP_PX;
-      const maxOffset = dimensionDisplayMode === 'architectural' && level === 'internal'
+      const collisionStep = activeDimensionDisplayMode === 'architectural' && level === 'internal' ? 6 : DIMENSION_COLLISION_STEP_PX;
+      const maxOffset = activeDimensionDisplayMode === 'architectural' && level === 'internal'
         ? DIMENSION_BASE_OFFSET_PX - 4
         : Number.POSITIVE_INFINITY;
       let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset, spatialAnalysis);
       let collisionAvoidancePasses = 0;
-      const labelObstacles = dimensionDisplayMode === 'full' ? [...openingRects, ...placedLabelRects] : [...openingRects, ...placedLabelRects, ...wallRects];
-      const lineObstacles = dimensionDisplayMode === 'full' ? [...openingRects, ...placedLineRects] : [...openingRects, ...placedLineRects, ...wallRects];
+      const labelObstacles = activeDimensionDisplayMode === 'full' ? [...openingRects, ...placedLabelRects] : [...openingRects, ...placedLabelRects, ...wallRects];
+      const lineObstacles = activeDimensionDisplayMode === 'full' ? [...openingRects, ...placedLineRects] : [...openingRects, ...placedLineRects, ...wallRects];
       let hasCollision = labelObstacles.some((rect) => rectsOverlap(getDimensionLabelRect(placement), rect, 6))
         || lineObstacles.some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6));
 
@@ -5365,7 +5455,7 @@ export const CanvasV4DevScreen = () => {
           || lineObstacles.some((rect) => rectsOverlap(getLineScreenRect(placement.lineStart, placement.lineEnd, 3), rect, 6));
       }
 
-      if (hasCollision && dimensionDisplayMode !== 'full') {
+      if (hasCollision && activeDimensionDisplayMode !== 'full') {
         return [];
       }
 
@@ -5383,7 +5473,7 @@ export const CanvasV4DevScreen = () => {
     });
 
     return [...shapeDimensions, ...segmentDimensions];
-  }, [cameraZoom, dimensionDisplayMode, doors, entities, getLineScreenGeometry, selectedEntityIds, shapeGroups, showLineDimensions, windows, worldToScreen]);
+  }, [cameraZoom, dimensionDisplayMode, dimensionLayerVisible, doors, entities, getLineScreenGeometry, selectedEntityIds, shapeGroups, viewState.currentViewMode, windows, worldToScreen]);
 
   const dimensionCollisionAvoidance = visibleDimensions.some((dimension) => dimension.placement.offsetPx > (dimension.placement.spatialRole === 'internal-like' ? DIMENSION_INTERNAL_OFFSET_PX : DIMENSION_BASE_OFFSET_PX));
   const dimensionOffsetPx = visibleDimensions.length > 0
@@ -5554,7 +5644,7 @@ export const CanvasV4DevScreen = () => {
   const selectedWindow = useMemo(() => windows.find((window) => window.windowId === selectedWindowId) ?? null, [selectedWindowId, windows]);
   const selectedRoom = useMemo(() => projectRooms.find((room) => room.roomId === selectedRoomId) ?? null, [projectRooms, selectedRoomId]);
   const roomDisplayNameById = useMemo(() => new Map(projectRooms.map((room) => [room.roomId, room.displayName])), [projectRooms]);
-  const roomAssignmentPending = projectSpatialDataAvailable && projectRooms.some((room) => !room.roomType);
+  const roomAssignmentPending = projectCreated && projectRooms.some((room) => !room.roomType);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
@@ -5580,15 +5670,15 @@ export const CanvasV4DevScreen = () => {
     : null;
   const findRoomAtWorldPoint = useCallback(
     (point: Point) => {
-      if (!projectIntelligenceVisible) {
+      if (!roomPresentationVisible || viewState.currentViewMode !== 'plan') {
         return null;
       }
 
       return [...projectRooms].reverse().find((room) => isPointInsidePolygon(point, room.roomContour))?.roomId ?? null;
     },
-    [projectIntelligenceVisible, projectRooms],
+    [projectRooms, roomPresentationVisible, viewState.currentViewMode],
   );
-  const shapeDimensionMode = !showLineDimensions
+  const shapeDimensionMode = !dimensionLayerVisible
     ? 'hidden'
     : dimensionDisplayMode === 'full'
       ? 'segment-debug'
@@ -7101,6 +7191,30 @@ export const CanvasV4DevScreen = () => {
       `selectedTemplateVariant: ${selectedTemplateVariant ?? 'null'}`,
       `lastTemplateAction: ${lastTemplateAction}`,
       `currentCanvasMode: ${currentCanvasMode}`,
+      `currentViewMode: ${viewState.currentViewMode}`,
+      `visibleLayerCount: ${[
+        viewState.showRoomLabels,
+        viewState.showRoomAreas,
+        dimensionLayerVisible,
+        viewState.showWarnings,
+        viewState.showProjectOverlays,
+        viewState.showEngineeringLayer,
+        viewState.showSurfaceLayer,
+        viewState.showPrintableMode,
+      ].filter(Boolean).length}`,
+      `hiddenLayerCount: ${[
+        viewState.showRoomLabels,
+        viewState.showRoomAreas,
+        dimensionLayerVisible,
+        viewState.showWarnings,
+        viewState.showProjectOverlays,
+        viewState.showEngineeringLayer,
+        viewState.showSurfaceLayer,
+        viewState.showPrintableMode,
+      ].filter((visible) => !visible).length}`,
+      `roomLabelVisibility: ${roomLabelsVisible ? 'visible' : 'hidden'}`,
+      `dimensionVisibility: ${dimensionLayerVisible ? 'visible' : 'hidden'}`,
+      `projectDataModeActive: ${projectDataModeActive ? 'true' : 'false'}`,
       `projectCreated: ${projectCreated ? 'true' : 'false'}`,
       `projectId: ${projectState?.projectId ?? 'null'}`,
       `projectGeometrySnapshot: ${projectState ? `entities=${projectState.geometrySnapshot.entities.length}, doors=${projectState.geometrySnapshot.doors.length}, windows=${projectState.geometrySnapshot.windows.length}, rooms=${projectState.geometrySnapshot.rooms.length}, frozenAt=${new Date(projectState.geometrySnapshot.frozenAt).toISOString()}` : 'null'}`,
@@ -7278,6 +7392,7 @@ export const CanvasV4DevScreen = () => {
       cameraZoom,
       canvasEntryStep,
       currentCanvasMode,
+      dimensionLayerVisible,
       currentToolMode,
       dimensionCollisionAvoidance,
       dimensionDisplayMode,
@@ -7333,6 +7448,8 @@ export const CanvasV4DevScreen = () => {
       projectRooms.length,
       projectTopologyWarnings.length,
       roomAssignmentPending,
+      roomLabelsVisible,
+      projectDataModeActive,
       projectState,
       redoStack.length,
       resizeAxis,
@@ -7355,11 +7472,13 @@ export const CanvasV4DevScreen = () => {
       lastValidationError,
       selectedTemplateCategory,
       selectedTemplateVariant,
+      viewState,
     ],
   );
 
   const canvasHeight = Math.max(Math.min(windowHeight * 0.66, 760), 460);
   const hasSelection = selectedEntityIds.length > 0 || Boolean(selectedDoorId) || Boolean(selectedWindowId);
+  const toolControlsVisible = !projectCreated || viewState.currentViewMode === 'plan';
   const drawingTools: Array<{ mode: ToolMode; icon: string; label: string }> = [
     { mode: 'rectangle', icon: '▭', label: 'Rectangle' },
     { mode: 'circle', icon: '○', label: 'Circle' },
@@ -7371,13 +7490,12 @@ export const CanvasV4DevScreen = () => {
   ];
   const projectTabs = projectCreated
     ? [
-        { id: 'plan', icon: '▦', label: 'План', active: currentCanvasMode === 'plan' },
-        { id: '3d', icon: '□', label: '3D', active: false },
-        { id: 'inside-view', icon: '◉', label: 'Вид изнутри', active: false },
-        { id: 'execution-scheme', icon: '⌗', label: 'Исполнительная схема', active: false },
+        { id: 'plan' as CanvasV4ViewMode, icon: '▦', label: 'План', active: viewState.currentViewMode === 'plan', onPress: openPlanViewMode },
+        { id: 'clean-plan' as CanvasV4ViewMode, icon: '□', label: 'Чистый план', active: viewState.currentViewMode === 'clean-plan', onPress: openCleanPlanViewMode },
+        { id: 'project-data' as CanvasV4ViewMode, icon: 'i', label: 'Данные', active: viewState.currentViewMode === 'project-data', onPress: openProjectDataMode },
       ]
     : [
-        { id: 'plan', icon: '▦', label: 'План', active: true },
+        { id: 'plan' as CanvasV4ViewMode, icon: '▦', label: 'План', active: true, onPress: undefined },
       ];
   const endpointSnapScreenPoint = activeSnap.activeSnapType === 'endpoint' ? worldToScreen(activeSnap.point) : null;
   const selectedEntityIdSet = new Set(selectedEntityIds);
@@ -7386,7 +7504,7 @@ export const CanvasV4DevScreen = () => {
     : null;
   const selectionBoxRect = selectionBox?.active ? getNormalizedRect(selectionBox.startPoint, selectionBox.currentPoint) : null;
   const canvasHeaderTitle = canvasEntryStep === 'canvas'
-    ? `Canvas V4 — ${currentCanvasMode === 'plan' ? 'PLAN MODE' : 'PROJECT MODE'}`
+    ? `Canvas V4 — ${viewState.currentViewMode === 'clean-plan' ? 'CLEAN PLAN' : viewState.currentViewMode === 'project-data' ? 'PROJECT DATA' : 'PLAN MODE'}`
     : 'Canvas V4 — старт';
 
   const renderApartmentTemplatePreview = (variant: ApartmentTemplateVariant) => {
@@ -7539,11 +7657,11 @@ export const CanvasV4DevScreen = () => {
           <Pressable style={[styles.controlButton, isGridVisible ? styles.controlButtonActive : null]} onPress={() => setGridVisible((current) => !current)}>
             <Text style={styles.controlButtonText}>Сетка</Text>
           </Pressable>
-          <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : null]} onPress={() => setShowLineDimensions((current) => !current)}>
-            <Text style={styles.controlButtonText}>{showLineDimensions ? 'Скрыть размеры' : 'Показать размеры'}</Text>
+          <Pressable style={[styles.controlButton, dimensionLayerVisible ? styles.controlButtonActive : null]} onPress={() => setShowLineDimensions((current) => !current)}>
+            <Text style={styles.controlButtonText}>{dimensionLayerVisible ? 'Скрыть размеры' : 'Показать размеры'}</Text>
           </Pressable>
-          <Pressable style={[styles.controlButton, showLineDimensions ? styles.controlButtonActive : styles.toolButtonDisabled]} onPress={cycleDimensionDisplayMode} disabled={!showLineDimensions}>
-            <Text style={[styles.controlButtonText, showLineDimensions ? null : styles.toolButtonDisabledText]}>{dimensionDisplayModeLabel}</Text>
+          <Pressable style={[styles.controlButton, dimensionLayerVisible ? styles.controlButtonActive : styles.toolButtonDisabled]} onPress={cycleDimensionDisplayMode} disabled={!dimensionLayerVisible}>
+            <Text style={[styles.controlButtonText, dimensionLayerVisible ? null : styles.toolButtonDisabledText]}>{dimensionDisplayModeLabel}</Text>
           </Pressable>
           <Pressable style={[styles.controlButton, undoStack.length > 0 ? styles.undoButton : styles.toolButtonDisabled]} onPress={undoLastAction} disabled={undoStack.length === 0}>
             <Text style={[styles.controlButtonText, undoStack.length > 0 ? styles.undoButtonText : styles.toolButtonDisabledText]}>↶</Text>
@@ -7567,13 +7685,30 @@ export const CanvasV4DevScreen = () => {
           </View>
         ) : null}
 
+        {projectCreated && viewState.currentViewMode === 'plan' ? (
+          <View style={styles.viewLayerBar}>
+            <Pressable style={[styles.viewLayerButton, viewState.showProjectOverlays ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showProjectOverlays')}>
+              <Text style={[styles.viewLayerButtonText, viewState.showProjectOverlays ? styles.viewLayerButtonTextActive : null]}>Overlays</Text>
+            </Pressable>
+            <Pressable style={[styles.viewLayerButton, viewState.showRoomLabels ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showRoomLabels')}>
+              <Text style={[styles.viewLayerButtonText, viewState.showRoomLabels ? styles.viewLayerButtonTextActive : null]}>Названия</Text>
+            </Pressable>
+            <Pressable style={[styles.viewLayerButton, viewState.showRoomAreas ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showRoomAreas')}>
+              <Text style={[styles.viewLayerButtonText, viewState.showRoomAreas ? styles.viewLayerButtonTextActive : null]}>Площади</Text>
+            </Pressable>
+            <Pressable style={[styles.viewLayerButton, viewState.showWarnings ? styles.viewLayerButtonActive : null]} onPress={() => toggleViewLayer('showWarnings')}>
+              <Text style={[styles.viewLayerButtonText, viewState.showWarnings ? styles.viewLayerButtonTextActive : null]}>Warnings</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={styles.canvasShell}>
           <View style={styles.projectRail} pointerEvents="box-none">
             {projectTabs.map((tab) => (
               <Pressable
                 key={tab.id}
                 style={[styles.projectRailButton, tab.active ? styles.projectRailButtonActive : styles.projectRailButtonStub]}
-                onPress={tab.id === 'plan' ? showCleanProjectPlan : undefined}
+                onPress={tab.onPress}
                 accessibilityLabel={tab.label}
               >
                 <Text style={styles.projectRailIcon}>{tab.icon}</Text>
@@ -7593,117 +7728,133 @@ export const CanvasV4DevScreen = () => {
                 </View>
               )
             ) : null}
-            {projectCreated ? (
-              <Pressable
-                style={[styles.projectRailButton, styles.projectRailDataButton, isProjectDataPanelOpen ? styles.projectRailButtonActive : null]}
-                onPress={isProjectDataPanelOpen ? () => setProjectDataPanelOpen(false) : openProjectDataMode}
-                accessibilityLabel="Данные проекта"
-              >
-                <Text style={styles.projectRailIcon}>i</Text>
-                <Text style={styles.projectRailText}>Данные проекта</Text>
-              </Pressable>
-            ) : null}
           </View>
 
           {projectCreated && isProjectDataPanelOpen ? (
-            <View style={styles.projectDataPanel}>
+            <View style={[styles.projectDataPanel, isMobileProjectDataLayout ? styles.projectDataPanelMobile : styles.projectDataPanelDesktop]}>
               <View style={styles.projectDataHeader}>
                 <Text style={styles.projectDataTitle}>Данные проекта</Text>
-                <Pressable style={styles.projectDataCloseButton} onPress={() => setProjectDataPanelOpen(false)} accessibilityLabel="Закрыть данные проекта">
+                <Pressable style={styles.projectDataCloseButton} onPress={openPlanViewMode} accessibilityLabel="Закрыть данные проекта">
                   <Text style={styles.projectDataCloseButtonText}>×</Text>
                 </Pressable>
               </View>
 
-              <View style={styles.projectDataMetricBlock}>
-                <Text style={styles.projectDataMetricLabel}>Общая площадь</Text>
-                <Text style={styles.projectDataMetricValue}>{formatRoomArea(projectInterpretation.totalProjectArea)}</Text>
-              </View>
+              <ScrollView style={styles.projectDataScroll} contentContainerStyle={styles.projectDataScrollContent}>
+                <Text style={styles.projectDataSectionTitle}>Overview</Text>
+                <View style={styles.projectDataMetricBlock}>
+                  <Text style={styles.projectDataMetricLabel}>Общая площадь</Text>
+                  <Text style={styles.projectDataMetricValue}>{formatRoomArea(projectInterpretation.totalProjectArea)}</Text>
+                </View>
 
-              <View style={styles.projectDataStatsRow}>
-                <View style={styles.projectDataStat}>
-                  <Text style={styles.projectDataStatValue}>{projectRooms.length}</Text>
-                  <Text style={styles.projectDataStatLabel}>помещений</Text>
+                <View style={styles.projectDataStatsRow}>
+                  <View style={styles.projectDataStat}>
+                    <Text style={styles.projectDataStatValue}>{projectRooms.length}</Text>
+                    <Text style={styles.projectDataStatLabel}>помещений</Text>
+                  </View>
+                  <View style={styles.projectDataStat}>
+                    <Text style={styles.projectDataStatValue}>{doors.length}</Text>
+                    <Text style={styles.projectDataStatLabel}>дверей</Text>
+                  </View>
+                  <View style={styles.projectDataStat}>
+                    <Text style={styles.projectDataStatValue}>{windows.length}</Text>
+                    <Text style={styles.projectDataStatLabel}>окон</Text>
+                  </View>
+                  <View style={styles.projectDataStat}>
+                    <Text style={styles.projectDataStatValue}>{projectTopologyWarnings.length}</Text>
+                    <Text style={styles.projectDataStatLabel}>warnings</Text>
+                  </View>
                 </View>
-                <View style={styles.projectDataStat}>
-                  <Text style={styles.projectDataStatValue}>{doors.length}</Text>
-                  <Text style={styles.projectDataStatLabel}>дверей</Text>
-                </View>
-                <View style={styles.projectDataStat}>
-                  <Text style={styles.projectDataStatValue}>{windows.length}</Text>
-                  <Text style={styles.projectDataStatLabel}>окон</Text>
-                </View>
-              </View>
 
-              {roomAssignmentPending ? (
-                <View style={styles.roomAssignmentNotice}>
-                  <Text style={styles.roomAssignmentNoticeTitle}>Назначить помещения</Text>
-                  <Text style={styles.roomAssignmentNoticeText}>Выберите roomType для комнат ручного плана.</Text>
+                <Text style={styles.projectDataSectionTitle}>Rooms</Text>
+                <View style={styles.projectDataRoomList}>
+                  {projectRooms.length > 0 ? projectRooms.map((room, index) => (
+                    <Pressable
+                      key={room.roomId}
+                      style={[styles.projectDataRoomRow, selectedRoomId === room.roomId ? styles.projectDataRoomRowSelected : null]}
+                      onPress={() => setSelectedRoomId(room.roomId)}
+                      accessibilityLabel={room.displayName}
+                    >
+                      <View style={styles.projectDataRoomNameBlock}>
+                        <Text style={styles.projectDataRoomName}>{room.displayName || `Помещение ${index + 1}`}</Text>
+                        <Text style={styles.projectDataRoomMeta}>
+                          {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomArea(room.area)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
+                        </Text>
+                        <Text style={styles.projectDataRoomMeta}>Периметр: {formatRoomPerimeter(room.perimeter)}</Text>
+                        <Text style={styles.projectDataRoomMeta}>Высота: 2.70 м</Text>
+                        <Text style={styles.projectDataRoomMeta}>Связи: {room.neighborRoomIds.length > 0 ? room.neighborRoomIds.map((roomId) => roomDisplayNameById.get(roomId) ?? roomId).join(', ') : 'нет'}</Text>
+                        {room.warnings.length > 0 ? (
+                          <Text style={styles.projectDataRoomWarning}>{room.warnings.map((warning) => warning.message).join(', ')}</Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.projectDataRoomArea}>{formatRoomArea(room.area)}</Text>
+                    </Pressable>
+                  )) : (
+                    <Text style={styles.projectDataEmptyText}>Помещения не определены</Text>
+                  )}
                 </View>
-              ) : null}
 
-              <Text style={styles.projectDataSectionTitle}>Помещения</Text>
-              <ScrollView style={styles.projectDataRoomList} contentContainerStyle={styles.projectDataRoomListContent}>
-                {projectRooms.length > 0 ? projectRooms.map((room, index) => (
-                  <Pressable
-                    key={room.roomId}
-                    style={[styles.projectDataRoomRow, selectedRoomId === room.roomId ? styles.projectDataRoomRowSelected : null]}
-                    onPress={() => setSelectedRoomId(room.roomId)}
-                    accessibilityLabel={room.displayName}
-                  >
-                    <View style={styles.projectDataRoomNameBlock}>
-                      <Text style={styles.projectDataRoomName}>{room.displayName || `Помещение ${index + 1}`}</Text>
-                      <Text style={styles.projectDataRoomMeta}>
-                        {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomArea(room.area)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
+                <Text style={styles.projectDataSectionTitle}>Topology</Text>
+                <View style={styles.projectDataInfoCard}>
+                  <Text style={styles.projectDataRoomMeta}>Связи помещений: {projectInterpretation.topology.connectedRoomPairs}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Изолированные помещения: {projectInterpretation.topology.isolatedRoomsCount}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Topology warnings: {projectTopologyWarnings.length}</Text>
+                  <View style={styles.projectDataWarningList}>
+                    {projectTopologyWarnings.length > 0 ? projectTopologyWarnings.slice(0, 8).map((warning) => (
+                      <Text key={warning.id} style={[styles.projectDataWarningText, warning.severity === 'error' ? styles.projectDataErrorText : null]}>
+                        {warning.message}
                       </Text>
-                      <Text style={styles.projectDataRoomMeta}>Периметр: {formatRoomPerimeter(room.perimeter)}</Text>
-                      <Text style={styles.projectDataRoomMeta}>Связи: {room.neighborRoomIds.length > 0 ? room.neighborRoomIds.map((roomId) => roomDisplayNameById.get(roomId) ?? roomId).join(', ') : 'нет'}</Text>
-                      {room.warnings.length > 0 ? (
-                        <Text style={styles.projectDataRoomWarning}>{room.warnings.map((warning) => warning.message).join(', ')}</Text>
-                      ) : null}
-                      {selectedRoomId === room.roomId ? (
-                        <View style={styles.roomAssignmentChipRow}>
-                          {ROOM_ASSIGNMENT_OPTIONS.map((option) => (
-                            <Pressable
-                              key={`${room.roomId}-${option.id}`}
-                              style={[styles.roomAssignmentChip, room.roomType === option.id ? styles.roomAssignmentChipActive : null]}
-                              onPress={() => assignRoomType(room.roomId, option.id)}
-                              accessibilityLabel={`Назначить ${option.label}`}
-                            >
-                              <Text style={[styles.roomAssignmentChipText, room.roomType === option.id ? styles.roomAssignmentChipTextActive : null]}>{option.label}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                      ) : null}
-                      {selectedRoomId === room.roomId && room.roomType === 'other' ? (
-                        <TextInput
-                          style={styles.roomCustomNameInput}
-                          value={customRoomNames[room.roomId] ?? ''}
-                          onChangeText={(value) => updateCustomRoomName(room.roomId, value)}
-                          placeholder="Введите название помещения"
-                          placeholderTextColor="#94A3B8"
-                        />
-                      ) : null}
-                    </View>
-                    <Text style={styles.projectDataRoomArea}>{formatRoomArea(room.area)}</Text>
-                  </Pressable>
-                )) : (
-                  <Text style={styles.projectDataEmptyText}>Помещения не определены</Text>
-                )}
-              </ScrollView>
+                    )) : (
+                      <Text style={styles.projectDataOkText}>Ошибок topology нет</Text>
+                    )}
+                  </View>
+                </View>
 
-              <Text style={styles.projectDataSectionTitle}>Предупреждения</Text>
-              <View style={styles.projectDataWarningList}>
-                {projectTopologyWarnings.length > 0 ? projectTopologyWarnings.slice(0, 6).map((warning) => (
-                  <Text key={warning.id} style={[styles.projectDataWarningText, warning.severity === 'error' ? styles.projectDataErrorText : null]}>
-                    {warning.message}
-                  </Text>
-                )) : (
-                  <Text style={styles.projectDataOkText}>Ошибок topology нет</Text>
-                )}
-              </View>
+                <Text style={styles.projectDataSectionTitle}>Surfaces</Text>
+                <View style={styles.projectDataPlaceholderCard}>
+                  <Text style={styles.projectDataPlaceholderText}>Surface System foundation готовится: floor, ceiling и wall unwrap metadata будут подключены отдельным этапом.</Text>
+                </View>
+
+                <Text style={styles.projectDataSectionTitle}>Engineering</Text>
+                <View style={styles.projectDataPlaceholderCard}>
+                  <Text style={styles.projectDataPlaceholderText}>Engineering layers foundation: электрические, сантехнические и route-слои пока не активированы.</Text>
+                </View>
+              </ScrollView>
             </View>
           ) : null}
 
+          {projectCreated && viewState.currentViewMode === 'plan' && (selectedRoom || roomAssignmentPending) ? (
+            <View style={styles.roomAssignmentPanel}>
+              <Text style={styles.roomAssignmentNoticeTitle}>{selectedRoom ? selectedRoom.displayName : 'Назначить помещения'}</Text>
+              <Text style={styles.roomAssignmentNoticeText}>{selectedRoom ? 'Room Assignment работает в PLAN MODE.' : 'Выберите комнату на плане, чтобы назначить тип.'}</Text>
+              {selectedRoom ? (
+                <>
+                  <View style={styles.roomAssignmentChipRow}>
+                    {ROOM_ASSIGNMENT_OPTIONS.map((option) => (
+                      <Pressable
+                        key={`${selectedRoom.roomId}-${option.id}`}
+                        style={[styles.roomAssignmentChip, selectedRoom.roomType === option.id ? styles.roomAssignmentChipActive : null]}
+                        onPress={() => assignRoomType(selectedRoom.roomId, option.id)}
+                        accessibilityLabel={`Назначить ${option.label}`}
+                      >
+                        <Text style={[styles.roomAssignmentChipText, selectedRoom.roomType === option.id ? styles.roomAssignmentChipTextActive : null]}>{option.label}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  {selectedRoom.roomType === 'other' ? (
+                    <TextInput
+                      style={styles.roomCustomNameInput}
+                      value={customRoomNames[selectedRoom.roomId] ?? ''}
+                      onChangeText={(value) => updateCustomRoomName(selectedRoom.roomId, value)}
+                      placeholder="Введите название помещения"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  ) : null}
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
+          {toolControlsVisible ? (
           <View style={styles.drawingToolbar} pointerEvents="box-none">
             {drawingTools.map((tool) => (
               <Pressable
@@ -7716,6 +7867,7 @@ export const CanvasV4DevScreen = () => {
               </Pressable>
             ))}
           </View>
+          ) : null}
 
           <View ref={canvasRef} style={[styles.canvasArea, { height: canvasHeight }]} onLayout={onLayout} {...responderHandlers}>
             {gridLines.map((line) => (
@@ -7734,7 +7886,7 @@ export const CanvasV4DevScreen = () => {
             <View pointerEvents="none" style={[styles.axisLine, { left: worldToScreen({ x: 0, y: 0 }).x, top: 0, height: viewport.height, width: 1 }]} />
             <View pointerEvents="none" style={[styles.axisLine, { top: worldToScreen({ x: 0, y: 0 }).y, left: 0, width: viewport.width, height: 1 }]} />
 
-            {projectIntelligenceVisible ? projectRooms.map((room) => {
+            {roomPresentationVisible ? projectRooms.map((room) => {
               const topLeft = worldToScreen({ x: room.roomBounds.minX, y: room.roomBounds.minY });
               const bottomRight = worldToScreen({ x: room.roomBounds.maxX, y: room.roomBounds.maxY });
               const labelPoint = worldToScreen(room.roomCenter);
@@ -7745,6 +7897,7 @@ export const CanvasV4DevScreen = () => {
 
               return (
                 <React.Fragment key={room.roomId}>
+                  {viewState.showProjectOverlays ? (
                   <View
                     pointerEvents="none"
                     style={[
@@ -7759,10 +7912,13 @@ export const CanvasV4DevScreen = () => {
                       },
                     ]}
                   />
-                  <View pointerEvents="none" style={[styles.roomOverlayLabel, isSelected ? styles.roomOverlayLabelSelected : null, { left: labelPoint.x - 54, top: labelPoint.y - 22 }]}>
-                    <Text style={styles.roomOverlayLabelTitle}>{room.displayName}</Text>
-                    <Text style={styles.roomOverlayLabelArea}>{formatRoomArea(room.area)}</Text>
-                  </View>
+                  ) : null}
+                  {roomLabelsVisible || roomAreasVisible ? (
+                    <View pointerEvents="none" style={[styles.roomOverlayLabel, isSelected ? styles.roomOverlayLabelSelected : null, { left: labelPoint.x - 54, top: labelPoint.y - 22 }]}>
+                      {roomLabelsVisible ? <Text style={styles.roomOverlayLabelTitle}>{room.displayName}</Text> : null}
+                      {roomAreasVisible ? <Text style={styles.roomOverlayLabelArea}>{formatRoomArea(room.area)}</Text> : null}
+                    </View>
+                  ) : null}
                 </React.Fragment>
               );
             }) : null}
@@ -8761,14 +8917,36 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
+  viewLayerBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 4,
+  },
+  viewLayerButton: {
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    paddingHorizontal: 11,
+  },
+  viewLayerButtonActive: {
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+  },
+  viewLayerButtonText: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  viewLayerButtonTextActive: {
+    color: '#1D4ED8',
+  },
   projectDataPanel: {
     position: 'absolute',
-    left: 92,
-    right: 76,
-    top: 18,
-    zIndex: 9,
-    maxWidth: 330,
-    maxHeight: 430,
+    zIndex: 12,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#DCE3F2',
@@ -8778,6 +8956,19 @@ const styles = StyleSheet.create({
     shadowColor: '#0F172A',
     shadowOpacity: 0.12,
     shadowRadius: 14,
+  },
+  projectDataPanelMobile: {
+    left: 8,
+    right: 8,
+    top: 8,
+    bottom: 8,
+    borderRadius: 18,
+  },
+  projectDataPanelDesktop: {
+    top: 18,
+    right: 18,
+    bottom: 18,
+    width: 460,
   },
   projectDataHeader: {
     flexDirection: 'row',
@@ -8825,12 +9016,21 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '900',
   },
+  projectDataScroll: {
+    flex: 1,
+  },
+  projectDataScrollContent: {
+    gap: 10,
+    paddingBottom: 18,
+  },
   projectDataStatsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   projectDataStat: {
-    flex: 1,
+    flexGrow: 1,
+    minWidth: 68,
     minHeight: 48,
     borderRadius: 10,
     borderWidth: 1,
@@ -8855,6 +9055,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textTransform: 'uppercase',
   },
+  roomAssignmentPanel: {
+    position: 'absolute',
+    left: 92,
+    right: 14,
+    bottom: 16,
+    zIndex: 9,
+    maxWidth: 520,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#FACC15',
+    backgroundColor: 'rgba(254, 252, 232, 0.96)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+  },
   roomAssignmentNotice: {
     borderRadius: 10,
     borderWidth: 1,
@@ -8875,9 +9092,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   projectDataRoomList: {
-    maxHeight: 148,
-  },
-  projectDataRoomListContent: {
     gap: 6,
   },
   projectDataRoomRow: {
@@ -8966,6 +9180,27 @@ const styles = StyleSheet.create({
   },
   projectDataWarningList: {
     gap: 5,
+  },
+  projectDataInfoCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    gap: 5,
+  },
+  projectDataPlaceholderCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+  },
+  projectDataPlaceholderText: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
   },
   projectDataWarningText: {
     color: '#92400E',
