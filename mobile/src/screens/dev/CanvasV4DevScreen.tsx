@@ -30,10 +30,28 @@ type RoomDetectionState = 'idle' | 'blocked' | 'detected';
 type RoomStatus = 'detected';
 type WallRole = 'external' | 'internal' | 'shared';
 type RoomSplitMode = 'none' | 'single-room' | 'multi-room';
-type CanvasV4RoomType = 'kitchen' | 'living_room' | 'bedroom' | 'bathroom' | 'corridor' | 'storage' | 'other';
+type CanvasV4RoomType =
+  | 'kitchen'
+  | 'living_room'
+  | 'bedroom'
+  | 'children'
+  | 'bathroom'
+  | 'corridor'
+  | 'entry_hall'
+  | 'wardrobe'
+  | 'storage'
+  | 'boiler_room'
+  | 'laundry'
+  | 'office'
+  | 'hall'
+  | 'staircase'
+  | 'server_room'
+  | 'technical_room'
+  | 'other';
 type TopologyWarningSeverity = 'warning' | 'error';
 type TopologyWarningCode =
   | 'room-without-door'
+  | 'room-without-window'
   | 'unclosed-contour'
   | 'orphan-segment'
   | 'floating-geometry'
@@ -42,6 +60,9 @@ type TopologyWarningCode =
   | 'invalid-topology-node'
   | 'invalid-window-placement'
   | 'invalid-door-placement'
+  | 'invalid-external-door'
+  | 'internal-window-placement'
+  | 'duplicated-room-name'
   | 'isolated-room';
 
 type CanvasV4TopologyWarning = {
@@ -91,11 +112,15 @@ type DoorSwingSide = 'inside' | 'outside';
 type CanvasV4Door = {
   doorId: string;
   segmentId: string;
+  topologyEdgeId?: string | null;
   positionOnSegment: number;
   offset: number;
   width: number;
   orientation: number;
   roomIds: string[];
+  connectedRoomIds?: string[];
+  wallRole?: WallRole;
+  isEntryDoor?: boolean;
   hingeSide: DoorHingeSide;
   swingSide: DoorSwingSide;
   createdAt: number;
@@ -104,6 +129,7 @@ type CanvasV4Door = {
 type CanvasV4Window = {
   windowId: string;
   segmentId: string;
+  topologyEdgeId?: string | null;
   positionOnSegment: number;
   offset: number;
   width: number;
@@ -111,6 +137,9 @@ type CanvasV4Window = {
   bottomOffset: number;
   orientation: number;
   roomIds: string[];
+  roomId?: string | null;
+  wallRole?: WallRole;
+  externalOnly?: boolean;
   createdAt: number;
 };
 
@@ -141,6 +170,11 @@ type CanvasV4RoomEntity = {
   topologyEdgeIds: string[];
   doorIds: string[];
   windowIds: string[];
+  neighborRoomIds: string[];
+  connectedDoorIds: string[];
+  externalWallSegmentIds: string[];
+  internalWallSegmentIds: string[];
+  sharedWallSegmentIds: string[];
   warnings: CanvasV4TopologyWarning[];
   polygon: Point[];
   bounds: BoundingBox;
@@ -239,6 +273,7 @@ type CanvasV4RoomGraph = {
 type CanvasV4WallGraphItem = {
   segmentId: string;
   wallRole: WallRole;
+  wallType: WallRole;
   roomIds: string[];
   topologyEdgeIds: string[];
   doorIds: string[];
@@ -253,15 +288,55 @@ type CanvasV4WallGraph = {
   orphanSegmentIds: string[];
 };
 
+type CanvasV4DoorConnection = {
+  doorId: string;
+  segmentId: string;
+  topologyEdgeId: string | null;
+  wallRole: WallRole | null;
+  roomIds: string[];
+  connectedRoomIds: string[];
+  connectsRoomIds: string[];
+  connectsExterior: boolean;
+  isEntryDoor: boolean;
+};
+
+type CanvasV4WindowConnection = {
+  windowId: string;
+  segmentId: string;
+  topologyEdgeId: string | null;
+  wallRole: WallRole | null;
+  roomIds: string[];
+  roomId: string | null;
+  externalOnly: boolean;
+};
+
 type CanvasV4ConnectionGraph = {
-  doorConnections: Array<{ doorId: string; segmentId: string; topologyEdgeId: string | null; roomIds: string[]; connectsRoomIds: string[]; connectsExterior: boolean }>;
-  windowConnections: Array<{ windowId: string; segmentId: string; topologyEdgeId: string | null; roomIds: string[] }>;
+  doorConnections: CanvasV4DoorConnection[];
+  windowConnections: CanvasV4WindowConnection[];
+};
+
+type CanvasV4RoomConnection = {
+  connectionId: string;
+  roomAId: string;
+  roomBId: string;
+  doorIds: string[];
+  sharedWallSegmentIds: string[];
+  sharedTopologyEdgeIds: string[];
+};
+
+type CanvasV4RoomConnectionGraph = {
+  connections: CanvasV4RoomConnection[];
+  connectedRoomPairs: string[];
+  isolatedRoomIds: string[];
+  neighborRoomIdsByRoomId: Record<string, string[]>;
+  doorIdsByRoomPair: Record<string, string[]>;
 };
 
 type CanvasV4Topology = {
   roomGraph: CanvasV4RoomGraph;
   wallGraph: CanvasV4WallGraph;
   connectionGraph: CanvasV4ConnectionGraph;
+  roomConnectionGraph: CanvasV4RoomConnectionGraph;
   planarGraph: CanvasV4PlanarGraph;
   warnings: CanvasV4TopologyWarning[];
   buildTimeMs: number;
@@ -277,6 +352,13 @@ type CanvasV4Topology = {
   floatingGapWarnings: number;
   invalidTopologyNodeCount: number;
   roomAssignmentPending: boolean;
+  detectedExternalWalls: number;
+  detectedInternalWalls: number;
+  connectedRoomPairs: number;
+  entryDoorsCount: number;
+  isolatedRoomsCount: number;
+  invalidWindowPlacements: number;
+  roomNeighborCount: number;
 };
 
 type CanvasV4ProjectValidationResult = {
@@ -1827,6 +1909,11 @@ const cloneRoomEntity = (room: CanvasV4RoomEntity): CanvasV4RoomEntity => ({
   topologyEdgeIds: [...room.topologyEdgeIds],
   doorIds: [...room.doorIds],
   windowIds: [...room.windowIds],
+  neighborRoomIds: [...room.neighborRoomIds],
+  connectedDoorIds: [...room.connectedDoorIds],
+  externalWallSegmentIds: [...room.externalWallSegmentIds],
+  internalWallSegmentIds: [...room.internalWallSegmentIds],
+  sharedWallSegmentIds: [...room.sharedWallSegmentIds],
   warnings: room.warnings.map((warning) => ({ ...warning })),
   polygon: room.polygon.map(clonePoint),
   bounds: cloneBoundingBox(room.bounds),
@@ -1868,12 +1955,29 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
     doorConnections: topology.connectionGraph.doorConnections.map((connection) => ({
       ...connection,
       roomIds: [...connection.roomIds],
+      connectedRoomIds: [...connection.connectedRoomIds],
       connectsRoomIds: [...connection.connectsRoomIds],
     })),
     windowConnections: topology.connectionGraph.windowConnections.map((connection) => ({
       ...connection,
       roomIds: [...connection.roomIds],
     })),
+  },
+  roomConnectionGraph: {
+    connections: topology.roomConnectionGraph.connections.map((connection) => ({
+      ...connection,
+      doorIds: [...connection.doorIds],
+      sharedWallSegmentIds: [...connection.sharedWallSegmentIds],
+      sharedTopologyEdgeIds: [...connection.sharedTopologyEdgeIds],
+    })),
+    connectedRoomPairs: [...topology.roomConnectionGraph.connectedRoomPairs],
+    isolatedRoomIds: [...topology.roomConnectionGraph.isolatedRoomIds],
+    neighborRoomIdsByRoomId: Object.fromEntries(
+      Object.entries(topology.roomConnectionGraph.neighborRoomIdsByRoomId).map(([roomId, neighborIds]) => [roomId, [...neighborIds]]),
+    ),
+    doorIdsByRoomPair: Object.fromEntries(
+      Object.entries(topology.roomConnectionGraph.doorIdsByRoomPair).map(([pairId, doorIds]) => [pairId, [...doorIds]]),
+    ),
   },
   planarGraph: {
     nodes: topology.planarGraph.nodes.map((node) => ({
@@ -1936,6 +2040,13 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
   floatingGapWarnings: topology.floatingGapWarnings,
   invalidTopologyNodeCount: topology.invalidTopologyNodeCount,
   roomAssignmentPending: topology.roomAssignmentPending,
+  detectedExternalWalls: topology.detectedExternalWalls,
+  detectedInternalWalls: topology.detectedInternalWalls,
+  connectedRoomPairs: topology.connectedRoomPairs,
+  entryDoorsCount: topology.entryDoorsCount,
+  isolatedRoomsCount: topology.isolatedRoomsCount,
+  invalidWindowPlacements: topology.invalidWindowPlacements,
+  roomNeighborCount: topology.roomNeighborCount,
 });
 
 const getWallTopologyMetadata = (topology: CanvasV4Topology) =>
@@ -1946,6 +2057,12 @@ const getDoorRoomIdsByDoorId = (topology: CanvasV4Topology) =>
 
 const getWindowRoomIdsByWindowId = (topology: CanvasV4Topology) =>
   new Map(topology.connectionGraph.windowConnections.map((connection) => [connection.windowId, connection.roomIds]));
+
+const getDoorConnectionByDoorId = (topology: CanvasV4Topology) =>
+  new Map(topology.connectionGraph.doorConnections.map((connection) => [connection.doorId, connection]));
+
+const getWindowConnectionByWindowId = (topology: CanvasV4Topology) =>
+  new Map(topology.connectionGraph.windowConnections.map((connection) => [connection.windowId, connection]));
 
 const cloneCanvasV4ProjectGeometrySnapshot = (
   entities: CanvasV4LineEntity[],
@@ -1959,6 +2076,8 @@ const cloneCanvasV4ProjectGeometrySnapshot = (
   const wallMetadataBySegmentId = getWallTopologyMetadata(topology);
   const doorRoomIdsByDoorId = getDoorRoomIdsByDoorId(topology);
   const windowRoomIdsByWindowId = getWindowRoomIdsByWindowId(topology);
+  const doorConnectionByDoorId = getDoorConnectionByDoorId(topology);
+  const windowConnectionByWindowId = getWindowConnectionByWindowId(topology);
 
   return {
     frozenAt: Date.now(),
@@ -1979,8 +2098,30 @@ const cloneCanvasV4ProjectGeometrySnapshot = (
         windowIds: [...(entity.windowIds ?? [])],
       };
     }),
-    doors: doors.map((door) => ({ ...door, roomIds: [...(doorRoomIdsByDoorId.get(door.doorId) ?? door.roomIds)] })),
-    windows: windows.map((window) => ({ ...window, roomIds: [...(windowRoomIdsByWindowId.get(window.windowId) ?? window.roomIds)] })),
+    doors: doors.map((door) => {
+      const connection = doorConnectionByDoorId.get(door.doorId);
+
+      return {
+        ...door,
+        topologyEdgeId: connection?.topologyEdgeId ?? door.topologyEdgeId ?? null,
+        roomIds: [...(doorRoomIdsByDoorId.get(door.doorId) ?? door.roomIds)],
+        connectedRoomIds: [...(connection?.connectedRoomIds ?? door.connectedRoomIds ?? [])],
+        wallRole: connection?.wallRole ?? door.wallRole,
+        isEntryDoor: connection?.isEntryDoor ?? door.isEntryDoor ?? false,
+      };
+    }),
+    windows: windows.map((window) => {
+      const connection = windowConnectionByWindowId.get(window.windowId);
+
+      return {
+        ...window,
+        topologyEdgeId: connection?.topologyEdgeId ?? window.topologyEdgeId ?? null,
+        roomIds: [...(windowRoomIdsByWindowId.get(window.windowId) ?? window.roomIds)],
+        roomId: connection?.roomId ?? window.roomId ?? null,
+        wallRole: connection?.wallRole ?? window.wallRole,
+        externalOnly: connection?.externalOnly ?? window.externalOnly ?? false,
+      };
+    }),
     roomCandidates: roomCandidates.map(cloneRoomCandidate),
     rooms: rooms.map(cloneRoomEntity),
     topology: cloneCanvasV4Topology(topology),
@@ -2689,9 +2830,19 @@ const ROOM_TYPE_LABELS: Record<CanvasV4RoomType, string> = {
   kitchen: 'Кухня',
   living_room: 'Гостиная',
   bedroom: 'Спальня',
+  children: 'Детская',
   bathroom: 'Санузел',
   corridor: 'Коридор',
+  entry_hall: 'Прихожая',
+  wardrobe: 'Гардеробная',
   storage: 'Кладовая',
+  boiler_room: 'Котельная',
+  laundry: 'Постирочная',
+  office: 'Кабинет',
+  hall: 'Холл',
+  staircase: 'Лестничная',
+  server_room: 'Серверная',
+  technical_room: 'Техпомещение',
   other: 'Другое',
 };
 
@@ -2699,9 +2850,19 @@ const ROOM_ASSIGNMENT_OPTIONS: Array<{ id: CanvasV4RoomType; label: string }> = 
   { id: 'kitchen', label: ROOM_TYPE_LABELS.kitchen },
   { id: 'living_room', label: ROOM_TYPE_LABELS.living_room },
   { id: 'bedroom', label: ROOM_TYPE_LABELS.bedroom },
+  { id: 'children', label: ROOM_TYPE_LABELS.children },
   { id: 'bathroom', label: ROOM_TYPE_LABELS.bathroom },
   { id: 'corridor', label: ROOM_TYPE_LABELS.corridor },
+  { id: 'entry_hall', label: ROOM_TYPE_LABELS.entry_hall },
+  { id: 'wardrobe', label: ROOM_TYPE_LABELS.wardrobe },
   { id: 'storage', label: ROOM_TYPE_LABELS.storage },
+  { id: 'boiler_room', label: ROOM_TYPE_LABELS.boiler_room },
+  { id: 'laundry', label: ROOM_TYPE_LABELS.laundry },
+  { id: 'office', label: ROOM_TYPE_LABELS.office },
+  { id: 'hall', label: ROOM_TYPE_LABELS.hall },
+  { id: 'staircase', label: ROOM_TYPE_LABELS.staircase },
+  { id: 'server_room', label: ROOM_TYPE_LABELS.server_room },
+  { id: 'technical_room', label: ROOM_TYPE_LABELS.technical_room },
   { id: 'other', label: ROOM_TYPE_LABELS.other },
 ];
 
@@ -2715,6 +2876,41 @@ const getRoomDisplayName = (roomNumber: number, roomType?: CanvasV4RoomType, cus
   }
 
   return `Помещение ${roomNumber}`;
+};
+
+const applyRoomAutoNumbering = (rooms: CanvasV4RoomEntity[]) => {
+  const roomGroups = new Map<string, CanvasV4RoomEntity[]>();
+
+  rooms.forEach((room) => {
+    const groupKey = room.customName
+      ? `custom:${room.customName.trim().toLowerCase()}`
+      : room.roomType
+        ? `type:${room.roomType}`
+        : `room:${room.roomId}`;
+
+    roomGroups.set(groupKey, [...(roomGroups.get(groupKey) ?? []), room]);
+  });
+
+  const numberedNameByRoomId = new Map<string, string>();
+
+  roomGroups.forEach((group) => {
+    const shouldNumberGroup = group.length > 1 && !group[0]?.customName;
+
+    group.forEach((room, index) => {
+      const baseName = getRoomDisplayName(room.roomNumber, room.roomType, room.customName);
+      numberedNameByRoomId.set(room.roomId, shouldNumberGroup ? `${baseName} ${index + 1}` : baseName);
+    });
+  });
+
+  return rooms.map((room) => {
+    const displayName = numberedNameByRoomId.get(room.roomId) ?? room.displayName;
+
+    return {
+      ...room,
+      displayName,
+      roomLabel: displayName,
+    };
+  });
 };
 
 const resolveRoomContoursFromTopology = (closedContours: ProjectContourInfo[], entities: CanvasV4LineEntity[]) => {
@@ -2795,7 +2991,7 @@ const createRoomsFromCandidates = (
 ): CanvasV4RoomEntity[] => {
   const usedHintNames = new Set<string>();
 
-  return roomCandidates.map((candidate, index) => {
+  return applyRoomAutoNumbering(roomCandidates.map((candidate, index) => {
     const roomNumber = index + 1;
     const roomId = `room-${index + 1}-${candidate.candidateId}`;
     const namingHint = getRoomNamingHint(candidate, namingHints, usedHintNames);
@@ -2817,6 +3013,11 @@ const createRoomsFromCandidates = (
       topologyEdgeIds: [...candidate.candidateTopologyEdgeIds],
       doorIds,
       windowIds,
+      neighborRoomIds: [],
+      connectedDoorIds: [],
+      externalWallSegmentIds: [],
+      internalWallSegmentIds: [],
+      sharedWallSegmentIds: [],
       warnings: [],
       polygon: candidate.candidateContour.map(clonePoint),
       bounds: cloneBoundingBox(candidate.candidateBounds),
@@ -2831,28 +3032,49 @@ const createRoomsFromCandidates = (
       roomLabel: displayName,
       roomStatus: 'detected' as RoomStatus,
     };
-  });
+  }));
 };
 
 const applyRoomTypeAssignments = (
   rooms: CanvasV4RoomEntity[],
   roomTypeAssignments: Record<string, CanvasV4RoomType>,
-) => rooms.map((room) => {
+  customRoomNames: Record<string, string> = {},
+) => applyRoomAutoNumbering(rooms.map((room) => {
   const assignedRoomType = roomTypeAssignments[room.roomId];
 
   if (!assignedRoomType) {
     return room;
   }
 
-  const displayName = getRoomDisplayName(room.roomNumber, assignedRoomType, room.customName);
+  const customName = assignedRoomType === 'other' ? customRoomNames[room.roomId]?.trim() || undefined : undefined;
+  const displayName = getRoomDisplayName(room.roomNumber, assignedRoomType, customName);
 
   return {
     ...room,
     roomType: assignedRoomType,
+    customName,
     displayName,
     roomLabel: displayName,
   };
-});
+}));
+
+const createRoomAssignmentWarnings = (rooms: CanvasV4RoomEntity[]) => {
+  const roomsByDisplayName = new Map<string, CanvasV4RoomEntity[]>();
+
+  rooms.forEach((room) => {
+    const key = room.displayName.trim().toLowerCase();
+
+    if (!key) {
+      return;
+    }
+
+    roomsByDisplayName.set(key, [...(roomsByDisplayName.get(key) ?? []), room]);
+  });
+
+  return Array.from(roomsByDisplayName.values())
+    .filter((group) => group.length > 1)
+    .map((group) => createWarning('duplicated-room-name', `Повторяется название помещения: ${group[0].displayName}`, { roomId: group[0].roomId }));
+};
 
 const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   roomGraph: {
@@ -2870,6 +3092,13 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   connectionGraph: {
     doorConnections: [],
     windowConnections: [],
+  },
+  roomConnectionGraph: {
+    connections: [],
+    connectedRoomPairs: [],
+    isolatedRoomIds: [],
+    neighborRoomIdsByRoomId: {},
+    doorIdsByRoomPair: {},
   },
   planarGraph: {
     nodes: [],
@@ -2902,6 +3131,13 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   floatingGapWarnings: 0,
   invalidTopologyNodeCount: 0,
   roomAssignmentPending: false,
+  detectedExternalWalls: 0,
+  detectedInternalWalls: 0,
+  connectedRoomPairs: 0,
+  entryDoorsCount: 0,
+  isolatedRoomsCount: 0,
+  invalidWindowPlacements: 0,
+  roomNeighborCount: 0,
 });
 
 const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
@@ -2983,6 +3219,7 @@ const createWallGraph = (
     return {
       segmentId: entity.segmentId,
       wallRole,
+      wallType: wallRole,
       roomIds,
       topologyEdgeIds,
       doorIds: [...entity.doorIds],
@@ -3021,27 +3258,120 @@ const createConnectionGraph = (
   doorConnections: doors.map((door) => {
     const topologyEdge = findTopologyEdgeForOpening(door, planarGraph);
     const roomIds = topologyEdge?.roomIds ?? [];
+    const connectedRoomIds = roomIds.length > 1 ? roomIds : [];
+    const isEntryDoor = topologyEdge?.wallRole === 'external' && roomIds.length === 1;
 
     return {
       doorId: door.doorId,
       segmentId: door.segmentId,
       topologyEdgeId: topologyEdge?.edgeId ?? null,
+      wallRole: topologyEdge?.wallRole ?? null,
       roomIds,
-      connectsRoomIds: roomIds.length > 1 ? roomIds : [],
-      connectsExterior: roomIds.length === 1,
+      connectedRoomIds,
+      connectsRoomIds: connectedRoomIds,
+      connectsExterior: isEntryDoor,
+      isEntryDoor,
     };
   }),
   windowConnections: windows.map((window) => {
     const topologyEdge = findTopologyEdgeForOpening(window, planarGraph);
+    const roomIds = topologyEdge?.roomIds ?? [];
+    const externalOnly = topologyEdge?.wallRole === 'external' && roomIds.length === 1;
 
     return {
       windowId: window.windowId,
       segmentId: window.segmentId,
       topologyEdgeId: topologyEdge?.edgeId ?? null,
-      roomIds: topologyEdge?.roomIds ?? [],
+      wallRole: topologyEdge?.wallRole ?? null,
+      roomIds,
+      roomId: roomIds[0] ?? null,
+      externalOnly,
     };
   }),
 });
+
+const getRoomPairKey = (roomAId: string, roomBId: string) => [roomAId, roomBId].sort().join('::');
+
+const createRoomConnectionGraph = (
+  rooms: CanvasV4RoomEntity[],
+  connectionGraph: CanvasV4ConnectionGraph,
+  planarGraph: CanvasV4PlanarGraph,
+): CanvasV4RoomConnectionGraph => {
+  const roomIds = new Set(rooms.map((room) => room.roomId));
+  const neighborSetsByRoomId = new Map<string, Set<string>>(rooms.map((room) => [room.roomId, new Set<string>()]));
+  const connectionByPair = new Map<string, CanvasV4RoomConnection>();
+
+  const ensureConnection = (roomAId: string, roomBId: string) => {
+    const [firstRoomId, secondRoomId] = [roomAId, roomBId].sort();
+    const pairKey = getRoomPairKey(firstRoomId, secondRoomId);
+    const existingConnection = connectionByPair.get(pairKey);
+
+    neighborSetsByRoomId.get(firstRoomId)?.add(secondRoomId);
+    neighborSetsByRoomId.get(secondRoomId)?.add(firstRoomId);
+
+    if (existingConnection) {
+      return existingConnection;
+    }
+
+    const connection: CanvasV4RoomConnection = {
+      connectionId: `room-connection-${pairKey}`,
+      roomAId: firstRoomId,
+      roomBId: secondRoomId,
+      doorIds: [],
+      sharedWallSegmentIds: [],
+      sharedTopologyEdgeIds: [],
+    };
+
+    connectionByPair.set(pairKey, connection);
+    return connection;
+  };
+
+  planarGraph.edges
+    .filter((edge) => edge.roomIds.length > 1)
+    .forEach((edge) => {
+      const connection = ensureConnection(edge.roomIds[0], edge.roomIds[1]);
+
+      if (!connection.sharedTopologyEdgeIds.includes(edge.edgeId)) {
+        connection.sharedTopologyEdgeIds.push(edge.edgeId);
+      }
+
+      if (!connection.sharedWallSegmentIds.includes(edge.segmentId)) {
+        connection.sharedWallSegmentIds.push(edge.segmentId);
+      }
+    });
+
+  connectionGraph.doorConnections
+    .filter((connection) => connection.connectedRoomIds.length > 1)
+    .forEach((doorConnection) => {
+      const connection = ensureConnection(doorConnection.connectedRoomIds[0], doorConnection.connectedRoomIds[1]);
+
+      if (!connection.doorIds.includes(doorConnection.doorId)) {
+        connection.doorIds.push(doorConnection.doorId);
+      }
+    });
+
+  const neighborRoomIdsByRoomId = Object.fromEntries(
+    Array.from(neighborSetsByRoomId.entries()).map(([roomId, neighborIds]) => [roomId, Array.from(neighborIds).sort()]),
+  );
+  const connections = Array.from(connectionByPair.values()).sort((first, second) => first.connectionId.localeCompare(second.connectionId));
+  const doorIdsByRoomPair = Object.fromEntries(
+    connections.map((connection) => [getRoomPairKey(connection.roomAId, connection.roomBId), [...connection.doorIds]]),
+  );
+  const isolatedRoomIds = rooms
+    .filter((room) => {
+      const hasDoor = connectionGraph.doorConnections.some((connection) => connection.roomIds.includes(room.roomId));
+      return roomIds.has(room.roomId) && !hasDoor && (neighborRoomIdsByRoomId[room.roomId]?.length ?? 0) === 0;
+    })
+    .map((room) => room.roomId);
+
+  return {
+    connections,
+    connectedRoomPairs: connections.map((connection) => getRoomPairKey(connection.roomAId, connection.roomBId)),
+    isolatedRoomIds,
+    neighborRoomIdsByRoomId,
+    doorIdsByRoomPair,
+  };
+};
 
 const attachOpeningsToRooms = (rooms: CanvasV4RoomEntity[], connectionGraph: CanvasV4ConnectionGraph) =>
   rooms.map((room) => ({
@@ -3053,6 +3383,27 @@ const attachOpeningsToRooms = (rooms: CanvasV4RoomEntity[], connectionGraph: Can
       .filter((connection) => connection.roomIds.includes(room.roomId))
       .map((connection) => connection.windowId),
   }));
+
+const attachSpatialRoomMetadata = (
+  rooms: CanvasV4RoomEntity[],
+  wallGraph: CanvasV4WallGraph,
+  connectionGraph: CanvasV4ConnectionGraph,
+  roomConnectionGraph: CanvasV4RoomConnectionGraph,
+) => rooms.map((room) => {
+  const roomWalls = wallGraph.walls.filter((wall) => wall.roomIds.includes(room.roomId));
+  const connectedDoorIds = connectionGraph.doorConnections
+    .filter((connection) => connection.roomIds.includes(room.roomId))
+    .map((connection) => connection.doorId);
+
+  return {
+    ...room,
+    neighborRoomIds: [...(roomConnectionGraph.neighborRoomIdsByRoomId[room.roomId] ?? [])],
+    connectedDoorIds,
+    externalWallSegmentIds: roomWalls.filter((wall) => wall.wallRole === 'external').map((wall) => wall.segmentId),
+    internalWallSegmentIds: roomWalls.filter((wall) => wall.wallRole === 'internal' || wall.wallRole === 'shared').map((wall) => wall.segmentId),
+    sharedWallSegmentIds: roomWalls.filter((wall) => wall.wallRole === 'shared').map((wall) => wall.segmentId),
+  };
+});
 
 const attachWarningsToRooms = (rooms: CanvasV4RoomEntity[], warnings: CanvasV4TopologyWarning[]) =>
   rooms.map((room) => ({
@@ -3126,6 +3477,7 @@ const createTopologyWarnings = (
   doors: CanvasV4Door[],
   windows: CanvasV4Window[],
   connectionGraph: CanvasV4ConnectionGraph,
+  roomConnectionGraph: CanvasV4RoomConnectionGraph,
   planarGraph: CanvasV4PlanarGraph,
 ) => {
   const warnings: CanvasV4TopologyWarning[] = [];
@@ -3181,12 +3533,24 @@ const createTopologyWarnings = (
       warnings.push(createWarning('room-without-door', 'Помещение без двери', { roomId: room.roomId }));
     }
 
-    const hasConnection = connectionGraph.doorConnections.some((connection) =>
-      connection.connectsRoomIds.length > 1 && connection.connectsRoomIds.includes(room.roomId),
-    );
+    if (room.windowIds.length === 0) {
+      warnings.push(createWarning('room-without-window', 'Помещение без окна', { roomId: room.roomId }));
+    }
 
-    if (rooms.length > 1 && !hasConnection) {
+    if (rooms.length > 1 && roomConnectionGraph.isolatedRoomIds.includes(room.roomId)) {
       warnings.push(createWarning('isolated-room', 'Изолированное помещение', { roomId: room.roomId }));
+    }
+  });
+
+  connectionGraph.doorConnections.forEach((connection) => {
+    if (connection.wallRole === 'external' && !connection.isEntryDoor) {
+      warnings.push(createWarning('invalid-external-door', 'Входная дверь размещена некорректно', { openingId: connection.doorId, segmentId: connection.segmentId, severity: 'error' }));
+    }
+  });
+
+  connectionGraph.windowConnections.forEach((connection) => {
+    if (connection.wallRole && connection.wallRole !== 'external') {
+      warnings.push(createWarning('internal-window-placement', 'Окно размещено на внутренней стене', { openingId: connection.windowId, segmentId: connection.segmentId, severity: 'error' }));
     }
   });
 
@@ -3234,14 +3598,16 @@ const buildCanvasV4Topology = (
   const planarGraph = applyPlanarEdgeOwnership(rawPlanarGraph, initialRooms);
   const connectionGraph = createConnectionGraph(doors, windows, planarGraph);
   const roomsWithOpenings = attachOpeningsToRooms(initialRooms, connectionGraph);
-  const warnings = createTopologyWarnings(entities, roomsWithOpenings, doors, windows, connectionGraph, planarGraph);
-  const rooms = attachWarningsToRooms(roomsWithOpenings, warnings);
-  const wallGraph = createWallGraph(entities, rooms, planarGraph);
+  const wallGraph = createWallGraph(entities, roomsWithOpenings, planarGraph);
+  const roomConnectionGraph = createRoomConnectionGraph(roomsWithOpenings, connectionGraph, planarGraph);
+  const roomsWithSpatialMetadata = attachSpatialRoomMetadata(roomsWithOpenings, wallGraph, connectionGraph, roomConnectionGraph);
+  const warnings = createTopologyWarnings(entities, roomsWithSpatialMetadata, doors, windows, connectionGraph, roomConnectionGraph, planarGraph);
+  const rooms = attachWarningsToRooms(roomsWithSpatialMetadata, warnings);
   const invalidDoorCount = new Set(warnings
     .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
     .map((warning) => warning.openingId as string)).size;
   const invalidWindowCount = new Set(warnings
-    .filter((warning) => warning.code === 'invalid-window-placement' && warning.openingId)
+    .filter((warning) => (warning.code === 'invalid-window-placement' || warning.code === 'internal-window-placement') && warning.openingId)
     .map((warning) => warning.openingId as string)).size;
   const roomAssignmentPending = rooms.some((room) => !room.roomType);
 
@@ -3253,6 +3619,7 @@ const buildCanvasV4Topology = (
     },
     wallGraph,
     connectionGraph,
+    roomConnectionGraph,
     planarGraph,
     warnings,
     buildTimeMs: Math.max(1, Date.now() - startedAt),
@@ -3268,6 +3635,13 @@ const buildCanvasV4Topology = (
     floatingGapWarnings: planarGraph.normalization.floatingGaps.length,
     invalidTopologyNodeCount: planarGraph.normalization.invalidTopologyNodeIds.length,
     roomAssignmentPending,
+    detectedExternalWalls: wallGraph.externalSegmentIds.length,
+    detectedInternalWalls: wallGraph.internalSegmentIds.length + wallGraph.sharedSegmentIds.length,
+    connectedRoomPairs: roomConnectionGraph.connectedRoomPairs.length,
+    entryDoorsCount: connectionGraph.doorConnections.filter((connection) => connection.isEntryDoor).length,
+    isolatedRoomsCount: roomConnectionGraph.isolatedRoomIds.length,
+    invalidWindowPlacements: invalidWindowCount,
+    roomNeighborCount: Object.values(roomConnectionGraph.neighborRoomIdsByRoomId).reduce((sum, neighbors) => sum + neighbors.length, 0),
   };
 };
 
@@ -3900,9 +4274,11 @@ export const CanvasV4DevScreen = () => {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [isProjectDataPanelOpen, setProjectDataPanelOpen] = useState(false);
   const [roomTypeAssignments, setRoomTypeAssignments] = useState<Record<string, CanvasV4RoomType>>({});
+  const [customRoomNames, setCustomRoomNames] = useState<Record<string, string>>({});
 
   const projectCreated = Boolean(projectState);
   const projectIntelligenceVisible = projectCreated && currentCanvasMode === 'project';
+  const projectSpatialDataAvailable = projectCreated && (currentCanvasMode === 'project' || isProjectDataPanelOpen);
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -3925,22 +4301,23 @@ export const CanvasV4DevScreen = () => {
   const activeShapeStartPoint = isShapeToolMode(currentToolMode) ? shapeStartPoint : null;
 
   const projectInterpretation = useMemo(
-    () => (projectIntelligenceVisible
+    () => (projectSpatialDataAvailable
       ? detectCanvasV4ProjectInterpretation(entities, doors, windows, selectedTemplateVariant)
       : createDeferredCanvasV4ProjectInterpretation(entities.length > 0)),
-    [doors, entities, projectIntelligenceVisible, selectedTemplateVariant, windows],
+    [doors, entities, projectSpatialDataAvailable, selectedTemplateVariant, windows],
   );
   const projectContours = useMemo(
     () => (projectIntelligenceVisible ? projectInterpretation.closedContours : []),
     [projectIntelligenceVisible, projectInterpretation.closedContours],
   );
   const projectRooms = useMemo(
-    () => (projectIntelligenceVisible ? applyRoomTypeAssignments(projectInterpretation.rooms, roomTypeAssignments) : []),
-    [projectIntelligenceVisible, projectInterpretation.rooms, roomTypeAssignments],
+    () => (projectSpatialDataAvailable ? applyRoomTypeAssignments(projectInterpretation.rooms, roomTypeAssignments, customRoomNames) : []),
+    [customRoomNames, projectSpatialDataAvailable, projectInterpretation.rooms, roomTypeAssignments],
   );
+  const projectAssignmentWarnings = useMemo(() => createRoomAssignmentWarnings(projectRooms), [projectRooms]);
   const projectTopologyWarnings = useMemo(
-    () => (projectIntelligenceVisible ? projectInterpretation.topologyWarnings : []),
-    [projectIntelligenceVisible, projectInterpretation.topologyWarnings],
+    () => (projectSpatialDataAvailable ? [...projectInterpretation.topologyWarnings, ...projectAssignmentWarnings] : []),
+    [projectAssignmentWarnings, projectSpatialDataAvailable, projectInterpretation.topologyWarnings],
   );
   const projectWarningSegmentIds = useMemo(
     () => {
@@ -3957,16 +4334,16 @@ export const CanvasV4DevScreen = () => {
     [projectIntelligenceVisible, projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds, projectInterpretation.topologyWarnings],
   );
   const invalidDoorIds = useMemo(
-    () => new Set(projectTopologyWarnings
+    () => new Set((projectIntelligenceVisible ? projectTopologyWarnings : [])
       .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
       .map((warning) => warning.openingId as string)),
-    [projectTopologyWarnings],
+    [projectIntelligenceVisible, projectTopologyWarnings],
   );
   const invalidWindowIds = useMemo(
-    () => new Set(projectTopologyWarnings
-      .filter((warning) => warning.code === 'invalid-window-placement' && warning.openingId)
+    () => new Set((projectIntelligenceVisible ? projectTopologyWarnings : [])
+      .filter((warning) => (warning.code === 'invalid-window-placement' || warning.code === 'internal-window-placement') && warning.openingId)
       .map((warning) => warning.openingId as string)),
-    [projectTopologyWarnings],
+    [projectIntelligenceVisible, projectTopologyWarnings],
   );
   const shapeGroups = useMemo(() => getShapeGroups(entities), [entities]);
   const shapeGroupById = useMemo(() => new Map(shapeGroups.map((group) => [group.shapeId, group])), [shapeGroups]);
@@ -4033,6 +4410,7 @@ export const CanvasV4DevScreen = () => {
     setCurrentCanvasMode('project');
     setProjectDataPanelOpen(true);
     setRoomTypeAssignments({});
+    setCustomRoomNames({});
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setSelectedRoomId(null);
@@ -4056,7 +4434,6 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    setCurrentCanvasMode('project');
     setProjectDataPanelOpen(true);
     setLastActionType('PROJECT_DATA_MODE_OPEN');
   }, [projectState]);
@@ -4066,8 +4443,23 @@ export const CanvasV4DevScreen = () => {
       ...current,
       [roomId]: roomType,
     }));
+    if (roomType !== 'other') {
+      setCustomRoomNames((current) => {
+        const nextRoomNames = { ...current };
+        delete nextRoomNames[roomId];
+        return nextRoomNames;
+      });
+    }
     setSelectedRoomId(roomId);
     setLastActionType(`ASSIGN_ROOM_TYPE_${roomType.toUpperCase()}`);
+  }, []);
+
+  const updateCustomRoomName = useCallback((roomId: string, customName: string) => {
+    setCustomRoomNames((current) => ({
+      ...current,
+      [roomId]: customName,
+    }));
+    setLastActionType('UPDATE_CUSTOM_ROOM_NAME');
   }, []);
 
   const openManualDrawFlow = useCallback(() => {
@@ -4086,6 +4478,7 @@ export const CanvasV4DevScreen = () => {
     setSelectedRoomId(null);
     setProjectDataPanelOpen(false);
     setRoomTypeAssignments({});
+    setCustomRoomNames({});
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setSelectionBox(null);
@@ -4146,6 +4539,7 @@ export const CanvasV4DevScreen = () => {
     setProjectState(null);
     setProjectDataPanelOpen(false);
     setRoomTypeAssignments({});
+    setCustomRoomNames({});
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setCurrentCanvasMode('plan');
@@ -4741,7 +5135,8 @@ export const CanvasV4DevScreen = () => {
   const selectedDoor = useMemo(() => doors.find((door) => door.doorId === selectedDoorId) ?? null, [doors, selectedDoorId]);
   const selectedWindow = useMemo(() => windows.find((window) => window.windowId === selectedWindowId) ?? null, [selectedWindowId, windows]);
   const selectedRoom = useMemo(() => projectRooms.find((room) => room.roomId === selectedRoomId) ?? null, [projectRooms, selectedRoomId]);
-  const roomAssignmentPending = projectIntelligenceVisible && projectRooms.some((room) => !room.roomType);
+  const roomDisplayNameById = useMemo(() => new Map(projectRooms.map((room) => [room.roomId, room.displayName])), [projectRooms]);
+  const roomAssignmentPending = projectSpatialDataAvailable && projectRooms.some((room) => !room.roomType);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
@@ -6311,6 +6706,13 @@ export const CanvasV4DevScreen = () => {
       `floatingGapWarnings: ${projectInterpretation.topology.floatingGapWarnings}`,
       `invalidTopologyNodeCount: ${projectInterpretation.topology.invalidTopologyNodeCount}`,
       `roomAssignmentPending: ${roomAssignmentPending ? 'true' : 'false'}`,
+      `detectedExternalWalls: ${projectInterpretation.topology.detectedExternalWalls}`,
+      `detectedInternalWalls: ${projectInterpretation.topology.detectedInternalWalls}`,
+      `connectedRoomPairs: ${projectInterpretation.topology.connectedRoomPairs}`,
+      `entryDoorsCount: ${projectInterpretation.topology.entryDoorsCount}`,
+      `isolatedRoomsCount: ${projectInterpretation.topology.isolatedRoomsCount}`,
+      `invalidWindowPlacements: ${projectInterpretation.topology.invalidWindowPlacements}`,
+      `roomNeighborCount: ${projectInterpretation.topology.roomNeighborCount}`,
       `roomSplitMode: ${projectInterpretation.topology.roomSplitMode}`,
       `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
       `roomCount: ${projectRooms.length}`,
@@ -6769,7 +7171,7 @@ export const CanvasV4DevScreen = () => {
             {projectCreated ? (
               <Pressable
                 style={[styles.projectRailButton, styles.projectRailDataButton, isProjectDataPanelOpen ? styles.projectRailButtonActive : null]}
-                onPress={isProjectDataPanelOpen && projectIntelligenceVisible ? () => setProjectDataPanelOpen(false) : openProjectDataMode}
+                onPress={isProjectDataPanelOpen ? () => setProjectDataPanelOpen(false) : openProjectDataMode}
                 accessibilityLabel="Данные проекта"
               >
                 <Text style={styles.projectRailIcon}>i</Text>
@@ -6778,7 +7180,7 @@ export const CanvasV4DevScreen = () => {
             ) : null}
           </View>
 
-          {projectIntelligenceVisible && isProjectDataPanelOpen ? (
+          {projectCreated && isProjectDataPanelOpen ? (
             <View style={styles.projectDataPanel}>
               <View style={styles.projectDataHeader}>
                 <Text style={styles.projectDataTitle}>Данные проекта</Text>
@@ -6828,6 +7230,7 @@ export const CanvasV4DevScreen = () => {
                       <Text style={styles.projectDataRoomMeta}>
                         {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomPerimeter(room.perimeter)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
                       </Text>
+                      <Text style={styles.projectDataRoomMeta}>Связи: {room.neighborRoomIds.length > 0 ? room.neighborRoomIds.map((roomId) => roomDisplayNameById.get(roomId) ?? roomId).join(', ') : 'нет'}</Text>
                       {room.warnings.length > 0 ? (
                         <Text style={styles.projectDataRoomWarning}>{room.warnings.map((warning) => warning.message).join(', ')}</Text>
                       ) : null}
@@ -6844,6 +7247,15 @@ export const CanvasV4DevScreen = () => {
                             </Pressable>
                           ))}
                         </View>
+                      ) : null}
+                      {selectedRoomId === room.roomId && room.roomType === 'other' ? (
+                        <TextInput
+                          style={styles.roomCustomNameInput}
+                          value={customRoomNames[room.roomId] ?? ''}
+                          onChangeText={(value) => updateCustomRoomName(room.roomId, value)}
+                          placeholder="Введите название помещения"
+                          placeholderTextColor="#94A3B8"
+                        />
                       ) : null}
                     </View>
                     <Text style={styles.projectDataRoomArea}>{formatRoomArea(room.area)}</Text>
@@ -6896,7 +7308,7 @@ export const CanvasV4DevScreen = () => {
             <View pointerEvents="none" style={[styles.axisLine, { left: worldToScreen({ x: 0, y: 0 }).x, top: 0, height: viewport.height, width: 1 }]} />
             <View pointerEvents="none" style={[styles.axisLine, { top: worldToScreen({ x: 0, y: 0 }).y, left: 0, width: viewport.width, height: 1 }]} />
 
-            {projectRooms.map((room) => {
+            {projectIntelligenceVisible ? projectRooms.map((room) => {
               const topLeft = worldToScreen({ x: room.roomBounds.minX, y: room.roomBounds.minY });
               const bottomRight = worldToScreen({ x: room.roomBounds.maxX, y: room.roomBounds.maxY });
               const labelPoint = worldToScreen(room.roomCenter);
@@ -6927,7 +7339,7 @@ export const CanvasV4DevScreen = () => {
                   </View>
                 </React.Fragment>
               );
-            })}
+            }) : null}
 
             {smoothCircleShapeGroups.map((group) => {
               if (!group.centerPoint || !group.radiusX || !group.radiusY) {
@@ -8103,6 +8515,18 @@ const styles = StyleSheet.create({
   },
   roomAssignmentChipTextActive: {
     color: '#1D4ED8',
+  },
+  roomCustomNameInput: {
+    minHeight: 34,
+    marginTop: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    color: '#0F172A',
+    fontSize: 11,
+    fontWeight: '800',
   },
   projectDataRoomArea: {
     color: '#0F172A',
