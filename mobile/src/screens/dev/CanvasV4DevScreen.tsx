@@ -30,12 +30,16 @@ type RoomDetectionState = 'idle' | 'blocked' | 'detected';
 type RoomStatus = 'detected';
 type WallRole = 'external' | 'internal' | 'shared';
 type RoomSplitMode = 'none' | 'single-room' | 'multi-room';
+type CanvasV4RoomType = 'kitchen' | 'living_room' | 'bedroom' | 'bathroom' | 'corridor' | 'storage' | 'other';
 type TopologyWarningSeverity = 'warning' | 'error';
 type TopologyWarningCode =
   | 'room-without-door'
   | 'unclosed-contour'
   | 'orphan-segment'
   | 'floating-geometry'
+  | 'floating-partition'
+  | 'invalid-split'
+  | 'invalid-topology-node'
   | 'invalid-window-placement'
   | 'invalid-door-placement'
   | 'isolated-room';
@@ -120,7 +124,7 @@ type CanvasV4RoomCandidate = {
   candidateCenter: Point;
   candidateBounds: BoundingBox;
   isExternalRoom: boolean;
-  templateSuggestedType?: string;
+  templateSuggestedType?: CanvasV4RoomType;
 };
 
 type CanvasV4RoomEntity = {
@@ -128,8 +132,8 @@ type CanvasV4RoomEntity = {
   roomId: string;
   roomNumber: number;
   displayName: string;
-  roomType?: string;
-  templateSuggestedType?: string;
+  roomType?: CanvasV4RoomType;
+  templateSuggestedType?: CanvasV4RoomType;
   customName?: string;
   area: number;
   perimeter: number;
@@ -154,8 +158,32 @@ type CanvasV4RoomEntity = {
 
 type CanvasV4RoomNamingHint = {
   displayName: string;
-  roomType: string;
+  roomType: CanvasV4RoomType;
   point: Point;
+};
+
+type CanvasV4ManualTopologyJunction = {
+  segmentId: string;
+  targetSegmentId: string;
+  endpoint: 'start' | 'end';
+  originalPoint: Point;
+  normalizedPoint: Point;
+  distance: number;
+};
+
+type CanvasV4ManualTopologyGap = {
+  segmentId: string;
+  targetSegmentId: string | null;
+  endpoint: 'start' | 'end';
+  point: Point;
+  distance: number;
+};
+
+type CanvasV4TopologyNormalizationSummary = {
+  autoConnectedJunctions: CanvasV4ManualTopologyJunction[];
+  floatingGaps: CanvasV4ManualTopologyGap[];
+  invalidTopologyNodeIds: string[];
+  partitionEdgeIds: string[];
 };
 
 type CanvasV4PlanarNode = {
@@ -198,6 +226,7 @@ type CanvasV4PlanarGraph = {
   orphanSegmentIds: string[];
   openContourSegmentIds: string[];
   roomSplitMode: RoomSplitMode;
+  normalization: CanvasV4TopologyNormalizationSummary;
   buildTimeMs: number;
 };
 
@@ -243,6 +272,11 @@ type CanvasV4Topology = {
   roomSplitMode: RoomSplitMode;
   invalidDoorCount: number;
   invalidWindowCount: number;
+  partitionEdgesCount: number;
+  autoConnectedJunctions: number;
+  floatingGapWarnings: number;
+  invalidTopologyNodeCount: number;
+  roomAssignmentPending: boolean;
 };
 
 type CanvasV4ProjectValidationResult = {
@@ -449,6 +483,8 @@ const TOPOLOGY_AREA_TOLERANCE_RATIO = 0.05;
 const TOPOLOGY_NODE_TOLERANCE_MM = 1;
 const TOPOLOGY_MIN_EDGE_LENGTH_MM = 1;
 const TOPOLOGY_FACE_GUARD_FACTOR = 8;
+const MANUAL_TOPOLOGY_AUTO_CONNECT_TOLERANCE_MM = 120;
+const MANUAL_TOPOLOGY_FLOATING_GAP_TOLERANCE_MM = 320;
 const PROJECT_EMPTY_CANVAS_MESSAGE = 'Чертёж отсутствует';
 const PROJECT_NO_ROOM_MESSAGE = 'Не найдено помещение. Замкните контур.';
 const DOOR_HIT_TOLERANCE_PX = 16;
@@ -1871,6 +1907,19 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
     orphanSegmentIds: [...topology.planarGraph.orphanSegmentIds],
     openContourSegmentIds: [...topology.planarGraph.openContourSegmentIds],
     roomSplitMode: topology.planarGraph.roomSplitMode,
+    normalization: {
+      autoConnectedJunctions: topology.planarGraph.normalization.autoConnectedJunctions.map((junction) => ({
+        ...junction,
+        originalPoint: clonePoint(junction.originalPoint),
+        normalizedPoint: clonePoint(junction.normalizedPoint),
+      })),
+      floatingGaps: topology.planarGraph.normalization.floatingGaps.map((gap) => ({
+        ...gap,
+        point: clonePoint(gap.point),
+      })),
+      invalidTopologyNodeIds: [...topology.planarGraph.normalization.invalidTopologyNodeIds],
+      partitionEdgeIds: [...topology.planarGraph.normalization.partitionEdgeIds],
+    },
     buildTimeMs: topology.planarGraph.buildTimeMs,
   },
   warnings: topology.warnings.map((warning) => ({ ...warning })),
@@ -1882,6 +1931,11 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
   roomSplitMode: topology.roomSplitMode,
   invalidDoorCount: topology.invalidDoorCount,
   invalidWindowCount: topology.invalidWindowCount,
+  partitionEdgesCount: topology.partitionEdgesCount,
+  autoConnectedJunctions: topology.autoConnectedJunctions,
+  floatingGapWarnings: topology.floatingGapWarnings,
+  invalidTopologyNodeCount: topology.invalidTopologyNodeCount,
+  roomAssignmentPending: topology.roomAssignmentPending,
 });
 
 const getWallTopologyMetadata = (topology: CanvasV4Topology) =>
@@ -2151,8 +2205,110 @@ const createPlanarFace = (
   };
 };
 
+const createEmptyTopologyNormalization = (): CanvasV4TopologyNormalizationSummary => ({
+  autoConnectedJunctions: [],
+  floatingGaps: [],
+  invalidTopologyNodeIds: [],
+  partitionEdgeIds: [],
+});
+
+const isEndpointAlreadyTopologicallyConnected = (
+  point: Point,
+  segmentId: string,
+  entities: CanvasV4LineEntity[],
+) => entities.some((candidate) =>
+  candidate.segmentId !== segmentId &&
+  getDistanceToSegment(point, candidate.startPoint, candidate.endPoint) <= TOPOLOGY_NODE_TOLERANCE_MM,
+);
+
+const findNearestTopologyTarget = (
+  point: Point,
+  segmentId: string,
+  entities: CanvasV4LineEntity[],
+) => entities
+  .filter((candidate) => candidate.segmentId !== segmentId && candidate.length > TOPOLOGY_MIN_EDGE_LENGTH_MM)
+  .map((candidate) => ({
+    segment: candidate,
+    projection: projectPointToSegment(point, candidate),
+  }))
+  .sort((first, second) => first.projection.distance - second.projection.distance)[0] ?? null;
+
+const normalizeManualTopologyEntities = (entities: CanvasV4LineEntity[]) => {
+  const normalization = createEmptyTopologyNormalization();
+  const normalizedBySegmentId = new Map(entities.map((entity) => [entity.segmentId, { ...entity, startPoint: clonePoint(entity.startPoint), endPoint: clonePoint(entity.endPoint) }]));
+
+  entities.forEach((entity) => {
+    ([
+      { endpoint: 'start' as const, point: entity.startPoint },
+      { endpoint: 'end' as const, point: entity.endPoint },
+    ]).forEach(({ endpoint, point }) => {
+      const currentEntity = normalizedBySegmentId.get(entity.segmentId);
+
+      if (!currentEntity) {
+        return;
+      }
+
+      const currentPoint = endpoint === 'start' ? currentEntity.startPoint : currentEntity.endPoint;
+      const currentTopologyEntities = Array.from(normalizedBySegmentId.values());
+
+      if (isEndpointAlreadyTopologicallyConnected(currentPoint, entity.segmentId, currentTopologyEntities)) {
+        return;
+      }
+
+      const nearestTarget = findNearestTopologyTarget(currentPoint, entity.segmentId, currentTopologyEntities);
+
+      if (!nearestTarget) {
+        return;
+      }
+
+      const { segment: targetSegment, projection } = nearestTarget;
+
+      if (
+        projection.distance > TOPOLOGY_NODE_TOLERANCE_MM &&
+        projection.distance <= MANUAL_TOPOLOGY_AUTO_CONNECT_TOLERANCE_MM
+      ) {
+        const nextStartPoint = endpoint === 'start' ? clonePoint(projection.point) : currentEntity.startPoint;
+        const nextEndPoint = endpoint === 'end' ? clonePoint(projection.point) : currentEntity.endPoint;
+        const nextLength = Math.hypot(nextEndPoint.x - nextStartPoint.x, nextEndPoint.y - nextStartPoint.y);
+
+        if (nextLength <= TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+          return;
+        }
+
+        normalizedBySegmentId.set(entity.segmentId, updateLineEntityGeometry(currentEntity, nextStartPoint, nextEndPoint));
+        normalization.autoConnectedJunctions.push({
+          segmentId: entity.segmentId,
+          targetSegmentId: targetSegment.segmentId,
+          endpoint,
+          originalPoint: clonePoint(point),
+          normalizedPoint: clonePoint(projection.point),
+          distance: projection.distance,
+        });
+        return;
+      }
+
+      if (projection.distance <= MANUAL_TOPOLOGY_FLOATING_GAP_TOLERANCE_MM) {
+        normalization.floatingGaps.push({
+          segmentId: entity.segmentId,
+          targetSegmentId: targetSegment.segmentId,
+          endpoint,
+          point: clonePoint(point),
+          distance: projection.distance,
+        });
+      }
+    });
+  });
+
+  return {
+    normalizedEntities: Array.from(normalizedBySegmentId.values()),
+    normalization,
+  };
+};
+
 const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4PlanarGraph => {
   const startedAt = Date.now();
+  const { normalizedEntities, normalization: baseNormalization } = normalizeManualTopologyEntities(entities);
+  const segmentById = new Map(normalizedEntities.map((entity) => [entity.segmentId, entity]));
   const splitPointsBySegmentId = new Map<string, Array<{ point: Point; offset: number }>>();
 
   const addSplitPoint = (segment: CanvasV4LineEntity, point: Point) => {
@@ -2171,15 +2327,15 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
     ]);
   };
 
-  entities.forEach((entity) => {
+  normalizedEntities.forEach((entity) => {
     addSplitPoint(entity, entity.startPoint);
     addSplitPoint(entity, entity.endPoint);
   });
 
-  for (let firstIndex = 0; firstIndex < entities.length; firstIndex += 1) {
-    for (let secondIndex = firstIndex + 1; secondIndex < entities.length; secondIndex += 1) {
-      const first = entities[firstIndex];
-      const second = entities[secondIndex];
+  for (let firstIndex = 0; firstIndex < normalizedEntities.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < normalizedEntities.length; secondIndex += 1) {
+      const first = normalizedEntities[firstIndex];
+      const second = normalizedEntities[secondIndex];
 
       getLineIntersectionPoints(first, second).forEach((point) => {
         addSplitPoint(first, point);
@@ -2214,7 +2370,7 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
 
   const edges: CanvasV4PlanarEdge[] = [];
 
-  entities.forEach((entity) => {
+  normalizedEntities.forEach((entity) => {
     const splitPoints = [...(splitPointsBySegmentId.get(entity.segmentId) ?? [])]
       .sort((first, second) => first.offset - second.offset)
       .filter((splitPoint, index, sortedPoints) => index === 0 || Math.abs(splitPoint.offset - sortedPoints[index - 1].offset) > TOPOLOGY_MIN_EDGE_LENGTH_MM);
@@ -2266,6 +2422,17 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
 
   outgoingByNodeId.forEach((outgoing) => outgoing.sort((first, second) => first.angle - second.angle));
 
+  const invalidTopologyNodeIds = nodes
+    .filter((node) => (outgoingByNodeId.get(node.nodeId)?.length ?? 0) <= 1)
+    .map((node) => node.nodeId);
+  const partitionEdgeIds = edges
+    .filter((edge) => segmentById.get(edge.segmentId)?.segmentType === 'internal')
+    .map((edge) => edge.edgeId);
+  const normalization: CanvasV4TopologyNormalizationSummary = {
+    ...baseNormalization,
+    invalidTopologyNodeIds,
+    partitionEdgeIds,
+  };
   const directedEdges = Array.from(outgoingByNodeId.values()).flat();
   const visitedDirectedEdges = new Set<string>();
   const rawFaces: CanvasV4PlanarFace[] = [];
@@ -2347,10 +2514,10 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
     ? clockwiseRoomFaces
     : faces.filter((face) => !face.isOuterFace);
   const roomTopologyEdgeIds = new Set(roomFaces.flatMap((face) => face.topologyEdgeIds));
-  const orphanSegmentIds = entities
+  const orphanSegmentIds = normalizedEntities
     .filter((entity) => !edges.some((edge) => edge.segmentId === entity.segmentId && roomTopologyEdgeIds.has(edge.edgeId)))
     .map((entity) => entity.segmentId);
-  const openContourSegmentIds = roomFaces.length === 0 ? entities.map((entity) => entity.segmentId) : [];
+  const openContourSegmentIds = roomFaces.length === 0 ? normalizedEntities.map((entity) => entity.segmentId) : [];
   const roomSplitMode: RoomSplitMode = roomFaces.length === 0 ? 'none' : roomFaces.length === 1 ? 'single-room' : 'multi-room';
 
   return {
@@ -2362,6 +2529,7 @@ const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4Plana
     orphanSegmentIds,
     openContourSegmentIds,
     roomSplitMode,
+    normalization,
     buildTimeMs: Math.max(1, Date.now() - startedAt),
   };
 };
@@ -2517,15 +2685,27 @@ const getTemplateRoomNamingHints = (variant: TemplateVariant | null): CanvasV4Ro
   return [];
 };
 
-const ROOM_TYPE_LABELS: Record<string, string> = {
+const ROOM_TYPE_LABELS: Record<CanvasV4RoomType, string> = {
   kitchen: 'Кухня',
-  bathroom: 'Санузел',
-  corridor: 'Коридор',
   living_room: 'Гостиная',
   bedroom: 'Спальня',
+  bathroom: 'Санузел',
+  corridor: 'Коридор',
+  storage: 'Кладовая',
+  other: 'Другое',
 };
 
-const getRoomDisplayName = (roomNumber: number, roomType?: string, customName?: string) => {
+const ROOM_ASSIGNMENT_OPTIONS: Array<{ id: CanvasV4RoomType; label: string }> = [
+  { id: 'kitchen', label: ROOM_TYPE_LABELS.kitchen },
+  { id: 'living_room', label: ROOM_TYPE_LABELS.living_room },
+  { id: 'bedroom', label: ROOM_TYPE_LABELS.bedroom },
+  { id: 'bathroom', label: ROOM_TYPE_LABELS.bathroom },
+  { id: 'corridor', label: ROOM_TYPE_LABELS.corridor },
+  { id: 'storage', label: ROOM_TYPE_LABELS.storage },
+  { id: 'other', label: ROOM_TYPE_LABELS.other },
+];
+
+const getRoomDisplayName = (roomNumber: number, roomType?: CanvasV4RoomType, customName?: string) => {
   if (customName) {
     return customName;
   }
@@ -2654,6 +2834,26 @@ const createRoomsFromCandidates = (
   });
 };
 
+const applyRoomTypeAssignments = (
+  rooms: CanvasV4RoomEntity[],
+  roomTypeAssignments: Record<string, CanvasV4RoomType>,
+) => rooms.map((room) => {
+  const assignedRoomType = roomTypeAssignments[room.roomId];
+
+  if (!assignedRoomType) {
+    return room;
+  }
+
+  const displayName = getRoomDisplayName(room.roomNumber, assignedRoomType, room.customName);
+
+  return {
+    ...room,
+    roomType: assignedRoomType,
+    displayName,
+    roomLabel: displayName,
+  };
+});
+
 const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   roomGraph: {
     rooms: [],
@@ -2680,6 +2880,12 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
     orphanSegmentIds: [],
     openContourSegmentIds: [],
     roomSplitMode: 'none',
+    normalization: {
+      autoConnectedJunctions: [],
+      floatingGaps: [],
+      invalidTopologyNodeIds: [],
+      partitionEdgeIds: [],
+    },
     buildTimeMs,
   },
   warnings: [],
@@ -2691,6 +2897,11 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   roomSplitMode: 'none',
   invalidDoorCount: 0,
   invalidWindowCount: 0,
+  partitionEdgesCount: 0,
+  autoConnectedJunctions: 0,
+  floatingGapWarnings: 0,
+  invalidTopologyNodeCount: 0,
+  roomAssignmentPending: false,
 });
 
 const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
@@ -2735,18 +2946,23 @@ const getWallRoleForRoomIds = (roomIds: string[]): WallRole => {
 
 const applyPlanarEdgeOwnership = (planarGraph: CanvasV4PlanarGraph, rooms: CanvasV4RoomEntity[]): CanvasV4PlanarGraph => {
   const roomIdsByTopologyEdgeId = getRoomIdsByTopologyEdgeId(rooms);
+  const edges = planarGraph.edges.map((edge) => {
+    const roomIds = roomIdsByTopologyEdgeId.get(edge.edgeId) ?? [];
+
+    return {
+      ...edge,
+      roomIds,
+      wallRole: getWallRoleForRoomIds(roomIds),
+    };
+  });
 
   return {
     ...planarGraph,
-    edges: planarGraph.edges.map((edge) => {
-      const roomIds = roomIdsByTopologyEdgeId.get(edge.edgeId) ?? [];
-
-      return {
-        ...edge,
-        roomIds,
-        wallRole: getWallRoleForRoomIds(roomIds),
-      };
-    }),
+    edges,
+    normalization: {
+      ...planarGraph.normalization,
+      partitionEdgeIds: edges.filter((edge) => edge.roomIds.length > 1).map((edge) => edge.edgeId),
+    },
   };
 };
 
@@ -2936,6 +3152,30 @@ const createTopologyWarnings = (
     ));
   }
 
+  if (planarGraph.normalization.floatingGaps.length > 0) {
+    warnings.push(createWarning(
+      'floating-partition',
+      `Перегородка не замкнута: ${planarGraph.normalization.floatingGaps.length}`,
+      { segmentId: planarGraph.normalization.floatingGaps[0].segmentId, severity: 'warning' },
+    ));
+  }
+
+  if (planarGraph.normalization.invalidTopologyNodeIds.length > 0) {
+    warnings.push(createWarning(
+      'invalid-topology-node',
+      `Некорректные topology nodes: ${planarGraph.normalization.invalidTopologyNodeIds.length}`,
+      { severity: planarGraph.roomFaces.length === 0 ? 'error' : 'warning' },
+    ));
+  }
+
+  if (planarGraph.roomSplitMode === 'single-room' && planarGraph.normalization.floatingGaps.length > 0) {
+    warnings.push(createWarning(
+      'invalid-split',
+      'Перегородки не разделяют помещения',
+      { segmentId: planarGraph.normalization.floatingGaps[0].segmentId, severity: 'warning' },
+    ));
+  }
+
   rooms.forEach((room) => {
     if (room.doorIds.length === 0) {
       warnings.push(createWarning('room-without-door', 'Помещение без двери', { roomId: room.roomId }));
@@ -3003,6 +3243,7 @@ const buildCanvasV4Topology = (
   const invalidWindowCount = new Set(warnings
     .filter((warning) => warning.code === 'invalid-window-placement' && warning.openingId)
     .map((warning) => warning.openingId as string)).size;
+  const roomAssignmentPending = rooms.some((room) => !room.roomType);
 
   return {
     roomGraph: {
@@ -3022,6 +3263,11 @@ const buildCanvasV4Topology = (
     roomSplitMode: planarGraph.roomSplitMode,
     invalidDoorCount,
     invalidWindowCount,
+    partitionEdgesCount: planarGraph.normalization.partitionEdgeIds.length,
+    autoConnectedJunctions: planarGraph.normalization.autoConnectedJunctions.length,
+    floatingGapWarnings: planarGraph.normalization.floatingGaps.length,
+    invalidTopologyNodeCount: planarGraph.normalization.invalidTopologyNodeIds.length,
+    roomAssignmentPending,
   };
 };
 
@@ -3653,8 +3899,10 @@ export const CanvasV4DevScreen = () => {
   const [lastValidationError, setLastValidationError] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [isProjectDataPanelOpen, setProjectDataPanelOpen] = useState(false);
+  const [roomTypeAssignments, setRoomTypeAssignments] = useState<Record<string, CanvasV4RoomType>>({});
 
-  const projectCreated = currentCanvasMode === 'project' && Boolean(projectState);
+  const projectCreated = Boolean(projectState);
+  const projectIntelligenceVisible = projectCreated && currentCanvasMode === 'project';
 
   const worldToScreen = useCallback(
     (point: Point): Point => ({
@@ -3677,26 +3925,26 @@ export const CanvasV4DevScreen = () => {
   const activeShapeStartPoint = isShapeToolMode(currentToolMode) ? shapeStartPoint : null;
 
   const projectInterpretation = useMemo(
-    () => (currentCanvasMode === 'project'
+    () => (projectIntelligenceVisible
       ? detectCanvasV4ProjectInterpretation(entities, doors, windows, selectedTemplateVariant)
       : createDeferredCanvasV4ProjectInterpretation(entities.length > 0)),
-    [currentCanvasMode, doors, entities, selectedTemplateVariant, windows],
+    [doors, entities, projectIntelligenceVisible, selectedTemplateVariant, windows],
   );
   const projectContours = useMemo(
-    () => (currentCanvasMode === 'project' ? projectInterpretation.closedContours : []),
-    [currentCanvasMode, projectInterpretation.closedContours],
+    () => (projectIntelligenceVisible ? projectInterpretation.closedContours : []),
+    [projectIntelligenceVisible, projectInterpretation.closedContours],
   );
   const projectRooms = useMemo(
-    () => (currentCanvasMode === 'project' ? projectInterpretation.rooms : []),
-    [currentCanvasMode, projectInterpretation.rooms],
+    () => (projectIntelligenceVisible ? applyRoomTypeAssignments(projectInterpretation.rooms, roomTypeAssignments) : []),
+    [projectIntelligenceVisible, projectInterpretation.rooms, roomTypeAssignments],
   );
   const projectTopologyWarnings = useMemo(
-    () => (currentCanvasMode === 'project' ? projectInterpretation.topologyWarnings : []),
-    [currentCanvasMode, projectInterpretation.topologyWarnings],
+    () => (projectIntelligenceVisible ? projectInterpretation.topologyWarnings : []),
+    [projectIntelligenceVisible, projectInterpretation.topologyWarnings],
   );
   const projectWarningSegmentIds = useMemo(
     () => {
-      if (currentCanvasMode !== 'project') {
+      if (!projectIntelligenceVisible) {
         return new Set<string>();
       }
 
@@ -3706,7 +3954,7 @@ export const CanvasV4DevScreen = () => {
 
       return new Set([...projectInterpretation.openContourSegmentIds, ...projectInterpretation.orphanSegmentIds, ...warningSegmentIds]);
     },
-    [currentCanvasMode, projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds, projectInterpretation.topologyWarnings],
+    [projectIntelligenceVisible, projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds, projectInterpretation.topologyWarnings],
   );
   const invalidDoorIds = useMemo(
     () => new Set(projectTopologyWarnings
@@ -3784,6 +4032,7 @@ export const CanvasV4DevScreen = () => {
     });
     setCurrentCanvasMode('project');
     setProjectDataPanelOpen(true);
+    setRoomTypeAssignments({});
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setSelectedRoomId(null);
@@ -3794,6 +4043,32 @@ export const CanvasV4DevScreen = () => {
     setShapeStartPoint(null);
     setSelectionBox(null);
   }, [doors, entities, selectedTemplateVariant, windows]);
+
+  const showCleanProjectPlan = useCallback(() => {
+    setCurrentCanvasMode('plan');
+    setProjectDataPanelOpen(false);
+    setSelectedRoomId(null);
+    setLastActionType('PROJECT_PLAN_MODE_CLEAN_VIEW');
+  }, []);
+
+  const openProjectDataMode = useCallback(() => {
+    if (!projectState) {
+      return;
+    }
+
+    setCurrentCanvasMode('project');
+    setProjectDataPanelOpen(true);
+    setLastActionType('PROJECT_DATA_MODE_OPEN');
+  }, [projectState]);
+
+  const assignRoomType = useCallback((roomId: string, roomType: CanvasV4RoomType) => {
+    setRoomTypeAssignments((current) => ({
+      ...current,
+      [roomId]: roomType,
+    }));
+    setSelectedRoomId(roomId);
+    setLastActionType(`ASSIGN_ROOM_TYPE_${roomType.toUpperCase()}`);
+  }, []);
 
   const openManualDrawFlow = useCallback(() => {
     setCanvasEntryStep('canvas');
@@ -3810,6 +4085,7 @@ export const CanvasV4DevScreen = () => {
     setSelectedWindowId(null);
     setSelectedRoomId(null);
     setProjectDataPanelOpen(false);
+    setRoomTypeAssignments({});
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setSelectionBox(null);
@@ -3869,6 +4145,7 @@ export const CanvasV4DevScreen = () => {
     setLastRedoAction('null');
     setProjectState(null);
     setProjectDataPanelOpen(false);
+    setRoomTypeAssignments({});
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setCurrentCanvasMode('plan');
@@ -4464,6 +4741,7 @@ export const CanvasV4DevScreen = () => {
   const selectedDoor = useMemo(() => doors.find((door) => door.doorId === selectedDoorId) ?? null, [doors, selectedDoorId]);
   const selectedWindow = useMemo(() => windows.find((window) => window.windowId === selectedWindowId) ?? null, [selectedWindowId, windows]);
   const selectedRoom = useMemo(() => projectRooms.find((room) => room.roomId === selectedRoomId) ?? null, [projectRooms, selectedRoomId]);
+  const roomAssignmentPending = projectIntelligenceVisible && projectRooms.some((room) => !room.roomType);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
   const selectedLineLength = selectedSegment?.length ?? null;
@@ -4489,13 +4767,13 @@ export const CanvasV4DevScreen = () => {
     : null;
   const findRoomAtWorldPoint = useCallback(
     (point: Point) => {
-      if (currentCanvasMode !== 'project') {
+      if (!projectIntelligenceVisible) {
         return null;
       }
 
       return [...projectRooms].reverse().find((room) => isPointInsidePolygon(point, room.roomContour))?.roomId ?? null;
     },
-    [currentCanvasMode, projectRooms],
+    [projectIntelligenceVisible, projectRooms],
   );
   const shapeDimensionMode = !showLineDimensions
     ? 'hidden'
@@ -6017,15 +6295,22 @@ export const CanvasV4DevScreen = () => {
       `closedContoursCount: ${projectInterpretation.closedContours.length}`,
       `openContoursCount: ${projectInterpretation.openContourSegmentIds.length}`,
       `topologyNodeCount: ${projectInterpretation.topology.topologyNodeCount}`,
+      `topologyNodesCount: ${projectInterpretation.topology.topologyNodeCount}`,
       `topologyEdgeCount: ${projectInterpretation.topology.topologyEdgeCount}`,
       `detectedFaceCount: ${projectInterpretation.topology.detectedFaceCount}`,
       `outerFaceId: ${projectInterpretation.topology.outerFaceId ?? 'null'}`,
       `detectedRoomCount: ${projectRooms.length}`,
+      `detectedRoomsCount: ${projectRooms.length}`,
       `totalProjectArea: ${formatRoomArea(projectInterpretation.totalProjectArea)}`,
       `orphanSegmentsCount: ${projectInterpretation.orphanSegmentIds.length}`,
       `orphanSegmentCount: ${projectInterpretation.orphanSegmentIds.length}`,
       `invalidDoorCount: ${projectInterpretation.topology.invalidDoorCount}`,
       `invalidWindowCount: ${projectInterpretation.topology.invalidWindowCount}`,
+      `partitionEdgesCount: ${projectInterpretation.topology.partitionEdgesCount}`,
+      `autoConnectedJunctions: ${projectInterpretation.topology.autoConnectedJunctions}`,
+      `floatingGapWarnings: ${projectInterpretation.topology.floatingGapWarnings}`,
+      `invalidTopologyNodeCount: ${projectInterpretation.topology.invalidTopologyNodeCount}`,
+      `roomAssignmentPending: ${roomAssignmentPending ? 'true' : 'false'}`,
       `roomSplitMode: ${projectInterpretation.topology.roomSplitMode}`,
       `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
       `roomCount: ${projectRooms.length}`,
@@ -6220,6 +6505,7 @@ export const CanvasV4DevScreen = () => {
       projectInterpretation,
       projectRooms.length,
       projectTopologyWarnings.length,
+      roomAssignmentPending,
       projectState,
       redoStack.length,
       resizeAxis,
@@ -6258,7 +6544,7 @@ export const CanvasV4DevScreen = () => {
   ];
   const projectTabs = projectCreated
     ? [
-        { id: 'plan', icon: '▦', label: 'План', active: true },
+        { id: 'plan', icon: '▦', label: 'План', active: currentCanvasMode === 'plan' },
         { id: '3d', icon: '□', label: '3D', active: false },
         { id: 'inside-view', icon: '◉', label: 'Вид изнутри', active: false },
         { id: 'execution-scheme', icon: '⌗', label: 'Исполнительная схема', active: false },
@@ -6460,6 +6746,7 @@ export const CanvasV4DevScreen = () => {
               <Pressable
                 key={tab.id}
                 style={[styles.projectRailButton, tab.active ? styles.projectRailButtonActive : styles.projectRailButtonStub]}
+                onPress={tab.id === 'plan' ? showCleanProjectPlan : undefined}
                 accessibilityLabel={tab.label}
               >
                 <Text style={styles.projectRailIcon}>{tab.icon}</Text>
@@ -6482,7 +6769,7 @@ export const CanvasV4DevScreen = () => {
             {projectCreated ? (
               <Pressable
                 style={[styles.projectRailButton, styles.projectRailDataButton, isProjectDataPanelOpen ? styles.projectRailButtonActive : null]}
-                onPress={() => setProjectDataPanelOpen((current) => !current)}
+                onPress={isProjectDataPanelOpen && projectIntelligenceVisible ? () => setProjectDataPanelOpen(false) : openProjectDataMode}
                 accessibilityLabel="Данные проекта"
               >
                 <Text style={styles.projectRailIcon}>i</Text>
@@ -6491,7 +6778,7 @@ export const CanvasV4DevScreen = () => {
             ) : null}
           </View>
 
-          {projectCreated && isProjectDataPanelOpen ? (
+          {projectIntelligenceVisible && isProjectDataPanelOpen ? (
             <View style={styles.projectDataPanel}>
               <View style={styles.projectDataHeader}>
                 <Text style={styles.projectDataTitle}>Данные проекта</Text>
@@ -6520,6 +6807,13 @@ export const CanvasV4DevScreen = () => {
                 </View>
               </View>
 
+              {roomAssignmentPending ? (
+                <View style={styles.roomAssignmentNotice}>
+                  <Text style={styles.roomAssignmentNoticeTitle}>Назначить помещения</Text>
+                  <Text style={styles.roomAssignmentNoticeText}>Выберите roomType для комнат ручного плана.</Text>
+                </View>
+              ) : null}
+
               <Text style={styles.projectDataSectionTitle}>Помещения</Text>
               <ScrollView style={styles.projectDataRoomList} contentContainerStyle={styles.projectDataRoomListContent}>
                 {projectRooms.length > 0 ? projectRooms.map((room, index) => (
@@ -6531,9 +6825,25 @@ export const CanvasV4DevScreen = () => {
                   >
                     <View style={styles.projectDataRoomNameBlock}>
                       <Text style={styles.projectDataRoomName}>{room.displayName || `Помещение ${index + 1}`}</Text>
-                      <Text style={styles.projectDataRoomMeta}>{formatRoomPerimeter(room.perimeter)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.</Text>
+                      <Text style={styles.projectDataRoomMeta}>
+                        {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomPerimeter(room.perimeter)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
+                      </Text>
                       {room.warnings.length > 0 ? (
                         <Text style={styles.projectDataRoomWarning}>{room.warnings.map((warning) => warning.message).join(', ')}</Text>
+                      ) : null}
+                      {selectedRoomId === room.roomId ? (
+                        <View style={styles.roomAssignmentChipRow}>
+                          {ROOM_ASSIGNMENT_OPTIONS.map((option) => (
+                            <Pressable
+                              key={`${room.roomId}-${option.id}`}
+                              style={[styles.roomAssignmentChip, room.roomType === option.id ? styles.roomAssignmentChipActive : null]}
+                              onPress={() => assignRoomType(room.roomId, option.id)}
+                              accessibilityLabel={`Назначить ${option.label}`}
+                            >
+                              <Text style={[styles.roomAssignmentChipText, room.roomType === option.id ? styles.roomAssignmentChipTextActive : null]}>{option.label}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
                       ) : null}
                     </View>
                     <Text style={styles.projectDataRoomArea}>{formatRoomArea(room.area)}</Text>
@@ -7707,6 +8017,25 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textTransform: 'uppercase',
   },
+  roomAssignmentNotice: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FACC15',
+    backgroundColor: '#FEFCE8',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  roomAssignmentNoticeTitle: {
+    color: '#713F12',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  roomAssignmentNoticeText: {
+    color: '#854D0E',
+    fontSize: 10,
+    fontWeight: '700',
+  },
   projectDataRoomList: {
     maxHeight: 148,
   },
@@ -7748,6 +8077,32 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     fontWeight: '800',
+  },
+  roomAssignmentChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginTop: 6,
+  },
+  roomAssignmentChip: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  roomAssignmentChipActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#DBEAFE',
+  },
+  roomAssignmentChipText: {
+    color: '#334155',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  roomAssignmentChipTextActive: {
+    color: '#1D4ED8',
   },
   projectDataRoomArea: {
     color: '#0F172A',
