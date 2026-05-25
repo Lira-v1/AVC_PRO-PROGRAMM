@@ -37,7 +37,11 @@ export const CompactCardGrid = <T extends GridItem,>({ items, onItemPress }: Com
         return (
           <View key={`row-${rowIndex}`} style={[styles.row, isCenteredPair && styles.centeredRow]}>
             {row.map((item) => (
-              <Pressable key={item.id} style={[styles.card, item.image && styles.imageCard]} onPress={() => onItemPress(item)}>
+              <Pressable
+                key={item.id}
+                style={[styles.card, item.image ? styles.imageCard : styles.textCard]}
+                onPress={() => onItemPress(item)}
+              >
                 {item.image ? (
                   <ImageBackground
                     source={item.image}
@@ -74,37 +78,31 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '31.5%',
-    minHeight: 72,
     borderRadius: 10,
     backgroundColor: '#fff',
-    paddingHorizontal: 6,
-    paddingVertical: 8,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
   },
+  textCard: {
+    minHeight: 72,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
   imageCard: {
-    paddingHorizontal: 0,
-    paddingVertical: 0,
+    width: '31.5%',
+    aspectRatio: 2,
+    padding: 0,
     overflow: 'hidden',
   },
   cardImage: {
-    flex: 1,
     width: '100%',
-    minHeight: 72,
+    height: '100%',
     borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
     overflow: 'hidden',
   },
   cardImageRadius: {
     borderRadius: 10,
-  },
-  imageOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
   },
   iconPlaceholder: {
     width: 12,
@@ -120,12 +118,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#16213c',
     textAlign: 'center',
-  },
-  imageCardTitle: {
-    paddingHorizontal: 4,
-    color: '#0F1B33',
-    textShadowColor: 'rgba(255, 255, 255, 0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
 });
