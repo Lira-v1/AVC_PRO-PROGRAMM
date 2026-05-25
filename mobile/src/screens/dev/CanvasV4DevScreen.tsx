@@ -31,6 +31,7 @@ type RoomDetectionState = 'idle' | 'blocked' | 'detected';
 type RoomStatus = 'detected';
 type WallRole = 'external' | 'internal' | 'shared';
 type RoomSplitMode = 'none' | 'single-room' | 'multi-room';
+type SurfaceDirection = 'north' | 'south' | 'east' | 'west' | 'northeast' | 'northwest' | 'southeast' | 'southwest';
 type CanvasV4RoomType =
   | 'kitchen'
   | 'living_room'
@@ -64,7 +65,11 @@ type TopologyWarningCode =
   | 'invalid-external-door'
   | 'internal-window-placement'
   | 'duplicated-room-name'
-  | 'isolated-room';
+  | 'isolated-room'
+  | 'wall-surface-without-room'
+  | 'opening-without-wall-surface'
+  | 'negative-net-area-corrected'
+  | 'missing-opening-height-default-used';
 
 type CanvasV4TopologyWarning = {
   id: string;
@@ -338,6 +343,53 @@ type CanvasV4WindowConnection = {
   externalOnly: boolean;
 };
 
+type OpeningSurfaceRef = {
+  openingId: string;
+  type: 'door' | 'window';
+  width: number;
+  height: number;
+  area: number;
+};
+
+type WallSurface = {
+  surfaceId: string;
+  roomId: string;
+  topologyEdgeId: string;
+  wallSegmentIds: string[];
+  direction: SurfaceDirection;
+  directionLabel: string;
+  length: number;
+  height: number;
+  grossArea: number;
+  doorArea: number;
+  windowArea: number;
+  openingsArea: number;
+  netArea: number;
+  openings: OpeningSurfaceRef[];
+};
+
+type RoomSurfaceSummary = {
+  roomId: string;
+  roomName: string;
+  roomType?: CanvasV4RoomType;
+  floorArea: number;
+  ceilingArea: number;
+  perimeterGross: number;
+  perimeterNet: number;
+  wallSurfaces: WallSurface[];
+};
+
+type CanvasV4SurfaceGraph = {
+  roomSurfaceSummaries: RoomSurfaceSummary[];
+  warnings: CanvasV4TopologyWarning[];
+  defaultRoomHeightMm: number;
+  totalFloorArea: number;
+  totalCeilingArea: number;
+  totalGrossWallArea: number;
+  totalNetWallArea: number;
+  wallSurfaceCount: number;
+};
+
 type CanvasV4ConnectionGraph = {
   doorConnections: CanvasV4DoorConnection[];
   windowConnections: CanvasV4WindowConnection[];
@@ -365,6 +417,7 @@ type CanvasV4Topology = {
   wallGraph: CanvasV4WallGraph;
   connectionGraph: CanvasV4ConnectionGraph;
   roomConnectionGraph: CanvasV4RoomConnectionGraph;
+  surfaceGraph: CanvasV4SurfaceGraph;
   planarGraph: CanvasV4PlanarGraph;
   warnings: CanvasV4TopologyWarning[];
   buildTimeMs: number;
@@ -394,6 +447,14 @@ type CanvasV4Topology = {
   shapeEdgesInTopologyCount: number;
   ignoredShapeEdgeCount: number;
   topologyWarningsCount: number;
+  surfaceEngineEnabled: boolean;
+  roomSurfaceCount: number;
+  wallSurfaceCount: number;
+  totalFloorArea: number;
+  totalCeilingArea: number;
+  totalGrossWallArea: number;
+  totalNetWallArea: number;
+  defaultRoomHeightMm: number;
 };
 
 type CanvasV4ProjectValidationResult = {
@@ -590,7 +651,9 @@ const DEFAULT_WALL_THICKNESS_MM = 100;
 const WALL_THICKNESS_VISUAL = false;
 const WALL_THICKNESS_FROZEN = true;
 const DEFAULT_CORNER_JOIN_MODE: CornerJoinMode = 'bevel';
+const DEFAULT_ROOM_HEIGHT_MM = 2700;
 const DEFAULT_DOOR_WIDTH_MM = 800;
+const DEFAULT_DOOR_HEIGHT_MM = 2100;
 const DEFAULT_WINDOW_WIDTH_MM = 1200;
 const DEFAULT_WINDOW_HEIGHT_MM = 1400;
 const DEFAULT_WINDOW_BOTTOM_OFFSET_MM = 900;
@@ -2046,6 +2109,24 @@ const cloneProjectContour = (contour: ProjectContourInfo): ProjectContourInfo =>
   topologyEdgeIds: contour.topologyEdgeIds ? [...contour.topologyEdgeIds] : undefined,
 });
 
+const cloneSurfaceGraph = (surfaceGraph: CanvasV4SurfaceGraph): CanvasV4SurfaceGraph => ({
+  roomSurfaceSummaries: surfaceGraph.roomSurfaceSummaries.map((summary) => ({
+    ...summary,
+    wallSurfaces: summary.wallSurfaces.map((surface) => ({
+      ...surface,
+      wallSegmentIds: [...surface.wallSegmentIds],
+      openings: surface.openings.map((opening) => ({ ...opening })),
+    })),
+  })),
+  warnings: surfaceGraph.warnings.map((warning) => ({ ...warning })),
+  defaultRoomHeightMm: surfaceGraph.defaultRoomHeightMm,
+  totalFloorArea: surfaceGraph.totalFloorArea,
+  totalCeilingArea: surfaceGraph.totalCeilingArea,
+  totalGrossWallArea: surfaceGraph.totalGrossWallArea,
+  totalNetWallArea: surfaceGraph.totalNetWallArea,
+  wallSurfaceCount: surfaceGraph.wallSurfaceCount,
+});
+
 const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => ({
   roomGraph: {
     rooms: topology.roomGraph.rooms.map(cloneRoomEntity),
@@ -2093,6 +2174,7 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
       Object.entries(topology.roomConnectionGraph.doorIdsByRoomPair).map(([pairId, doorIds]) => [pairId, [...doorIds]]),
     ),
   },
+  surfaceGraph: cloneSurfaceGraph(topology.surfaceGraph),
   planarGraph: {
     nodes: topology.planarGraph.nodes.map((node) => ({
       ...node,
@@ -2182,6 +2264,14 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
   shapeEdgesInTopologyCount: topology.shapeEdgesInTopologyCount,
   ignoredShapeEdgeCount: topology.ignoredShapeEdgeCount,
   topologyWarningsCount: topology.topologyWarningsCount,
+  surfaceEngineEnabled: topology.surfaceEngineEnabled,
+  roomSurfaceCount: topology.roomSurfaceCount,
+  wallSurfaceCount: topology.wallSurfaceCount,
+  totalFloorArea: topology.totalFloorArea,
+  totalCeilingArea: topology.totalCeilingArea,
+  totalGrossWallArea: topology.totalGrossWallArea,
+  totalNetWallArea: topology.totalNetWallArea,
+  defaultRoomHeightMm: topology.defaultRoomHeightMm,
 });
 
 const getWallTopologyMetadata = (topology: CanvasV4Topology) =>
@@ -3538,6 +3628,16 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
     neighborRoomIdsByRoomId: {},
     doorIdsByRoomPair: {},
   },
+  surfaceGraph: {
+    roomSurfaceSummaries: [],
+    warnings: [],
+    defaultRoomHeightMm: DEFAULT_ROOM_HEIGHT_MM,
+    totalFloorArea: 0,
+    totalCeilingArea: 0,
+    totalGrossWallArea: 0,
+    totalNetWallArea: 0,
+    wallSurfaceCount: 0,
+  },
   planarGraph: {
     nodes: [],
     edges: [],
@@ -3590,6 +3690,14 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
   shapeEdgesInTopologyCount: 0,
   ignoredShapeEdgeCount: 0,
   topologyWarningsCount: 0,
+  surfaceEngineEnabled: true,
+  roomSurfaceCount: 0,
+  wallSurfaceCount: 0,
+  totalFloorArea: 0,
+  totalCeilingArea: 0,
+  totalGrossWallArea: 0,
+  totalNetWallArea: 0,
+  defaultRoomHeightMm: DEFAULT_ROOM_HEIGHT_MM,
 });
 
 const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
@@ -3883,6 +3991,166 @@ const createWarning = (
   openingId: details.openingId,
 });
 
+const SURFACE_DIRECTION_LABELS: Record<SurfaceDirection, string> = {
+  north: 'Северная стена',
+  south: 'Южная стена',
+  east: 'Восточная стена',
+  west: 'Западная стена',
+  northeast: 'Северо-восточная стена',
+  northwest: 'Северо-западная стена',
+  southeast: 'Юго-восточная стена',
+  southwest: 'Юго-западная стена',
+};
+
+const getSurfaceDirectionFromRoomVector = (vector: Point, compassRotationDeg = 0): SurfaceDirection => {
+  if (Math.abs(vector.x) < 0.000001 && Math.abs(vector.y) < 0.000001) {
+    return 'north';
+  }
+
+  const screenAngle = normalizeAngle((Math.atan2(vector.y, vector.x) * 180) / Math.PI - compassRotationDeg);
+  const directionsByAngle: SurfaceDirection[] = ['east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north', 'northeast'];
+  const directionIndex = Math.round(screenAngle / 45) % directionsByAngle.length;
+
+  return directionsByAngle[directionIndex];
+};
+
+const createOpeningSurfaceRef = (opening: CanvasV4Door | CanvasV4Window, type: 'door' | 'window'): OpeningSurfaceRef => {
+  const height = type === 'door' ? DEFAULT_DOOR_HEIGHT_MM : ('height' in opening ? opening.height : DEFAULT_WINDOW_HEIGHT_MM);
+
+  return {
+    openingId: type === 'door' ? (opening as CanvasV4Door).doorId : (opening as CanvasV4Window).windowId,
+    type,
+    width: opening.width,
+    height,
+    area: opening.width * height,
+  };
+};
+
+const createCanvasV4SurfaceGraph = (
+  rooms: CanvasV4RoomEntity[],
+  doors: CanvasV4Door[],
+  windows: CanvasV4Window[],
+  planarGraph: CanvasV4PlanarGraph,
+  connectionGraph: CanvasV4ConnectionGraph,
+  defaultRoomHeightMm = DEFAULT_ROOM_HEIGHT_MM,
+): CanvasV4SurfaceGraph => {
+  const topologyEdgeById = new Map(planarGraph.edges.map((edge) => [edge.edgeId, edge]));
+  const doorById = new Map(doors.map((door) => [door.doorId, door]));
+  const windowById = new Map(windows.map((window) => [window.windowId, window]));
+  const doorConnectionsByTopologyEdgeId = new Map<string, CanvasV4DoorConnection[]>();
+  const windowConnectionsByTopologyEdgeId = new Map<string, CanvasV4WindowConnection[]>();
+  const warnings: CanvasV4TopologyWarning[] = [];
+
+  connectionGraph.doorConnections.forEach((connection) => {
+    if (!connection.topologyEdgeId) {
+      warnings.push(createWarning('opening-without-wall-surface', 'Дверь не привязана к поверхности стены', { openingId: connection.doorId, segmentId: connection.segmentId }));
+      return;
+    }
+
+    doorConnectionsByTopologyEdgeId.set(connection.topologyEdgeId, [...(doorConnectionsByTopologyEdgeId.get(connection.topologyEdgeId) ?? []), connection]);
+  });
+
+  connectionGraph.windowConnections.forEach((connection) => {
+    if (!connection.topologyEdgeId) {
+      warnings.push(createWarning('opening-without-wall-surface', 'Окно не привязано к поверхности стены', { openingId: connection.windowId, segmentId: connection.segmentId }));
+      return;
+    }
+
+    windowConnectionsByTopologyEdgeId.set(connection.topologyEdgeId, [...(windowConnectionsByTopologyEdgeId.get(connection.topologyEdgeId) ?? []), connection]);
+  });
+
+  if (doors.length > 0) {
+    warnings.push(createWarning('missing-opening-height-default-used', 'Для дверей используется высота по умолчанию: 2.10 м'));
+  }
+
+  const roomSurfaceSummaries = rooms.map<RoomSurfaceSummary>((room) => {
+    const wallSurfaces = room.topologyEdgeIds
+      .map((topologyEdgeId) => {
+        const edge = topologyEdgeById.get(topologyEdgeId);
+
+        if (!edge) {
+          warnings.push(createWarning('wall-surface-without-room', 'Поверхность стены не найдена для помещения', { roomId: room.roomId }));
+          return null;
+        }
+
+        const midpoint = {
+          x: (edge.startPoint.x + edge.endPoint.x) / 2,
+          y: (edge.startPoint.y + edge.endPoint.y) / 2,
+        };
+        const direction = getSurfaceDirectionFromRoomVector({
+          x: midpoint.x - room.center.x,
+          y: midpoint.y - room.center.y,
+        });
+        const doorOpenings = (doorConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
+          .filter((connection) => connection.roomIds.includes(room.roomId))
+          .map((connection) => doorById.get(connection.doorId))
+          .filter((door): door is CanvasV4Door => Boolean(door))
+          .map((door) => createOpeningSurfaceRef(door, 'door'));
+        const windowOpenings = (windowConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
+          .filter((connection) => connection.roomIds.includes(room.roomId))
+          .map((connection) => windowById.get(connection.windowId))
+          .filter((window): window is CanvasV4Window => Boolean(window))
+          .map((window) => createOpeningSurfaceRef(window, 'window'));
+        const openings = [...doorOpenings, ...windowOpenings];
+        const doorArea = doorOpenings.reduce((sum, opening) => sum + opening.area, 0);
+        const windowArea = windowOpenings.reduce((sum, opening) => sum + opening.area, 0);
+        const openingsArea = doorArea + windowArea;
+        const grossArea = edge.length * defaultRoomHeightMm;
+        const rawNetArea = grossArea - openingsArea;
+        const netArea = Math.max(0, rawNetArea);
+
+        if (rawNetArea < 0) {
+          warnings.push(createWarning('negative-net-area-corrected', 'Чистая площадь стены скорректирована до 0', { roomId: room.roomId, segmentId: edge.segmentId }));
+        }
+
+        return {
+          surfaceId: `surface-${room.roomId}-${edge.edgeId}`,
+          roomId: room.roomId,
+          topologyEdgeId: edge.edgeId,
+          wallSegmentIds: [...edge.sourceSegmentIds],
+          direction,
+          directionLabel: SURFACE_DIRECTION_LABELS[direction],
+          length: edge.length,
+          height: defaultRoomHeightMm,
+          grossArea,
+          doorArea,
+          windowArea,
+          openingsArea,
+          netArea,
+          openings,
+        };
+      })
+      .filter((surface): surface is WallSurface => Boolean(surface));
+    const perimeterNet = Math.max(0, room.perimeter - wallSurfaces.reduce((sum, surface) => (
+      sum + surface.openings.reduce((openingSum, opening) => openingSum + opening.width, 0)
+    ), 0));
+
+    return {
+      roomId: room.roomId,
+      roomName: room.displayName,
+      roomType: room.roomType,
+      floorArea: room.area,
+      ceilingArea: room.area,
+      perimeterGross: room.perimeter,
+      perimeterNet,
+      wallSurfaces,
+    };
+  });
+
+  const uniqueWarnings = Array.from(new Map(warnings.map((warning) => [warning.id, warning])).values());
+
+  return {
+    roomSurfaceSummaries,
+    warnings: uniqueWarnings,
+    defaultRoomHeightMm,
+    totalFloorArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.floorArea, 0),
+    totalCeilingArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.ceilingArea, 0),
+    totalGrossWallArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.reduce((wallSum, surface) => wallSum + surface.grossArea, 0), 0),
+    totalNetWallArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.reduce((wallSum, surface) => wallSum + surface.netArea, 0), 0),
+    wallSurfaceCount: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.length, 0),
+  };
+};
+
 const validateOpeningPosition = (
   opening: { id: string; segmentId: string; positionOnSegment: number; width: number; kind: 'door' | 'window' },
   segment: CanvasV4LineEntity | undefined,
@@ -4064,6 +4332,7 @@ const buildCanvasV4Topology = (
   const roomsWithSpatialMetadata = attachSpatialRoomMetadata(roomsWithOpenings, wallGraph, connectionGraph, roomConnectionGraph);
   const warnings = createTopologyWarnings(entities, roomsWithSpatialMetadata, doors, windows, connectionGraph, roomConnectionGraph, planarGraph);
   const rooms = attachWarningsToRooms(roomsWithSpatialMetadata, warnings);
+  const surfaceGraph = createCanvasV4SurfaceGraph(rooms, doors, windows, planarGraph, connectionGraph, DEFAULT_ROOM_HEIGHT_MM);
   const invalidDoorCount = new Set(warnings
     .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
     .map((warning) => warning.openingId as string)).size;
@@ -4081,6 +4350,7 @@ const buildCanvasV4Topology = (
     wallGraph,
     connectionGraph,
     roomConnectionGraph,
+    surfaceGraph,
     planarGraph,
     warnings,
     buildTimeMs: Math.max(1, Date.now() - startedAt),
@@ -4110,6 +4380,14 @@ const buildCanvasV4Topology = (
     shapeEdgesInTopologyCount: planarGraph.normalization.shapeEdgesInTopologyCount,
     ignoredShapeEdgeCount: planarGraph.normalization.ignoredShapeEdgeCount,
     topologyWarningsCount: warnings.length,
+    surfaceEngineEnabled: true,
+    roomSurfaceCount: surfaceGraph.roomSurfaceSummaries.length,
+    wallSurfaceCount: surfaceGraph.wallSurfaceCount,
+    totalFloorArea: surfaceGraph.totalFloorArea,
+    totalCeilingArea: surfaceGraph.totalCeilingArea,
+    totalGrossWallArea: surfaceGraph.totalGrossWallArea,
+    totalNetWallArea: surfaceGraph.totalNetWallArea,
+    defaultRoomHeightMm: surfaceGraph.defaultRoomHeightMm,
   };
 };
 
@@ -4616,6 +4894,40 @@ const getOutsideDimensionSpatialAnalysis = (
     side,
     offsetNormal: getDimensionSideNormal(side),
   };
+};
+
+const getOutsideEnvelopeDimensionOffsetPx = (
+  entity: CanvasV4LineEntity,
+  projectBox: BoundingBox | null,
+  spatialAnalysis: DimensionSpatialAnalysis,
+  outerOffsetPx: number,
+  zoom: number,
+) => {
+  if (!projectBox || (!spatialAnalysis.isHorizontalLike && !spatialAnalysis.isVerticalLike)) {
+    return outerOffsetPx;
+  }
+
+  const entityBox = getEntityBoundingBox(entity);
+  let distanceToOutsideMm = 0;
+
+  switch (spatialAnalysis.side) {
+    case 'top':
+      distanceToOutsideMm = Math.max(0, entityBox.minY - projectBox.minY);
+      break;
+    case 'bottom':
+      distanceToOutsideMm = Math.max(0, projectBox.maxY - entityBox.maxY);
+      break;
+    case 'left':
+      distanceToOutsideMm = Math.max(0, entityBox.minX - projectBox.minX);
+      break;
+    case 'right':
+      distanceToOutsideMm = Math.max(0, projectBox.maxX - entityBox.maxX);
+      break;
+    default:
+      distanceToOutsideMm = 0;
+  }
+
+  return Math.max(outerOffsetPx, distanceToOutsideMm * zoom + outerOffsetPx);
 };
 
 const getScreenLineStyle = (startPoint: Point, endPoint: Point, thickness = 1) => {
@@ -5335,6 +5647,7 @@ export const CanvasV4DevScreen = () => {
     }
 
     const activeDimensionDisplayMode = viewState.currentViewMode === 'executive' ? 'minimal' : dimensionDisplayMode;
+    const projectDimensionBox = getDimensionProjectBoundingBox(entities);
     const selectedDimensionEntityIds = new Set(selectedEntityIds);
     const selectedShapeIds = new Set(selectedEntityIds.map((entityId) => entities.find((entity) => entity.entityId === entityId)?.shapeId).filter((shapeId): shapeId is string => Boolean(shapeId)));
     const openingRects: ScreenRect[] = [...doors.map((door) => {
@@ -5559,12 +5872,17 @@ export const CanvasV4DevScreen = () => {
       const { entity, closedContourOutwardNormal, level, spatialAnalysis } = candidate;
       const isSelected = selectedDimensionEntityIds.has(entity.entityId);
       const geometry = getLineScreenGeometry(entity.startPoint, entity.endPoint);
+      const useArchitecturalOutsideEnvelope = activeDimensionDisplayMode === 'architectural'
+        && (level === 'internal' || level === 'detail')
+        && (spatialAnalysis.isHorizontalLike || spatialAnalysis.isVerticalLike);
       const baseOffset = activeDimensionDisplayMode === 'full'
         ? (spatialAnalysis.role === 'internal-like' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx + getWorldSpaceDimensionOffsetPx(100, cameraZoom))
-        : (level === 'internal' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx);
+        : useArchitecturalOutsideEnvelope
+          ? getOutsideEnvelopeDimensionOffsetPx(entity, projectDimensionBox, spatialAnalysis, dimensionInternalOffsetPx, cameraZoom)
+          : (level === 'internal' ? dimensionInternalOffsetPx : dimensionBaseOffsetPx);
       const collisionStep = activeDimensionDisplayMode === 'architectural' && level === 'internal' ? Math.max(4, dimensionCollisionStepPx * 0.375) : dimensionCollisionStepPx;
       const maxOffset = activeDimensionDisplayMode === 'architectural' && level === 'internal'
-        ? Math.max(baseOffset, dimensionBaseOffsetPx - getWorldSpaceDimensionOffsetPx(50, cameraZoom))
+        ? (useArchitecturalOutsideEnvelope ? Number.POSITIVE_INFINITY : Math.max(baseOffset, dimensionBaseOffsetPx - getWorldSpaceDimensionOffsetPx(50, cameraZoom)))
         : Number.POSITIVE_INFINITY;
       let placement = getDimensionPlacement(geometry, closedContourOutwardNormal, baseOffset, spatialAnalysis);
       let collisionAvoidancePasses = 0;
@@ -5782,6 +6100,10 @@ export const CanvasV4DevScreen = () => {
   const selectedWindow = useMemo(() => windows.find((window) => window.windowId === selectedWindowId) ?? null, [selectedWindowId, windows]);
   const selectedRoom = useMemo(() => projectRooms.find((room) => room.roomId === selectedRoomId) ?? null, [projectRooms, selectedRoomId]);
   const roomDisplayNameById = useMemo(() => new Map(projectRooms.map((room) => [room.roomId, room.displayName])), [projectRooms]);
+  const selectedRoomSurfaceSummary = useMemo(
+    () => projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries.find((summary) => summary.roomId === selectedRoomId) ?? null,
+    [projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries, selectedRoomId],
+  );
   const roomAssignmentPending = projectCreated && projectRooms.some((room) => !room.roomType);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
@@ -7392,6 +7714,14 @@ export const CanvasV4DevScreen = () => {
       `invalidWindowPlacements: ${projectInterpretation.topology.invalidWindowPlacements}`,
       `roomNeighborCount: ${projectInterpretation.topology.roomNeighborCount}`,
       `roomSplitMode: ${projectInterpretation.topology.roomSplitMode}`,
+      `surfaceEngineEnabled: ${projectInterpretation.topology.surfaceEngineEnabled ? 'true' : 'false'}`,
+      `roomSurfaceCount: ${projectInterpretation.topology.roomSurfaceCount}`,
+      `wallSurfaceCount: ${projectInterpretation.topology.wallSurfaceCount}`,
+      `totalFloorArea: ${formatRoomArea(projectInterpretation.topology.totalFloorArea)}`,
+      `totalCeilingArea: ${formatRoomArea(projectInterpretation.topology.totalCeilingArea)}`,
+      `totalGrossWallArea: ${formatRoomArea(projectInterpretation.topology.totalGrossWallArea)}`,
+      `totalNetWallArea: ${formatRoomArea(projectInterpretation.topology.totalNetWallArea)}`,
+      `defaultRoomHeightMm: ${projectInterpretation.topology.defaultRoomHeightMm}`,
       `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
       `roomCount: ${projectRooms.length}`,
       `selectedRoomId: ${selectedRoom?.roomId ?? 'null'}`,
@@ -7958,9 +8288,47 @@ export const CanvasV4DevScreen = () => {
                 </View>
 
                 <Text style={styles.projectDataSectionTitle}>Surfaces</Text>
-                <View style={styles.projectDataPlaceholderCard}>
-                  <Text style={styles.projectDataPlaceholderText}>Surface System foundation готовится: floor, ceiling и wall unwrap metadata будут подключены отдельным этапом.</Text>
+                <View style={styles.projectDataInfoCard}>
+                  <Text style={styles.projectDataRoomMeta}>Площадь пола: {formatRoomArea(projectInterpretation.topology.totalFloorArea)}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Потолок: {formatRoomArea(projectInterpretation.topology.totalCeilingArea)}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Стены gross: {formatRoomArea(projectInterpretation.topology.totalGrossWallArea)}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Стены net: {formatRoomArea(projectInterpretation.topology.totalNetWallArea)}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Высота проекта: {formatLineLength(projectInterpretation.topology.defaultRoomHeightMm)}</Text>
+                  {projectInterpretation.topology.surfaceGraph.warnings.length > 0 ? (
+                    <View style={styles.projectDataWarningList}>
+                      {projectInterpretation.topology.surfaceGraph.warnings.slice(0, 4).map((warning) => (
+                        <Text key={warning.id} style={styles.projectDataWarningText}>{warning.message}</Text>
+                      ))}
+                    </View>
+                  ) : null}
                 </View>
+
+                {selectedRoomSurfaceSummary ? (
+                  <View style={styles.projectDataSurfaceCard}>
+                    <Text style={styles.projectDataRoomName}>{selectedRoom?.displayName ?? selectedRoomSurfaceSummary.roomName}</Text>
+                    <Text style={styles.projectDataRoomMeta}>Площадь пола: {formatRoomArea(selectedRoomSurfaceSummary.floorArea)}</Text>
+                    <Text style={styles.projectDataRoomMeta}>Потолок: {formatRoomArea(selectedRoomSurfaceSummary.ceilingArea)}</Text>
+                    <Text style={styles.projectDataRoomMeta}>Периметр: {formatRoomPerimeter(selectedRoomSurfaceSummary.perimeterGross)}</Text>
+                    <Text style={styles.projectDataRoomMeta}>Чистый периметр: {formatRoomPerimeter(selectedRoomSurfaceSummary.perimeterNet)}</Text>
+                    <Text style={styles.projectDataRoomMeta}>Высота: {formatLineLength(projectInterpretation.topology.defaultRoomHeightMm)}</Text>
+                    <View style={styles.projectDataSurfaceWallList}>
+                      {selectedRoomSurfaceSummary.wallSurfaces.map((surface) => (
+                        <View key={surface.surfaceId} style={styles.projectDataSurfaceWallCard}>
+                          <Text style={styles.projectDataSurfaceWallTitle}>
+                            {surface.directionLabel}: {formatLineLength(surface.length)} x {formatLineLength(surface.height)} = {formatRoomArea(surface.grossArea)}
+                          </Text>
+                          <Text style={styles.projectDataRoomMeta}>Окна: -{formatRoomArea(surface.windowArea)}</Text>
+                          <Text style={styles.projectDataRoomMeta}>Двери: -{formatRoomArea(surface.doorArea)}</Text>
+                          <Text style={styles.projectDataRoomMeta}>Чистая площадь: {formatRoomArea(surface.netArea)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.projectDataPlaceholderCard}>
+                    <Text style={styles.projectDataPlaceholderText}>Выберите помещение в списке, чтобы увидеть поверхности стен, пол и потолок.</Text>
+                  </View>
+                )}
 
                 <Text style={styles.projectDataSectionTitle}>Engineering</Text>
                 <View style={styles.projectDataPlaceholderCard}>
@@ -9336,6 +9704,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 10,
     gap: 5,
+  },
+  projectDataSurfaceCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DCE3F2',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    gap: 7,
+  },
+  projectDataSurfaceWallList: {
+    gap: 7,
+  },
+  projectDataSurfaceWallCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    padding: 9,
+    gap: 4,
+  },
+  projectDataSurfaceWallTitle: {
+    color: '#0F172A',
+    fontSize: 11,
+    fontWeight: '900',
   },
   projectDataPlaceholderCard: {
     borderRadius: 10,
