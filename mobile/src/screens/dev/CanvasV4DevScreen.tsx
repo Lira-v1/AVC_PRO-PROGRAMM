@@ -29,6 +29,7 @@ type ProjectValidationState = 'idle' | 'empty' | 'invalid' | 'valid';
 type RoomDetectionState = 'idle' | 'blocked' | 'detected';
 type RoomStatus = 'detected';
 type WallRole = 'external' | 'internal' | 'shared';
+type RoomSplitMode = 'none' | 'single-room' | 'multi-room';
 type TopologyWarningSeverity = 'warning' | 'error';
 type TopologyWarningCode =
   | 'room-without-door'
@@ -115,22 +116,31 @@ type CanvasV4RoomCandidate = {
   candidateArea: number;
   candidatePerimeter: number;
   candidateSegments: string[];
+  candidateTopologyEdgeIds: string[];
   candidateCenter: Point;
   candidateBounds: BoundingBox;
   isExternalRoom: boolean;
+  templateSuggestedType?: string;
 };
 
 type CanvasV4RoomEntity = {
   id: string;
   roomId: string;
+  roomNumber: number;
   displayName: string;
   roomType?: string;
+  templateSuggestedType?: string;
+  customName?: string;
   area: number;
   perimeter: number;
   wallSegmentIds: string[];
+  topologyEdgeIds: string[];
   doorIds: string[];
   windowIds: string[];
+  warnings: CanvasV4TopologyWarning[];
   polygon: Point[];
+  bounds: BoundingBox;
+  center: Point;
   isExternalRoom?: boolean;
   roomContour: Point[];
   roomSegments: string[];
@@ -148,6 +158,49 @@ type CanvasV4RoomNamingHint = {
   point: Point;
 };
 
+type CanvasV4PlanarNode = {
+  nodeId: string;
+  point: Point;
+  segmentIds: string[];
+  isJunction: boolean;
+};
+
+type CanvasV4PlanarEdge = {
+  edgeId: string;
+  segmentId: string;
+  startNodeId: string;
+  endNodeId: string;
+  startPoint: Point;
+  endPoint: Point;
+  startOffset: number;
+  endOffset: number;
+  length: number;
+  angle: number;
+  roomIds: string[];
+  wallRole: WallRole;
+};
+
+type CanvasV4PlanarFace = ProjectContourInfo & {
+  faceId: string;
+  area: number;
+  perimeter: number;
+  bounds: BoundingBox;
+  topologyEdgeIds: string[];
+  isOuterFace: boolean;
+};
+
+type CanvasV4PlanarGraph = {
+  nodes: CanvasV4PlanarNode[];
+  edges: CanvasV4PlanarEdge[];
+  faces: CanvasV4PlanarFace[];
+  roomFaces: CanvasV4PlanarFace[];
+  outerFaceId: string | null;
+  orphanSegmentIds: string[];
+  openContourSegmentIds: string[];
+  roomSplitMode: RoomSplitMode;
+  buildTimeMs: number;
+};
+
 type CanvasV4RoomGraph = {
   rooms: CanvasV4RoomEntity[];
   totalProjectArea: number;
@@ -158,6 +211,7 @@ type CanvasV4WallGraphItem = {
   segmentId: string;
   wallRole: WallRole;
   roomIds: string[];
+  topologyEdgeIds: string[];
   doorIds: string[];
   windowIds: string[];
 };
@@ -171,16 +225,24 @@ type CanvasV4WallGraph = {
 };
 
 type CanvasV4ConnectionGraph = {
-  doorConnections: Array<{ doorId: string; segmentId: string; roomIds: string[]; connectsRoomIds: string[] }>;
-  windowConnections: Array<{ windowId: string; segmentId: string; roomIds: string[] }>;
+  doorConnections: Array<{ doorId: string; segmentId: string; topologyEdgeId: string | null; roomIds: string[]; connectsRoomIds: string[]; connectsExterior: boolean }>;
+  windowConnections: Array<{ windowId: string; segmentId: string; topologyEdgeId: string | null; roomIds: string[] }>;
 };
 
 type CanvasV4Topology = {
   roomGraph: CanvasV4RoomGraph;
   wallGraph: CanvasV4WallGraph;
   connectionGraph: CanvasV4ConnectionGraph;
+  planarGraph: CanvasV4PlanarGraph;
   warnings: CanvasV4TopologyWarning[];
   buildTimeMs: number;
+  topologyNodeCount: number;
+  topologyEdgeCount: number;
+  detectedFaceCount: number;
+  outerFaceId: string | null;
+  roomSplitMode: RoomSplitMode;
+  invalidDoorCount: number;
+  invalidWindowCount: number;
 };
 
 type CanvasV4ProjectValidationResult = {
@@ -384,6 +446,9 @@ const ROOM_AREA_PRECISION = 2;
 const ATTACHMENT_EDGE_CLEARANCE_MM = 150;
 const ATTACHMENT_OVERLAP_CLEARANCE_MM = 120;
 const TOPOLOGY_AREA_TOLERANCE_RATIO = 0.05;
+const TOPOLOGY_NODE_TOLERANCE_MM = 1;
+const TOPOLOGY_MIN_EDGE_LENGTH_MM = 1;
+const TOPOLOGY_FACE_GUARD_FACTOR = 8;
 const PROJECT_EMPTY_CANVAS_MESSAGE = 'Чертёж отсутствует';
 const PROJECT_NO_ROOM_MESSAGE = 'Не найдено помещение. Замкните контур.';
 const DOOR_HIT_TOLERANCE_PX = 16;
@@ -449,6 +514,7 @@ type ClosedContourInfo = {
 type ProjectContourInfo = ClosedContourInfo & {
   contourId: string;
   segmentIds: string[];
+  topologyEdgeIds?: string[];
 };
 
 type DimensionNeighborInfo = {
@@ -1530,19 +1596,19 @@ const createApartmentTemplateGeometry = (variant: ApartmentTemplateVariant): Tem
   };
 
   if (variant === 'one-room') {
-    addTemplateDoor('outer-bottom', 2500, segmentByKey, updateEntity, doors, windows);
+    addTemplateDoor('outer-bottom', 3300, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('living-service-bottom', 1450, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('service-horizontal', 3000, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('bath-corridor', 1150, segmentByKey, updateEntity, doors, windows);
     addTemplateWindow('outer-left', 3200, segmentByKey, updateEntity, doors, windows);
     addTemplateWindow('outer-top', 5200, segmentByKey, updateEntity, doors, windows);
   } else if (variant === 'two-room') {
-    addTemplateDoor('outer-bottom', 3300, segmentByKey, updateEntity, doors, windows);
+    addTemplateDoor('outer-bottom', 4100, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('main-vertical-mid', 750, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('main-vertical-bottom', 1450, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('living-bedroom', 1750, segmentByKey, updateEntity, doors, windows);
     addTemplateDoor('bath-corridor', 2650, segmentByKey, updateEntity, doors, windows);
-    addTemplateWindow('outer-left', 1850, segmentByKey, updateEntity, doors, windows);
+    addTemplateWindow('outer-left', 1400, segmentByKey, updateEntity, doors, windows);
     addTemplateWindow('outer-left', 5000, segmentByKey, updateEntity, doors, windows);
     addTemplateWindow('outer-top', 6400, segmentByKey, updateEntity, doors, windows);
   } else {
@@ -1714,6 +1780,7 @@ const cloneRoomCandidate = (candidate: CanvasV4RoomCandidate): CanvasV4RoomCandi
   ...candidate,
   candidateContour: candidate.candidateContour.map(clonePoint),
   candidateSegments: [...candidate.candidateSegments],
+  candidateTopologyEdgeIds: [...candidate.candidateTopologyEdgeIds],
   candidateCenter: clonePoint(candidate.candidateCenter),
   candidateBounds: cloneBoundingBox(candidate.candidateBounds),
 });
@@ -1721,9 +1788,13 @@ const cloneRoomCandidate = (candidate: CanvasV4RoomCandidate): CanvasV4RoomCandi
 const cloneRoomEntity = (room: CanvasV4RoomEntity): CanvasV4RoomEntity => ({
   ...room,
   wallSegmentIds: [...room.wallSegmentIds],
+  topologyEdgeIds: [...room.topologyEdgeIds],
   doorIds: [...room.doorIds],
   windowIds: [...room.windowIds],
+  warnings: room.warnings.map((warning) => ({ ...warning })),
   polygon: room.polygon.map(clonePoint),
+  bounds: cloneBoundingBox(room.bounds),
+  center: clonePoint(room.center),
   roomContour: room.roomContour.map(clonePoint),
   roomSegments: [...room.roomSegments],
   roomCenter: clonePoint(room.roomCenter),
@@ -1735,6 +1806,7 @@ const cloneProjectContour = (contour: ProjectContourInfo): ProjectContourInfo =>
   vertices: contour.vertices.map(clonePoint),
   centroid: clonePoint(contour.centroid),
   segmentIds: [...contour.segmentIds],
+  topologyEdgeIds: contour.topologyEdgeIds ? [...contour.topologyEdgeIds] : undefined,
 });
 
 const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => ({
@@ -1747,6 +1819,7 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
     walls: topology.wallGraph.walls.map((wall) => ({
       ...wall,
       roomIds: [...wall.roomIds],
+      topologyEdgeIds: [...wall.topologyEdgeIds],
       doorIds: [...wall.doorIds],
       windowIds: [...wall.windowIds],
     })),
@@ -1766,8 +1839,49 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
       roomIds: [...connection.roomIds],
     })),
   },
+  planarGraph: {
+    nodes: topology.planarGraph.nodes.map((node) => ({
+      ...node,
+      point: clonePoint(node.point),
+      segmentIds: [...node.segmentIds],
+    })),
+    edges: topology.planarGraph.edges.map((edge) => ({
+      ...edge,
+      startPoint: clonePoint(edge.startPoint),
+      endPoint: clonePoint(edge.endPoint),
+      roomIds: [...edge.roomIds],
+    })),
+    faces: topology.planarGraph.faces.map((face) => ({
+      ...face,
+      vertices: face.vertices.map(clonePoint),
+      centroid: clonePoint(face.centroid),
+      segmentIds: [...face.segmentIds],
+      topologyEdgeIds: [...face.topologyEdgeIds],
+      bounds: cloneBoundingBox(face.bounds),
+    })),
+    roomFaces: topology.planarGraph.roomFaces.map((face) => ({
+      ...face,
+      vertices: face.vertices.map(clonePoint),
+      centroid: clonePoint(face.centroid),
+      segmentIds: [...face.segmentIds],
+      topologyEdgeIds: [...face.topologyEdgeIds],
+      bounds: cloneBoundingBox(face.bounds),
+    })),
+    outerFaceId: topology.planarGraph.outerFaceId,
+    orphanSegmentIds: [...topology.planarGraph.orphanSegmentIds],
+    openContourSegmentIds: [...topology.planarGraph.openContourSegmentIds],
+    roomSplitMode: topology.planarGraph.roomSplitMode,
+    buildTimeMs: topology.planarGraph.buildTimeMs,
+  },
   warnings: topology.warnings.map((warning) => ({ ...warning })),
   buildTimeMs: topology.buildTimeMs,
+  topologyNodeCount: topology.topologyNodeCount,
+  topologyEdgeCount: topology.topologyEdgeCount,
+  detectedFaceCount: topology.detectedFaceCount,
+  outerFaceId: topology.outerFaceId,
+  roomSplitMode: topology.roomSplitMode,
+  invalidDoorCount: topology.invalidDoorCount,
+  invalidWindowCount: topology.invalidWindowCount,
 });
 
 const getWallTopologyMetadata = (topology: CanvasV4Topology) =>
@@ -1943,129 +2057,323 @@ const recognizeClosedGraphContours = (entities: CanvasV4LineEntity[]): ProjectCo
   return contours;
 };
 
-const getDirectedEdgeKey = (fromNodeKey: string, toNodeKey: string) => `${fromNodeKey}->${toNodeKey}`;
+const getDirectedEdgeKey = (edgeId: string, fromNodeId: string, toNodeId: string) => `${edgeId}:${fromNodeId}->${toNodeId}`;
 
-const recognizePlanarTopologyFaces = (entities: CanvasV4LineEntity[]): ProjectContourInfo[] => {
-  const nodePointByKey = new Map<string, Point>();
-  const nodeEdges = new Map<string, Array<{ toNodeKey: string; segmentId: string; angle: number }>>();
+const getTopologyPointKey = (point: Point) =>
+  `${Math.round(point.x / TOPOLOGY_NODE_TOLERANCE_MM)}:${Math.round(point.y / TOPOLOGY_NODE_TOLERANCE_MM)}`;
 
-  const ensureNode = (point: Point) => {
-    const key = getConnectionNodeId(point);
+const getCrossProduct = (first: Point, second: Point) => first.x * second.y - first.y * second.x;
 
-    if (!nodePointByKey.has(key)) {
-      nodePointByKey.set(key, point);
+const getPointOffsetOnSegment = (point: Point, segment: CanvasV4LineEntity) => projectPointToSegment(point, segment).positionOnSegment;
+
+const getUniqueTopologyPoints = (points: Point[]) => {
+  const seenKeys = new Set<string>();
+  const uniquePoints: Point[] = [];
+
+  points.forEach((point) => {
+    const key = getTopologyPointKey(point);
+
+    if (seenKeys.has(key)) {
+      return;
     }
 
-    if (!nodeEdges.has(key)) {
-      nodeEdges.set(key, []);
+    seenKeys.add(key);
+    uniquePoints.push(point);
+  });
+
+  return uniquePoints;
+};
+
+const getLineIntersectionPoints = (first: CanvasV4LineEntity, second: CanvasV4LineEntity): Point[] => {
+  const p = first.startPoint;
+  const r = { x: first.endPoint.x - first.startPoint.x, y: first.endPoint.y - first.startPoint.y };
+  const q = second.startPoint;
+  const s = { x: second.endPoint.x - second.startPoint.x, y: second.endPoint.y - second.startPoint.y };
+  const qMinusP = { x: q.x - p.x, y: q.y - p.y };
+  const rCrossS = getCrossProduct(r, s);
+  const qMinusPCrossR = getCrossProduct(qMinusP, r);
+  const firstTolerance = TOPOLOGY_NODE_TOLERANCE_MM / Math.max(first.length, 1);
+  const secondTolerance = TOPOLOGY_NODE_TOLERANCE_MM / Math.max(second.length, 1);
+
+  if (Math.abs(rCrossS) <= 0.000001) {
+    if (Math.abs(qMinusPCrossR) > TOPOLOGY_NODE_TOLERANCE_MM * Math.max(first.length, second.length, 1)) {
+      return [];
     }
 
-    return key;
+    return getUniqueTopologyPoints([first.startPoint, first.endPoint, second.startPoint, second.endPoint].filter((point) =>
+      getDistanceToSegment(point, first.startPoint, first.endPoint) <= TOPOLOGY_NODE_TOLERANCE_MM &&
+      getDistanceToSegment(point, second.startPoint, second.endPoint) <= TOPOLOGY_NODE_TOLERANCE_MM,
+    ));
+  }
+
+  const t = getCrossProduct(qMinusP, s) / rCrossS;
+  const u = getCrossProduct(qMinusP, r) / rCrossS;
+
+  if (t < -firstTolerance || t > 1 + firstTolerance || u < -secondTolerance || u > 1 + secondTolerance) {
+    return [];
+  }
+
+  return [{
+    x: p.x + Math.max(0, Math.min(1, t)) * r.x,
+    y: p.y + Math.max(0, Math.min(1, t)) * r.y,
+  }];
+};
+
+const createPlanarFace = (
+  faceId: string,
+  vertices: Point[],
+  segmentIds: string[],
+  topologyEdgeIds: string[],
+  isOuterFace: boolean,
+): CanvasV4PlanarFace | null => {
+  const signedArea = getPolygonSignedArea(vertices);
+  const centroid = getPolygonCentroid(vertices);
+  const bounds = getBoundingBoxForPoints(vertices);
+
+  if (!centroid || !bounds || Math.abs(signedArea) <= MIN_ROOM_AREA_MM2) {
+    return null;
+  }
+
+  return {
+    faceId,
+    contourId: faceId,
+    polylineId: `planar-graph-${faceId}`,
+    vertices: vertices.map(clonePoint),
+    signedArea,
+    orientation: signedArea > 0 ? 'clockwise' : 'counter-clockwise',
+    centroid,
+    segmentIds: Array.from(new Set(segmentIds)),
+    topologyEdgeIds: [...topologyEdgeIds],
+    area: Math.abs(signedArea),
+    perimeter: getPolygonPerimeter(vertices),
+    bounds,
+    isOuterFace,
+  };
+};
+
+const buildCanvasV4PlanarGraph = (entities: CanvasV4LineEntity[]): CanvasV4PlanarGraph => {
+  const startedAt = Date.now();
+  const splitPointsBySegmentId = new Map<string, Array<{ point: Point; offset: number }>>();
+
+  const addSplitPoint = (segment: CanvasV4LineEntity, point: Point) => {
+    const offset = getPointOffsetOnSegment(point, segment);
+
+    if (offset < -TOPOLOGY_NODE_TOLERANCE_MM || offset > segment.length + TOPOLOGY_NODE_TOLERANCE_MM) {
+      return;
+    }
+
+    splitPointsBySegmentId.set(segment.segmentId, [
+      ...(splitPointsBySegmentId.get(segment.segmentId) ?? []),
+      {
+        point: clonePoint(point),
+        offset: Math.max(0, Math.min(segment.length, offset)),
+      },
+    ]);
   };
 
   entities.forEach((entity) => {
-    const startKey = ensureNode(entity.startPoint);
-    const endKey = ensureNode(entity.endPoint);
-    const startToEndAngle = Math.atan2(entity.endPoint.y - entity.startPoint.y, entity.endPoint.x - entity.startPoint.x);
-    const endToStartAngle = Math.atan2(entity.startPoint.y - entity.endPoint.y, entity.startPoint.x - entity.endPoint.x);
-
-    nodeEdges.get(startKey)?.push({ toNodeKey: endKey, segmentId: entity.segmentId, angle: startToEndAngle });
-    nodeEdges.get(endKey)?.push({ toNodeKey: startKey, segmentId: entity.segmentId, angle: endToStartAngle });
+    addSplitPoint(entity, entity.startPoint);
+    addSplitPoint(entity, entity.endPoint);
   });
 
-  nodeEdges.forEach((edges) => edges.sort((first, second) => first.angle - second.angle));
+  for (let firstIndex = 0; firstIndex < entities.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < entities.length; secondIndex += 1) {
+      const first = entities[firstIndex];
+      const second = entities[secondIndex];
 
+      getLineIntersectionPoints(first, second).forEach((point) => {
+        addSplitPoint(first, point);
+        addSplitPoint(second, point);
+      });
+    }
+  }
+
+  const nodeByKey = new Map<string, CanvasV4PlanarNode & { segmentIdSet: Set<string> }>();
+  const ensureNode = (point: Point, segmentId: string) => {
+    const key = getTopologyPointKey(point);
+    const existingNode = nodeByKey.get(key);
+
+    if (existingNode) {
+      existingNode.segmentIdSet.add(segmentId);
+      existingNode.segmentIds = Array.from(existingNode.segmentIdSet);
+      existingNode.isJunction = existingNode.segmentIdSet.size > 1;
+      return existingNode;
+    }
+
+    const node: CanvasV4PlanarNode & { segmentIdSet: Set<string> } = {
+      nodeId: `topology-node-${nodeByKey.size + 1}`,
+      point: clonePoint(point),
+      segmentIds: [segmentId],
+      segmentIdSet: new Set([segmentId]),
+      isJunction: false,
+    };
+
+    nodeByKey.set(key, node);
+    return node;
+  };
+
+  const edges: CanvasV4PlanarEdge[] = [];
+
+  entities.forEach((entity) => {
+    const splitPoints = [...(splitPointsBySegmentId.get(entity.segmentId) ?? [])]
+      .sort((first, second) => first.offset - second.offset)
+      .filter((splitPoint, index, sortedPoints) => index === 0 || Math.abs(splitPoint.offset - sortedPoints[index - 1].offset) > TOPOLOGY_MIN_EDGE_LENGTH_MM);
+
+    for (let index = 0; index < splitPoints.length - 1; index += 1) {
+      const startSplit = splitPoints[index];
+      const endSplit = splitPoints[index + 1];
+      const length = Math.hypot(endSplit.point.x - startSplit.point.x, endSplit.point.y - startSplit.point.y);
+
+      if (length <= TOPOLOGY_MIN_EDGE_LENGTH_MM) {
+        continue;
+      }
+
+      const startNode = ensureNode(startSplit.point, entity.segmentId);
+      const endNode = ensureNode(endSplit.point, entity.segmentId);
+
+      if (startNode.nodeId === endNode.nodeId) {
+        continue;
+      }
+
+      edges.push({
+        edgeId: `topology-edge-${entity.segmentId}-${index + 1}`,
+        segmentId: entity.segmentId,
+        startNodeId: startNode.nodeId,
+        endNodeId: endNode.nodeId,
+        startPoint: clonePoint(startNode.point),
+        endPoint: clonePoint(endNode.point),
+        startOffset: Math.min(startSplit.offset, endSplit.offset),
+        endOffset: Math.max(startSplit.offset, endSplit.offset),
+        length,
+        angle: Math.atan2(endNode.point.y - startNode.point.y, endNode.point.x - startNode.point.x),
+        roomIds: [],
+        wallRole: 'external',
+      });
+    }
+  });
+
+  const nodes = Array.from(nodeByKey.values()).map(({ segmentIdSet, ...node }) => node);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const edgeById = new Map(edges.map((edge) => [edge.edgeId, edge]));
+  const outgoingByNodeId = new Map<string, Array<{ edgeId: string; fromNodeId: string; toNodeId: string; angle: number }>>();
+
+  edges.forEach((edge) => {
+    const startToEndAngle = Math.atan2(edge.endPoint.y - edge.startPoint.y, edge.endPoint.x - edge.startPoint.x);
+    const endToStartAngle = Math.atan2(edge.startPoint.y - edge.endPoint.y, edge.startPoint.x - edge.endPoint.x);
+    outgoingByNodeId.set(edge.startNodeId, [...(outgoingByNodeId.get(edge.startNodeId) ?? []), { edgeId: edge.edgeId, fromNodeId: edge.startNodeId, toNodeId: edge.endNodeId, angle: startToEndAngle }]);
+    outgoingByNodeId.set(edge.endNodeId, [...(outgoingByNodeId.get(edge.endNodeId) ?? []), { edgeId: edge.edgeId, fromNodeId: edge.endNodeId, toNodeId: edge.startNodeId, angle: endToStartAngle }]);
+  });
+
+  outgoingByNodeId.forEach((outgoing) => outgoing.sort((first, second) => first.angle - second.angle));
+
+  const directedEdges = Array.from(outgoingByNodeId.values()).flat();
   const visitedDirectedEdges = new Set<string>();
-  const seenContourSignatures = new Set<string>();
-  const faces: ProjectContourInfo[] = [];
+  const rawFaces: CanvasV4PlanarFace[] = [];
 
-  const directedEdges = Array.from(nodeEdges.entries()).flatMap(([fromNodeKey, edges]) =>
-    edges.map((edge) => ({ fromNodeKey, toNodeKey: edge.toNodeKey, segmentId: edge.segmentId })),
-  );
-
-  directedEdges.forEach((startEdge) => {
-    const startDirectedKey = getDirectedEdgeKey(startEdge.fromNodeKey, startEdge.toNodeKey);
+  directedEdges.forEach((startDirectedEdge) => {
+    const startDirectedKey = getDirectedEdgeKey(startDirectedEdge.edgeId, startDirectedEdge.fromNodeId, startDirectedEdge.toNodeId);
 
     if (visitedDirectedEdges.has(startDirectedKey)) {
       return;
     }
 
-    let fromNodeKey = startEdge.fromNodeKey;
-    let toNodeKey = startEdge.toNodeKey;
-    const vertexNodeKeys: string[] = [];
+    let currentDirectedEdge = startDirectedEdge;
+    const vertices: Point[] = [];
     const segmentIds: string[] = [];
-    let guard = 0;
+    const topologyEdgeIds: string[] = [];
+    let closed = false;
 
-    while (guard <= entities.length * 4) {
-      const directedKey = getDirectedEdgeKey(fromNodeKey, toNodeKey);
+    for (let guard = 0; guard < Math.max(edges.length * TOPOLOGY_FACE_GUARD_FACTOR, 8); guard += 1) {
+      const directedKey = getDirectedEdgeKey(currentDirectedEdge.edgeId, currentDirectedEdge.fromNodeId, currentDirectedEdge.toNodeId);
 
       if (visitedDirectedEdges.has(directedKey)) {
         break;
       }
 
-      visitedDirectedEdges.add(directedKey);
-      vertexNodeKeys.push(fromNodeKey);
-      const currentEdge = nodeEdges.get(fromNodeKey)?.find((edge) => edge.toNodeKey === toNodeKey);
+      const fromNode = nodeById.get(currentDirectedEdge.fromNodeId);
+      const currentEdge = edgeById.get(currentDirectedEdge.edgeId);
 
-      if (!currentEdge) {
+      if (!fromNode || !currentEdge) {
         break;
       }
 
+      visitedDirectedEdges.add(directedKey);
+      vertices.push(clonePoint(fromNode.point));
+      topologyEdgeIds.push(currentEdge.edgeId);
       segmentIds.push(currentEdge.segmentId);
 
-      const outgoingEdges = nodeEdges.get(toNodeKey) ?? [];
-      const reverseIndex = outgoingEdges.findIndex((edge) => edge.toNodeKey === fromNodeKey);
+      const outgoing = outgoingByNodeId.get(currentDirectedEdge.toNodeId) ?? [];
+      const reverseIndex = outgoing.findIndex((edge) =>
+        edge.edgeId === currentDirectedEdge.edgeId &&
+        edge.toNodeId === currentDirectedEdge.fromNodeId,
+      );
 
-      if (reverseIndex < 0 || outgoingEdges.length === 0) {
+      if (reverseIndex < 0 || outgoing.length === 0) {
         break;
       }
 
-      const nextIndex = (reverseIndex - 1 + outgoingEdges.length) % outgoingEdges.length;
-      const nextEdge = outgoingEdges[nextIndex];
-      fromNodeKey = toNodeKey;
-      toNodeKey = nextEdge.toNodeKey;
-      guard += 1;
+      const nextIndex = (reverseIndex - 1 + outgoing.length) % outgoing.length;
+      currentDirectedEdge = outgoing[nextIndex];
 
-      if (fromNodeKey === startEdge.fromNodeKey && toNodeKey === startEdge.toNodeKey) {
+      if (
+        currentDirectedEdge.edgeId === startDirectedEdge.edgeId &&
+        currentDirectedEdge.fromNodeId === startDirectedEdge.fromNodeId &&
+        currentDirectedEdge.toNodeId === startDirectedEdge.toNodeId
+      ) {
+        closed = true;
         break;
       }
     }
 
-    if (vertexNodeKeys.length < 3 || segmentIds.length !== vertexNodeKeys.length) {
+    if (!closed || vertices.length < 3) {
       return;
     }
 
-    const vertices = vertexNodeKeys
-      .map((nodeKey) => nodePointByKey.get(nodeKey))
-      .filter((point): point is Point => Boolean(point));
+    const face = createPlanarFace(`topology-face-${rawFaces.length + 1}`, vertices, segmentIds, topologyEdgeIds, false);
 
-    if (vertices.length !== vertexNodeKeys.length) {
-      return;
+    if (face) {
+      rawFaces.push(face);
     }
-
-    const signature = getContourSignature(segmentIds);
-
-    if (seenContourSignatures.has(signature)) {
-      return;
-    }
-
-    const contour = createProjectContourInfo(
-      `project-contour-face-${faces.length + 1}`,
-      vertices,
-      segmentIds,
-      `topology-face-${faces.length + 1}`,
-    );
-
-    if (!contour) {
-      return;
-    }
-
-    seenContourSignatures.add(signature);
-    faces.push(contour);
   });
 
-  return faces;
+  const largestNegativeFace = rawFaces
+    .filter((face) => face.signedArea < 0)
+    .sort((first, second) => second.area - first.area)[0] ?? null;
+  const largestFace = [...rawFaces].sort((first, second) => second.area - first.area)[0] ?? null;
+  const outerFaceId = largestNegativeFace?.faceId ?? largestFace?.faceId ?? null;
+  const faces = rawFaces.map((face) => ({ ...face, isOuterFace: face.faceId === outerFaceId }));
+  const clockwiseRoomFaces = faces.filter((face) => face.signedArea > 0 && !face.isOuterFace);
+  const roomFaces = clockwiseRoomFaces.length > 0
+    ? clockwiseRoomFaces
+    : faces.filter((face) => !face.isOuterFace);
+  const roomTopologyEdgeIds = new Set(roomFaces.flatMap((face) => face.topologyEdgeIds));
+  const orphanSegmentIds = entities
+    .filter((entity) => !edges.some((edge) => edge.segmentId === entity.segmentId && roomTopologyEdgeIds.has(edge.edgeId)))
+    .map((entity) => entity.segmentId);
+  const openContourSegmentIds = roomFaces.length === 0 ? entities.map((entity) => entity.segmentId) : [];
+  const roomSplitMode: RoomSplitMode = roomFaces.length === 0 ? 'none' : roomFaces.length === 1 ? 'single-room' : 'multi-room';
+
+  return {
+    nodes,
+    edges,
+    faces,
+    roomFaces,
+    outerFaceId,
+    orphanSegmentIds,
+    openContourSegmentIds,
+    roomSplitMode,
+    buildTimeMs: Math.max(1, Date.now() - startedAt),
+  };
 };
+
+const recognizePlanarTopologyFaces = (entities: CanvasV4LineEntity[]): ProjectContourInfo[] =>
+  buildCanvasV4PlanarGraph(entities).roomFaces.map((face) => ({
+    ...face,
+    vertices: face.vertices.map(clonePoint),
+    centroid: clonePoint(face.centroid),
+    segmentIds: [...face.segmentIds],
+    topologyEdgeIds: [...face.topologyEdgeIds],
+  }));
 
 const recognizeProjectContours = (entities: CanvasV4LineEntity[]): ProjectContourInfo[] => {
   const polylineIds = Array.from(new Set(entities.map((entity) => entity.polylineId).filter((polylineId): polylineId is string => Boolean(polylineId))));
@@ -2178,7 +2486,7 @@ const getAreaValue = (contour: ProjectContourInfo) => Math.abs(contour.signedAre
 const getTemplateRoomNamingHints = (variant: TemplateVariant | null): CanvasV4RoomNamingHint[] => {
   if (variant === 'one-room') {
     return [
-      { displayName: 'Гостиная', roomType: 'living-room', point: createTemplatePoint(-2200, 0) },
+      { displayName: 'Гостиная', roomType: 'living_room', point: createTemplatePoint(-2200, 0) },
       { displayName: 'Кухня', roomType: 'kitchen', point: createTemplatePoint(1200, -1200) },
       { displayName: 'Коридор', roomType: 'corridor', point: createTemplatePoint(0, 1700) },
       { displayName: 'Санузел', roomType: 'bathroom', point: createTemplatePoint(2200, 1700) },
@@ -2187,7 +2495,7 @@ const getTemplateRoomNamingHints = (variant: TemplateVariant | null): CanvasV4Ro
 
   if (variant === 'two-room') {
     return [
-      { displayName: 'Гостиная', roomType: 'living-room', point: createTemplatePoint(-2600, -1700) },
+      { displayName: 'Гостиная', roomType: 'living_room', point: createTemplatePoint(-2600, -1700) },
       { displayName: 'Спальня', roomType: 'bedroom', point: createTemplatePoint(-2600, 1900) },
       { displayName: 'Кухня', roomType: 'kitchen', point: createTemplatePoint(1800, -2000) },
       { displayName: 'Коридор', roomType: 'corridor', point: createTemplatePoint(200, 900) },
@@ -2197,7 +2505,7 @@ const getTemplateRoomNamingHints = (variant: TemplateVariant | null): CanvasV4Ro
 
   if (variant === 'three-room') {
     return [
-      { displayName: 'Гостиная', roomType: 'living-room', point: createTemplatePoint(1900, -2400) },
+      { displayName: 'Гостиная', roomType: 'living_room', point: createTemplatePoint(1900, -2400) },
       { displayName: 'Спальня 1', roomType: 'bedroom', point: createTemplatePoint(-3400, -2500) },
       { displayName: 'Спальня 2', roomType: 'bedroom', point: createTemplatePoint(-3400, 500) },
       { displayName: 'Кухня', roomType: 'kitchen', point: createTemplatePoint(2600, -400) },
@@ -2207,6 +2515,26 @@ const getTemplateRoomNamingHints = (variant: TemplateVariant | null): CanvasV4Ro
   }
 
   return [];
+};
+
+const ROOM_TYPE_LABELS: Record<string, string> = {
+  kitchen: 'Кухня',
+  bathroom: 'Санузел',
+  corridor: 'Коридор',
+  living_room: 'Гостиная',
+  bedroom: 'Спальня',
+};
+
+const getRoomDisplayName = (roomNumber: number, roomType?: string, customName?: string) => {
+  if (customName) {
+    return customName;
+  }
+
+  if (roomType && ROOM_TYPE_LABELS[roomType]) {
+    return ROOM_TYPE_LABELS[roomType];
+  }
+
+  return `Помещение ${roomNumber}`;
 };
 
 const resolveRoomContoursFromTopology = (closedContours: ProjectContourInfo[], entities: CanvasV4LineEntity[]) => {
@@ -2244,7 +2572,7 @@ const resolveRoomContoursFromTopology = (closedContours: ProjectContourInfo[], e
 };
 
 const createRoomCandidatesFromContours = (closedContours: ProjectContourInfo[], entities: CanvasV4LineEntity[]): CanvasV4RoomCandidate[] => {
-  const { roomContours, externalContour } = resolveRoomContoursFromTopology(closedContours, entities);
+  const roomContours = closedContours;
 
   return roomContours
     .map((contour, index) => {
@@ -2260,9 +2588,10 @@ const createRoomCandidatesFromContours = (closedContours: ProjectContourInfo[], 
         candidateArea: Math.abs(contour.signedArea),
         candidatePerimeter: getPolygonPerimeter(contour.vertices),
         candidateSegments: [...contour.segmentIds],
+        candidateTopologyEdgeIds: [...(contour.topologyEdgeIds ?? [])],
         candidateCenter: clonePoint(contour.centroid),
         candidateBounds: bounds,
-        isExternalRoom: externalContour?.contourId === contour.contourId,
+        isExternalRoom: false,
       };
     })
     .filter((candidate): candidate is CanvasV4RoomCandidate => Boolean(candidate));
@@ -2287,23 +2616,31 @@ const createRoomsFromCandidates = (
   const usedHintNames = new Set<string>();
 
   return roomCandidates.map((candidate, index) => {
+    const roomNumber = index + 1;
     const roomId = `room-${index + 1}-${candidate.candidateId}`;
     const namingHint = getRoomNamingHint(candidate, namingHints, usedHintNames);
     const doorIds = doors.filter((door) => candidate.candidateSegments.includes(door.segmentId)).map((door) => door.doorId);
     const windowIds = windows.filter((window) => candidate.candidateSegments.includes(window.segmentId)).map((window) => window.windowId);
-    const displayName = namingHint?.displayName ?? `Помещение ${index + 1}`;
+    const roomType = namingHint?.roomType;
+    const displayName = getRoomDisplayName(roomNumber, roomType);
 
     return {
       id: roomId,
       roomId,
+      roomNumber,
       displayName,
-      roomType: namingHint?.roomType,
+      roomType,
+      templateSuggestedType: roomType,
       area: candidate.candidateArea,
       perimeter: candidate.candidatePerimeter,
       wallSegmentIds: [...candidate.candidateSegments],
+      topologyEdgeIds: [...candidate.candidateTopologyEdgeIds],
       doorIds,
       windowIds,
+      warnings: [],
       polygon: candidate.candidateContour.map(clonePoint),
+      bounds: cloneBoundingBox(candidate.candidateBounds),
+      center: clonePoint(candidate.candidateCenter),
       isExternalRoom: candidate.isExternalRoom,
       roomContour: candidate.candidateContour.map(clonePoint),
       roomSegments: [...candidate.candidateSegments],
@@ -2334,8 +2671,26 @@ const createEmptyTopology = (buildTimeMs = 0): CanvasV4Topology => ({
     doorConnections: [],
     windowConnections: [],
   },
+  planarGraph: {
+    nodes: [],
+    edges: [],
+    faces: [],
+    roomFaces: [],
+    outerFaceId: null,
+    orphanSegmentIds: [],
+    openContourSegmentIds: [],
+    roomSplitMode: 'none',
+    buildTimeMs,
+  },
   warnings: [],
   buildTimeMs,
+  topologyNodeCount: 0,
+  topologyEdgeCount: 0,
+  detectedFaceCount: 0,
+  outerFaceId: null,
+  roomSplitMode: 'none',
+  invalidDoorCount: 0,
+  invalidWindowCount: 0,
 });
 
 const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
@@ -2350,30 +2705,70 @@ const getRoomIdsBySegmentId = (rooms: CanvasV4RoomEntity[]) => {
   return roomIdsBySegmentId;
 };
 
+const getRoomIdsByTopologyEdgeId = (rooms: CanvasV4RoomEntity[]) => {
+  const roomIdsByTopologyEdgeId = new Map<string, string[]>();
+
+  rooms.forEach((room) => {
+    room.topologyEdgeIds.forEach((topologyEdgeId) => {
+      roomIdsByTopologyEdgeId.set(topologyEdgeId, [...(roomIdsByTopologyEdgeId.get(topologyEdgeId) ?? []), room.roomId]);
+    });
+  });
+
+  return roomIdsByTopologyEdgeId;
+};
+
 const getTotalProjectArea = (rooms: CanvasV4RoomEntity[]) => {
-  const internalRooms = rooms.filter((room) => !room.isExternalRoom);
-  const measuredRooms = internalRooms.length > 0 ? internalRooms : rooms;
-  return measuredRooms.reduce((sum, room) => sum + room.area, 0);
+  return rooms.reduce((sum, room) => sum + room.area, 0);
+};
+
+const getWallRoleForRoomIds = (roomIds: string[]): WallRole => {
+  if (roomIds.length > 1) {
+    return 'shared';
+  }
+
+  if (roomIds.length === 1) {
+    return 'external';
+  }
+
+  return 'internal';
+};
+
+const applyPlanarEdgeOwnership = (planarGraph: CanvasV4PlanarGraph, rooms: CanvasV4RoomEntity[]): CanvasV4PlanarGraph => {
+  const roomIdsByTopologyEdgeId = getRoomIdsByTopologyEdgeId(rooms);
+
+  return {
+    ...planarGraph,
+    edges: planarGraph.edges.map((edge) => {
+      const roomIds = roomIdsByTopologyEdgeId.get(edge.edgeId) ?? [];
+
+      return {
+        ...edge,
+        roomIds,
+        wallRole: getWallRoleForRoomIds(roomIds),
+      };
+    }),
+  };
 };
 
 const createWallGraph = (
   entities: CanvasV4LineEntity[],
   rooms: CanvasV4RoomEntity[],
-  externalContour: ProjectContourInfo | null,
-  orphanSegmentIds: string[],
+  planarGraph: CanvasV4PlanarGraph,
 ): CanvasV4WallGraph => {
   const roomIdsBySegmentId = getRoomIdsBySegmentId(rooms);
-  const externalContourSegmentIds = new Set(externalContour?.segmentIds ?? []);
   const walls = entities.map<CanvasV4WallGraphItem>((entity) => {
     const roomIds = roomIdsBySegmentId.get(entity.segmentId) ?? [];
-    const wallRole: WallRole = roomIds.length > 1
-      ? 'shared'
-      : (entity.segmentType === 'external' || externalContourSegmentIds.has(entity.segmentId) ? 'external' : 'internal');
+    const topologyEdges = planarGraph.edges.filter((edge) => edge.segmentId === entity.segmentId);
+    const topologyEdgeIds = topologyEdges.map((edge) => edge.edgeId);
+    const hasSharedEdge = topologyEdges.some((edge) => edge.wallRole === 'shared');
+    const hasExternalEdge = topologyEdges.some((edge) => edge.wallRole === 'external');
+    const wallRole: WallRole = hasSharedEdge ? 'shared' : hasExternalEdge ? 'external' : 'internal';
 
     return {
       segmentId: entity.segmentId,
       wallRole,
       roomIds,
+      topologyEdgeIds,
       doorIds: [...entity.doorIds],
       windowIds: [...entity.windowIds],
     };
@@ -2384,31 +2779,70 @@ const createWallGraph = (
     externalSegmentIds: walls.filter((wall) => wall.wallRole === 'external').map((wall) => wall.segmentId),
     internalSegmentIds: walls.filter((wall) => wall.wallRole === 'internal').map((wall) => wall.segmentId),
     sharedSegmentIds: walls.filter((wall) => wall.wallRole === 'shared').map((wall) => wall.segmentId),
-    orphanSegmentIds,
+    orphanSegmentIds: [...planarGraph.orphanSegmentIds],
   };
+};
+
+const findTopologyEdgeForOpening = (
+  opening: { segmentId: string; positionOnSegment: number; width: number },
+  planarGraph: CanvasV4PlanarGraph,
+) => {
+  const openingStart = opening.positionOnSegment - opening.width / 2;
+  const openingEnd = opening.positionOnSegment + opening.width / 2;
+
+  return planarGraph.edges.find((edge) =>
+    edge.segmentId === opening.segmentId &&
+    openingStart >= edge.startOffset - TOPOLOGY_NODE_TOLERANCE_MM &&
+    openingEnd <= edge.endOffset + TOPOLOGY_NODE_TOLERANCE_MM,
+  ) ?? null;
 };
 
 const createConnectionGraph = (
   doors: CanvasV4Door[],
   windows: CanvasV4Window[],
-  roomIdsBySegmentId: Map<string, string[]>,
+  planarGraph: CanvasV4PlanarGraph,
 ): CanvasV4ConnectionGraph => ({
   doorConnections: doors.map((door) => {
-    const roomIds = roomIdsBySegmentId.get(door.segmentId) ?? [];
+    const topologyEdge = findTopologyEdgeForOpening(door, planarGraph);
+    const roomIds = topologyEdge?.roomIds ?? [];
 
     return {
       doorId: door.doorId,
       segmentId: door.segmentId,
+      topologyEdgeId: topologyEdge?.edgeId ?? null,
       roomIds,
       connectsRoomIds: roomIds.length > 1 ? roomIds : [],
+      connectsExterior: roomIds.length === 1,
     };
   }),
-  windowConnections: windows.map((window) => ({
-    windowId: window.windowId,
-    segmentId: window.segmentId,
-    roomIds: roomIdsBySegmentId.get(window.segmentId) ?? [],
-  })),
+  windowConnections: windows.map((window) => {
+    const topologyEdge = findTopologyEdgeForOpening(window, planarGraph);
+
+    return {
+      windowId: window.windowId,
+      segmentId: window.segmentId,
+      topologyEdgeId: topologyEdge?.edgeId ?? null,
+      roomIds: topologyEdge?.roomIds ?? [],
+    };
+  }),
 });
+
+const attachOpeningsToRooms = (rooms: CanvasV4RoomEntity[], connectionGraph: CanvasV4ConnectionGraph) =>
+  rooms.map((room) => ({
+    ...room,
+    doorIds: connectionGraph.doorConnections
+      .filter((connection) => connection.roomIds.includes(room.roomId))
+      .map((connection) => connection.doorId),
+    windowIds: connectionGraph.windowConnections
+      .filter((connection) => connection.roomIds.includes(room.roomId))
+      .map((connection) => connection.windowId),
+  }));
+
+const attachWarningsToRooms = (rooms: CanvasV4RoomEntity[], warnings: CanvasV4TopologyWarning[]) =>
+  rooms.map((room) => ({
+    ...room,
+    warnings: warnings.filter((warning) => warning.roomId === room.roomId),
+  }));
 
 const createWarning = (
   code: TopologyWarningCode,
@@ -2427,7 +2861,7 @@ const createWarning = (
 const validateOpeningPosition = (
   opening: { id: string; segmentId: string; positionOnSegment: number; width: number; kind: 'door' | 'window' },
   segment: CanvasV4LineEntity | undefined,
-  wallRole: WallRole | undefined,
+  topologyEdge: CanvasV4PlanarEdge | null,
   allOpeningsOnSegment: Array<{ id: string; positionOnSegment: number; width: number }>,
 ): CanvasV4TopologyWarning[] => {
   const code: TopologyWarningCode = opening.kind === 'door' ? 'invalid-door-placement' : 'invalid-window-placement';
@@ -2440,12 +2874,22 @@ const validateOpeningPosition = (
   const warnings: CanvasV4TopologyWarning[] = [];
   const startGap = opening.positionOnSegment - opening.width / 2;
   const endGap = segment.length - (opening.positionOnSegment + opening.width / 2);
-  const isNearJoint = startGap < ATTACHMENT_EDGE_CLEARANCE_MM || endGap < ATTACHMENT_EDGE_CLEARANCE_MM;
+  const openingStart = opening.positionOnSegment - opening.width / 2;
+  const openingEnd = opening.positionOnSegment + opening.width / 2;
+  const isOutsideSegment = startGap < -TOPOLOGY_NODE_TOLERANCE_MM || endGap < -TOPOLOGY_NODE_TOLERANCE_MM;
+  const isOutsideTopologyEdge = !topologyEdge ||
+    openingStart < topologyEdge.startOffset - TOPOLOGY_NODE_TOLERANCE_MM ||
+    openingEnd > topologyEdge.endOffset + TOPOLOGY_NODE_TOLERANCE_MM;
+  const isNearJoint = !topologyEdge ||
+    openingStart < topologyEdge.startOffset + ATTACHMENT_EDGE_CLEARANCE_MM ||
+    openingEnd > topologyEdge.endOffset - ATTACHMENT_EDGE_CLEARANCE_MM;
   const hasOverlap = allOpeningsOnSegment.some((candidate) =>
     candidate.id !== opening.id && openingSpansOverlap(opening, candidate, ATTACHMENT_OVERLAP_CLEARANCE_MM / 2),
   );
 
-  if (isNearJoint) {
+  if (isOutsideSegment || isOutsideTopologyEdge) {
+    warnings.push(createWarning(code, `${label} не помещается на участке стены`, { openingId: opening.id, segmentId: opening.segmentId, severity: 'error' }));
+  } else if (isNearJoint) {
     warnings.push(createWarning(code, `${label} размещено у узла стены`, { openingId: opening.id, segmentId: opening.segmentId, severity: 'error' }));
   }
 
@@ -2453,8 +2897,8 @@ const validateOpeningPosition = (
     warnings.push(createWarning(code, `${label} пересекается с другим проёмом`, { openingId: opening.id, segmentId: opening.segmentId, severity: 'error' }));
   }
 
-  if (opening.kind === 'window' && wallRole !== 'external') {
-    warnings.push(createWarning(code, 'Окно размещено некорректно', { openingId: opening.id, segmentId: opening.segmentId, severity: 'error' }));
+  if (opening.kind === 'window' && topologyEdge?.wallRole !== 'external') {
+    warnings.push(createWarning(code, 'Окно размещено не на внешней стене', { openingId: opening.id, segmentId: opening.segmentId, severity: 'error' }));
   }
 
   return warnings;
@@ -2465,14 +2909,14 @@ const createTopologyWarnings = (
   rooms: CanvasV4RoomEntity[],
   doors: CanvasV4Door[],
   windows: CanvasV4Window[],
-  wallGraph: CanvasV4WallGraph,
   connectionGraph: CanvasV4ConnectionGraph,
-  openContourSegmentIds: string[],
-  orphanSegmentIds: string[],
+  planarGraph: CanvasV4PlanarGraph,
 ) => {
   const warnings: CanvasV4TopologyWarning[] = [];
   const segmentById = new Map(entities.map((entity) => [entity.segmentId, entity]));
-  const wallBySegmentId = new Map(wallGraph.walls.map((wall) => [wall.segmentId, wall]));
+  const topologyEdgeById = new Map(planarGraph.edges.map((edge) => [edge.edgeId, edge]));
+  const doorConnectionById = new Map(connectionGraph.doorConnections.map((connection) => [connection.doorId, connection]));
+  const windowConnectionById = new Map(connectionGraph.windowConnections.map((connection) => [connection.windowId, connection]));
   const openingsBySegmentId = new Map<string, Array<{ id: string; positionOnSegment: number; width: number }>>();
 
   [...doors.map((door) => ({ id: door.doorId, segmentId: door.segmentId, positionOnSegment: door.positionOnSegment, width: door.width })),
@@ -2480,14 +2924,17 @@ const createTopologyWarnings = (
     openingsBySegmentId.set(opening.segmentId, [...(openingsBySegmentId.get(opening.segmentId) ?? []), opening]);
   });
 
-  if (openContourSegmentIds.length > 0) {
-    warnings.push(createWarning('unclosed-contour', 'Незамкнутый контур', { segmentId: openContourSegmentIds[0], severity: 'error' }));
+  if (planarGraph.openContourSegmentIds.length > 0) {
+    warnings.push(createWarning('unclosed-contour', 'Незамкнутый контур', { segmentId: planarGraph.openContourSegmentIds[0], severity: 'error' }));
   }
 
-  orphanSegmentIds.forEach((segmentId) => {
-    warnings.push(createWarning('orphan-segment', 'Лишняя линия вне topology', { segmentId }));
-    warnings.push(createWarning('floating-geometry', 'Лишняя линия вне topology', { segmentId }));
-  });
+  if (planarGraph.orphanSegmentIds.length > 0) {
+    warnings.push(createWarning(
+      'orphan-segment',
+      `Лишние линии вне topology: ${planarGraph.orphanSegmentIds.length}`,
+      { segmentId: planarGraph.orphanSegmentIds[0] },
+    ));
+  }
 
   rooms.forEach((room) => {
     if (room.doorIds.length === 0) {
@@ -2507,7 +2954,7 @@ const createTopologyWarnings = (
     warnings.push(...validateOpeningPosition(
       { id: door.doorId, segmentId: door.segmentId, positionOnSegment: door.positionOnSegment, width: door.width, kind: 'door' },
       segmentById.get(door.segmentId),
-      wallBySegmentId.get(door.segmentId)?.wallRole,
+      topologyEdgeById.get(doorConnectionById.get(door.doorId)?.topologyEdgeId ?? '') ?? null,
       openingsBySegmentId.get(door.segmentId) ?? [],
     ));
   });
@@ -2516,41 +2963,65 @@ const createTopologyWarnings = (
     warnings.push(...validateOpeningPosition(
       { id: window.windowId, segmentId: window.segmentId, positionOnSegment: window.positionOnSegment, width: window.width, kind: 'window' },
       segmentById.get(window.segmentId),
-      wallBySegmentId.get(window.segmentId)?.wallRole,
+      topologyEdgeById.get(windowConnectionById.get(window.windowId)?.topologyEdgeId ?? '') ?? null,
       openingsBySegmentId.get(window.segmentId) ?? [],
     ));
   });
 
-  return warnings;
+  const seenWarningKeys = new Set<string>();
+  return warnings.filter((warning) => {
+    const key = `${warning.code}:${warning.message}:${warning.roomId ?? ''}:${warning.segmentId ?? ''}:${warning.openingId ?? ''}`;
+
+    if (seenWarningKeys.has(key)) {
+      return false;
+    }
+
+    seenWarningKeys.add(key);
+    return true;
+  });
 };
 
 const buildCanvasV4Topology = (
   entities: CanvasV4LineEntity[],
   doors: CanvasV4Door[],
   windows: CanvasV4Window[],
-  closedContours: ProjectContourInfo[],
-  openContourSegmentIds: string[],
-  orphanSegmentIds: string[],
   templateVariant: TemplateVariant | null,
 ): CanvasV4Topology => {
   const startedAt = Date.now();
-  const { externalContour } = resolveRoomContoursFromTopology(closedContours, entities);
-  const roomCandidates = createRoomCandidatesFromContours(closedContours, entities);
-  const rooms = createRoomsFromCandidates(roomCandidates, doors, windows, getTemplateRoomNamingHints(templateVariant));
-  const wallGraph = createWallGraph(entities, rooms, externalContour, orphanSegmentIds);
-  const connectionGraph = createConnectionGraph(doors, windows, getRoomIdsBySegmentId(rooms));
-  const warnings = createTopologyWarnings(entities, rooms, doors, windows, wallGraph, connectionGraph, openContourSegmentIds, orphanSegmentIds);
+  const rawPlanarGraph = buildCanvasV4PlanarGraph(entities);
+  const roomCandidates = createRoomCandidatesFromContours(rawPlanarGraph.roomFaces, entities);
+  const initialRooms = createRoomsFromCandidates(roomCandidates, doors, windows, getTemplateRoomNamingHints(templateVariant));
+  const planarGraph = applyPlanarEdgeOwnership(rawPlanarGraph, initialRooms);
+  const connectionGraph = createConnectionGraph(doors, windows, planarGraph);
+  const roomsWithOpenings = attachOpeningsToRooms(initialRooms, connectionGraph);
+  const warnings = createTopologyWarnings(entities, roomsWithOpenings, doors, windows, connectionGraph, planarGraph);
+  const rooms = attachWarningsToRooms(roomsWithOpenings, warnings);
+  const wallGraph = createWallGraph(entities, rooms, planarGraph);
+  const invalidDoorCount = new Set(warnings
+    .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
+    .map((warning) => warning.openingId as string)).size;
+  const invalidWindowCount = new Set(warnings
+    .filter((warning) => warning.code === 'invalid-window-placement' && warning.openingId)
+    .map((warning) => warning.openingId as string)).size;
 
   return {
     roomGraph: {
       rooms,
       totalProjectArea: getTotalProjectArea(rooms),
-      externalContour,
+      externalContour: planarGraph.outerFaceId ? planarGraph.faces.find((face) => face.faceId === planarGraph.outerFaceId) ?? null : null,
     },
     wallGraph,
     connectionGraph,
+    planarGraph,
     warnings,
     buildTimeMs: Math.max(1, Date.now() - startedAt),
+    topologyNodeCount: planarGraph.nodes.length,
+    topologyEdgeCount: planarGraph.edges.length,
+    detectedFaceCount: planarGraph.roomFaces.length,
+    outerFaceId: planarGraph.outerFaceId,
+    roomSplitMode: planarGraph.roomSplitMode,
+    invalidDoorCount,
+    invalidWindowCount,
   };
 };
 
@@ -2579,25 +3050,16 @@ const detectCanvasV4ProjectInterpretation = (
     };
   }
 
-  const closedContours = recognizeProjectContours(entities);
-  const warnings = getCanvasV4GeometryWarnings(entities, closedContours);
-  const topology = buildCanvasV4Topology(
-    entities,
-    doors,
-    windows,
-    closedContours,
-    warnings.openContourSegmentIds,
-    warnings.orphanSegmentIds,
-    templateVariant,
-  );
+  const topology = buildCanvasV4Topology(entities, doors, windows, templateVariant);
+  const closedContours = topology.planarGraph.roomFaces;
 
   if (closedContours.length === 0) {
     return {
       projectValidationState: 'invalid',
       roomDetectionState: 'blocked',
       closedContours,
-      openContourSegmentIds: warnings.openContourSegmentIds,
-      orphanSegmentIds: warnings.orphanSegmentIds,
+      openContourSegmentIds: topology.planarGraph.openContourSegmentIds,
+      orphanSegmentIds: topology.planarGraph.orphanSegmentIds,
       roomCandidates: [],
       rooms: [],
       topology,
@@ -2615,8 +3077,8 @@ const detectCanvasV4ProjectInterpretation = (
     projectValidationState: 'valid',
     roomDetectionState: rooms.length > 0 ? 'detected' : 'blocked',
     closedContours,
-    openContourSegmentIds: warnings.openContourSegmentIds,
-    orphanSegmentIds: warnings.orphanSegmentIds,
+    openContourSegmentIds: topology.planarGraph.openContourSegmentIds,
+    orphanSegmentIds: topology.planarGraph.orphanSegmentIds,
     roomCandidates,
     rooms,
     topology,
@@ -2624,6 +3086,25 @@ const detectCanvasV4ProjectInterpretation = (
     topologyWarnings: topology.warnings,
     topologyBuildTimeMs: topology.buildTimeMs,
     lastValidationError: rooms.length > 0 ? null : PROJECT_NO_ROOM_MESSAGE,
+  };
+};
+
+const createDeferredCanvasV4ProjectInterpretation = (hasGeometry: boolean): CanvasV4ProjectValidationResult => {
+  const emptyTopology = createEmptyTopology();
+
+  return {
+    projectValidationState: hasGeometry ? 'idle' : 'empty',
+    roomDetectionState: hasGeometry ? 'idle' : 'blocked',
+    closedContours: [],
+    openContourSegmentIds: [],
+    orphanSegmentIds: [],
+    roomCandidates: [],
+    rooms: [],
+    topology: emptyTopology,
+    totalProjectArea: 0,
+    topologyWarnings: [],
+    topologyBuildTimeMs: emptyTopology.buildTimeMs,
+    lastValidationError: hasGeometry ? null : PROJECT_EMPTY_CANVAS_MESSAGE,
   };
 };
 
@@ -3196,8 +3677,10 @@ export const CanvasV4DevScreen = () => {
   const activeShapeStartPoint = isShapeToolMode(currentToolMode) ? shapeStartPoint : null;
 
   const projectInterpretation = useMemo(
-    () => detectCanvasV4ProjectInterpretation(entities, doors, windows, selectedTemplateVariant),
-    [doors, entities, selectedTemplateVariant, windows],
+    () => (currentCanvasMode === 'project'
+      ? detectCanvasV4ProjectInterpretation(entities, doors, windows, selectedTemplateVariant)
+      : createDeferredCanvasV4ProjectInterpretation(entities.length > 0)),
+    [currentCanvasMode, doors, entities, selectedTemplateVariant, windows],
   );
   const projectContours = useMemo(
     () => (currentCanvasMode === 'project' ? projectInterpretation.closedContours : []),
@@ -3225,6 +3708,18 @@ export const CanvasV4DevScreen = () => {
     },
     [currentCanvasMode, projectInterpretation.openContourSegmentIds, projectInterpretation.orphanSegmentIds, projectInterpretation.topologyWarnings],
   );
+  const invalidDoorIds = useMemo(
+    () => new Set(projectTopologyWarnings
+      .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
+      .map((warning) => warning.openingId as string)),
+    [projectTopologyWarnings],
+  );
+  const invalidWindowIds = useMemo(
+    () => new Set(projectTopologyWarnings
+      .filter((warning) => warning.code === 'invalid-window-placement' && warning.openingId)
+      .map((warning) => warning.openingId as string)),
+    [projectTopologyWarnings],
+  );
   const shapeGroups = useMemo(() => getShapeGroups(entities), [entities]);
   const shapeGroupById = useMemo(() => new Map(shapeGroups.map((group) => [group.shapeId, group])), [shapeGroups]);
   const shapeGroupByEntityId = useMemo(() => {
@@ -3246,7 +3741,9 @@ export const CanvasV4DevScreen = () => {
   const circleVisualMode: CircleVisualMode = dimensionDisplayMode === 'full' ? 'segmented' : 'smooth';
 
   const createProjectStub = useCallback(() => {
-    if (projectInterpretation.projectValidationState === 'empty') {
+    const nextProjectInterpretation = detectCanvasV4ProjectInterpretation(entities, doors, windows, selectedTemplateVariant);
+
+    if (nextProjectInterpretation.projectValidationState === 'empty') {
       setProjectValidationMessage(PROJECT_EMPTY_CANVAS_MESSAGE);
       setLastValidationError(PROJECT_EMPTY_CANVAS_MESSAGE);
       setSelectedRoomId(null);
@@ -3254,8 +3751,8 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    if (projectInterpretation.projectValidationState !== 'valid' || projectInterpretation.rooms.length === 0) {
-      const validationError = projectInterpretation.lastValidationError ?? PROJECT_NO_ROOM_MESSAGE;
+    if (nextProjectInterpretation.projectValidationState !== 'valid' || nextProjectInterpretation.rooms.length === 0) {
+      const validationError = nextProjectInterpretation.lastValidationError ?? PROJECT_NO_ROOM_MESSAGE;
       setProjectValidationMessage(validationError);
       setLastValidationError(validationError);
       setSelectedRoomId(null);
@@ -3272,17 +3769,17 @@ export const CanvasV4DevScreen = () => {
         entities,
         doors,
         windows,
-        projectInterpretation.roomCandidates,
-        projectInterpretation.rooms,
-        projectInterpretation.topology,
-        projectInterpretation.projectValidationState,
+        nextProjectInterpretation.roomCandidates,
+        nextProjectInterpretation.rooms,
+        nextProjectInterpretation.topology,
+        nextProjectInterpretation.projectValidationState,
       ),
-      roomCandidates: projectInterpretation.roomCandidates.map(cloneRoomCandidate),
-      rooms: projectInterpretation.rooms.map(cloneRoomEntity),
-      topology: cloneCanvasV4Topology(projectInterpretation.topology),
-      totalProjectArea: projectInterpretation.totalProjectArea,
-      topologyWarnings: projectInterpretation.topologyWarnings.map((warning) => ({ ...warning })),
-      validationState: projectInterpretation.projectValidationState,
+      roomCandidates: nextProjectInterpretation.roomCandidates.map(cloneRoomCandidate),
+      rooms: nextProjectInterpretation.rooms.map(cloneRoomEntity),
+      topology: cloneCanvasV4Topology(nextProjectInterpretation.topology),
+      totalProjectArea: nextProjectInterpretation.totalProjectArea,
+      topologyWarnings: nextProjectInterpretation.topologyWarnings.map((warning) => ({ ...warning })),
+      validationState: nextProjectInterpretation.projectValidationState,
       validationError: null,
     });
     setCurrentCanvasMode('project');
@@ -3296,7 +3793,7 @@ export const CanvasV4DevScreen = () => {
     setActivePolylineId(null);
     setShapeStartPoint(null);
     setSelectionBox(null);
-  }, [doors, entities, projectInterpretation, windows]);
+  }, [doors, entities, selectedTemplateVariant, windows]);
 
   const openManualDrawFlow = useCallback(() => {
     setCanvasEntryStep('canvas');
@@ -5519,10 +6016,17 @@ export const CanvasV4DevScreen = () => {
       `projectValidationState: ${projectInterpretation.projectValidationState}`,
       `closedContoursCount: ${projectInterpretation.closedContours.length}`,
       `openContoursCount: ${projectInterpretation.openContourSegmentIds.length}`,
+      `topologyNodeCount: ${projectInterpretation.topology.topologyNodeCount}`,
+      `topologyEdgeCount: ${projectInterpretation.topology.topologyEdgeCount}`,
+      `detectedFaceCount: ${projectInterpretation.topology.detectedFaceCount}`,
+      `outerFaceId: ${projectInterpretation.topology.outerFaceId ?? 'null'}`,
       `detectedRoomCount: ${projectRooms.length}`,
       `totalProjectArea: ${formatRoomArea(projectInterpretation.totalProjectArea)}`,
       `orphanSegmentsCount: ${projectInterpretation.orphanSegmentIds.length}`,
       `orphanSegmentCount: ${projectInterpretation.orphanSegmentIds.length}`,
+      `invalidDoorCount: ${projectInterpretation.topology.invalidDoorCount}`,
+      `invalidWindowCount: ${projectInterpretation.topology.invalidWindowCount}`,
+      `roomSplitMode: ${projectInterpretation.topology.roomSplitMode}`,
       `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
       `roomCount: ${projectRooms.length}`,
       `selectedRoomId: ${selectedRoom?.roomId ?? 'null'}`,
@@ -5530,6 +6034,7 @@ export const CanvasV4DevScreen = () => {
       `selectedRoomSegmentsCount: ${selectedRoom?.roomSegments.length ?? 0}`,
       `topologyWarnings: ${projectTopologyWarnings.length}`,
       `topologyBuildTime: ${projectInterpretation.topologyBuildTimeMs} ms`,
+      `topologyBuildTimeMs: ${projectInterpretation.topologyBuildTimeMs}`,
       `roomDetectionState: ${projectInterpretation.roomDetectionState}`,
       `lastValidationError: ${lastValidationError ?? projectInterpretation.lastValidationError ?? 'null'}`,
       `projectContoursCount: ${projectContours.length}`,
@@ -6027,6 +6532,9 @@ export const CanvasV4DevScreen = () => {
                     <View style={styles.projectDataRoomNameBlock}>
                       <Text style={styles.projectDataRoomName}>{room.displayName || `Помещение ${index + 1}`}</Text>
                       <Text style={styles.projectDataRoomMeta}>{formatRoomPerimeter(room.perimeter)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.</Text>
+                      {room.warnings.length > 0 ? (
+                        <Text style={styles.projectDataRoomWarning}>{room.warnings.map((warning) => warning.message).join(', ')}</Text>
+                      ) : null}
                     </View>
                     <Text style={styles.projectDataRoomArea}>{formatRoomArea(room.area)}</Text>
                   </Pressable>
@@ -6319,6 +6827,7 @@ export const CanvasV4DevScreen = () => {
                 };
               });
               const isSelected = selectedDoorId === door.doorId;
+              const isInvalid = invalidDoorIds.has(door.doorId);
 
               return (
                 <React.Fragment key={door.doorId}>
@@ -6326,6 +6835,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.doorWallBreakOverlay,
+                      isInvalid ? styles.openingElementInvalid : null,
                       {
                         width: widthPx,
                         left: screenCenter.x - halfWidthPx,
@@ -6338,6 +6848,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.doorLeafLine,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.doorElementSelected : null,
                       {
                         width: leafPx,
@@ -6353,6 +6864,7 @@ export const CanvasV4DevScreen = () => {
                       pointerEvents="none"
                       style={[
                         styles.doorSwingArcSegment,
+                        isInvalid ? styles.openingElementInvalid : null,
                         isSelected ? styles.doorElementSelected : null,
                         {
                           width: Math.max(arcSegment.length, 1),
@@ -6367,6 +6879,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.doorHingeMarker,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.doorHingeMarkerSelected : null,
                       { left: hingePoint.x - 4, top: hingePoint.y - 4 },
                     ]}
@@ -6390,6 +6903,7 @@ export const CanvasV4DevScreen = () => {
               const symbolOffsetPx = 5;
               const glassOffsetPx = 2;
               const isSelected = selectedWindowId === window.windowId;
+              const isInvalid = invalidWindowIds.has(window.windowId);
 
               return (
                 <React.Fragment key={window.windowId}>
@@ -6397,6 +6911,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.windowOverlayLine,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.windowElementSelected : null,
                       {
                         width: widthPx,
@@ -6410,6 +6925,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.windowGlassLine,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.windowElementSelected : null,
                       {
                         width: widthPx,
@@ -6423,6 +6939,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.windowGlassLine,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.windowElementSelected : null,
                       {
                         width: widthPx,
@@ -6436,6 +6953,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.windowEndCap,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.windowElementSelected : null,
                       {
                         left: screenCenter.x - halfWidthPx - 1,
@@ -6448,6 +6966,7 @@ export const CanvasV4DevScreen = () => {
                     pointerEvents="none"
                     style={[
                       styles.windowEndCap,
+                      isInvalid ? styles.openingElementInvalid : null,
                       isSelected ? styles.windowElementSelected : null,
                       {
                         left: screenCenter.x + halfWidthPx - 1,
@@ -7224,6 +7743,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
+  projectDataRoomWarning: {
+    color: '#92400E',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '800',
+  },
   projectDataRoomArea: {
     color: '#0F172A',
     fontSize: 12,
@@ -7464,6 +7989,10 @@ const styles = StyleSheet.create({
   doorElementSelected: {
     backgroundColor: '#2563EB',
     borderColor: '#2563EB',
+  },
+  openingElementInvalid: {
+    backgroundColor: '#92400E',
+    borderColor: '#92400E',
   },
   doorHingeMarker: {
     position: 'absolute',
