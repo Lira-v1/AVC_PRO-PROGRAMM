@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import type { DimensionValue } from 'react-native';
+import type { DimensionValue, GestureResponderEvent } from 'react-native';
 import { AppHeader } from '../../components/AppHeader';
 
 type Point = {
@@ -33,6 +33,9 @@ type RoomStatus = 'detected';
 type WallRole = 'external' | 'internal' | 'shared';
 type RoomSplitMode = 'none' | 'single-room' | 'multi-room';
 type SurfaceDirection = 'north' | 'south' | 'east' | 'west' | 'northeast' | 'northwest' | 'southeast' | 'southwest';
+type EngineeringObjectType = 'socket' | 'switch' | 'light';
+type EngineeringObjectCategory = 'electrical' | 'lighting';
+type EngineeringObjectPlacementMode = EngineeringObjectType | 'none';
 type CanvasV4RoomType =
   | 'kitchen'
   | 'living_room'
@@ -434,6 +437,30 @@ type CanvasV4WallUnwrapGraph = {
   wallSequenceCount: number;
 };
 
+type EngineeringObject = {
+  objectId: string;
+  objectType: EngineeringObjectType;
+  category: EngineeringObjectCategory;
+  roomId: string;
+  wallPlaneId: string;
+  localX: number;
+  localY: number;
+  width: number;
+  height: number;
+  rotation: number;
+  metadata: Record<string, string | number | boolean | null>;
+};
+
+type EngineeringObjectGraph = {
+  objects: EngineeringObject[];
+  objectCount: number;
+  objectsByRoom: Record<string, EngineeringObject[]>;
+  objectsByWallPlane: Record<string, EngineeringObject[]>;
+  socketCount: number;
+  switchCount: number;
+  lightCount: number;
+};
+
 type CanvasV4ConnectionGraph = {
   doorConnections: CanvasV4DoorConnection[];
   windowConnections: CanvasV4WindowConnection[];
@@ -706,6 +733,14 @@ const DEFAULT_DOOR_HEIGHT_MM = 2100;
 const DEFAULT_WINDOW_WIDTH_MM = 1200;
 const DEFAULT_WINDOW_HEIGHT_MM = 1400;
 const DEFAULT_WINDOW_BOTTOM_OFFSET_MM = 900;
+const DEFAULT_SOCKET_SIZE_MM = 80;
+const DEFAULT_SWITCH_SIZE_MM = 80;
+const DEFAULT_LIGHT_SIZE_MM = 120;
+const DEFAULT_SOCKET_LOCAL_Y_MM = 300;
+const DEFAULT_SWITCH_LOCAL_Y_MM = 900;
+const DEFAULT_LIGHT_CEILING_GAP_MM = 180;
+const ENGINEERING_OBJECT_MOVE_STEP_MM = 100;
+const ENGINEERING_OBJECT_OPENING_CLEARANCE_MM = 40;
 const MIN_WINDOW_WIDTH_MM = 100;
 const MIN_ROOM_AREA_MM2 = 500000;
 const ROOM_AREA_PRECISION = 2;
@@ -741,6 +776,13 @@ const APARTMENT_TEMPLATE_CARDS: ApartmentTemplateCard[] = [
   { id: 'two-room', title: '2-комнатная', areaLabel: '45-65 м²', roomsLabel: 'зал, спальня, кухня, санузел, коридор' },
   { id: 'three-room', title: '3-комнатная', areaLabel: '65-90 м²', roomsLabel: 'зал, две спальни, кухня, санузел, прихожая' },
 ];
+const ENGINEERING_OBJECT_DEFAULTS: Record<EngineeringObjectType, { category: EngineeringObjectCategory; width: number; height: number; defaultLocalY: number; label: string; symbol: string }> = {
+  socket: { category: 'electrical', width: DEFAULT_SOCKET_SIZE_MM, height: DEFAULT_SOCKET_SIZE_MM, defaultLocalY: DEFAULT_SOCKET_LOCAL_Y_MM, label: 'Socket', symbol: 'S' },
+  switch: { category: 'electrical', width: DEFAULT_SWITCH_SIZE_MM, height: DEFAULT_SWITCH_SIZE_MM, defaultLocalY: DEFAULT_SWITCH_LOCAL_Y_MM, label: 'Switch', symbol: 'I' },
+  light: { category: 'lighting', width: DEFAULT_LIGHT_SIZE_MM, height: DEFAULT_LIGHT_SIZE_MM, defaultLocalY: DEFAULT_ROOM_HEIGHT_MM - DEFAULT_LIGHT_CEILING_GAP_MM, label: 'Light', symbol: 'L' },
+};
+const ENGINEERING_OBJECT_OPTIONS: EngineeringObjectType[] = ['socket', 'switch', 'light'];
+
 const CANVAS_V4_PLAN_VIEW_STATE: CanvasV4ViewState = {
   currentViewMode: 'plan',
   showRoomLabels: true,
@@ -4335,6 +4377,99 @@ const createCanvasV4WallUnwrapGraph = (
   };
 };
 
+const createEngineeringObjectGraph = (objects: EngineeringObject[]): EngineeringObjectGraph => {
+  const objectsByRoom: Record<string, EngineeringObject[]> = {};
+  const objectsByWallPlane: Record<string, EngineeringObject[]> = {};
+
+  objects.forEach((object) => {
+    objectsByRoom[object.roomId] = [...(objectsByRoom[object.roomId] ?? []), object];
+    objectsByWallPlane[object.wallPlaneId] = [...(objectsByWallPlane[object.wallPlaneId] ?? []), object];
+  });
+
+  return {
+    objects: objects.map((object) => ({ ...object, metadata: { ...object.metadata } })),
+    objectCount: objects.length,
+    objectsByRoom,
+    objectsByWallPlane,
+    socketCount: objects.filter((object) => object.objectType === 'socket').length,
+    switchCount: objects.filter((object) => object.objectType === 'switch').length,
+    lightCount: objects.filter((object) => object.objectType === 'light').length,
+  };
+};
+
+const getEngineeringObjectRect = (object: Pick<EngineeringObject, 'localX' | 'localY' | 'width' | 'height'>) => ({
+  left: object.localX - object.width / 2,
+  right: object.localX + object.width / 2,
+  bottom: object.localY - object.height / 2,
+  top: object.localY + object.height / 2,
+});
+
+const getProjectedOpeningRect = (opening: ProjectedOpening, clearance = 0) => ({
+  left: opening.localX - opening.width / 2 - clearance,
+  right: opening.localX + opening.width / 2 + clearance,
+  bottom: opening.sillHeight - clearance,
+  top: opening.sillHeight + opening.height + clearance,
+});
+
+const wallPlaneRectsOverlap = (
+  first: { left: number; right: number; bottom: number; top: number },
+  second: { left: number; right: number; bottom: number; top: number },
+) => first.left < second.right && first.right > second.left && first.bottom < second.top && first.top > second.bottom;
+
+const isEngineeringObjectInsideWallPlane = (object: EngineeringObject, wallPlane: WallPlane) => {
+  const rect = getEngineeringObjectRect(object);
+
+  return rect.left >= 0 && rect.right <= wallPlane.width && rect.bottom >= 0 && rect.top <= wallPlane.height;
+};
+
+const hasEngineeringObjectOpeningCollision = (object: EngineeringObject, wallPlane: WallPlane) => {
+  const objectRect = getEngineeringObjectRect(object);
+
+  return wallPlane.projectedOpenings.some((opening) => wallPlaneRectsOverlap(
+    objectRect,
+    getProjectedOpeningRect(opening, ENGINEERING_OBJECT_OPENING_CLEARANCE_MM),
+  ));
+};
+
+const constrainEngineeringObjectToWallPlane = (
+  object: EngineeringObject,
+  wallPlane: WallPlane,
+  fallbackObject?: EngineeringObject,
+) => {
+  const clampCandidate = (candidate: EngineeringObject): EngineeringObject => ({
+    ...candidate,
+    localX: clampToRange(candidate.localX, candidate.width / 2, Math.max(candidate.width / 2, wallPlane.width - candidate.width / 2)),
+    localY: clampToRange(candidate.localY, candidate.height / 2, Math.max(candidate.height / 2, wallPlane.height - candidate.height / 2)),
+  });
+  const baseCandidate = clampCandidate(object);
+  const candidates: EngineeringObject[] = [baseCandidate];
+
+  wallPlane.projectedOpenings.forEach((opening) => {
+    const openingRect = getProjectedOpeningRect(opening, ENGINEERING_OBJECT_OPENING_CLEARANCE_MM);
+
+    candidates.push(
+      clampCandidate({ ...baseCandidate, localX: openingRect.left - baseCandidate.width / 2 }),
+      clampCandidate({ ...baseCandidate, localX: openingRect.right + baseCandidate.width / 2 }),
+      clampCandidate({ ...baseCandidate, localY: openingRect.bottom - baseCandidate.height / 2 }),
+      clampCandidate({ ...baseCandidate, localY: openingRect.top + baseCandidate.height / 2 }),
+    );
+  });
+
+  const validCandidates = candidates.filter((candidate) => (
+    isEngineeringObjectInsideWallPlane(candidate, wallPlane) &&
+    !hasEngineeringObjectOpeningCollision(candidate, wallPlane)
+  ));
+
+  if (validCandidates.length === 0) {
+    return fallbackObject ?? null;
+  }
+
+  return validCandidates.sort((first, second) => (
+    Math.hypot(first.localX - object.localX, first.localY - object.localY) -
+    Math.hypot(second.localX - object.localX, second.localY - object.localY)
+  ))[0];
+};
+
 const validateOpeningPosition = (
   opening: { id: string; segmentId: string; positionOnSegment: number; width: number; kind: 'door' | 'window' },
   segment: CanvasV4LineEntity | undefined,
@@ -5347,6 +5482,10 @@ export const CanvasV4DevScreen = () => {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [insideViewRoomId, setInsideViewRoomId] = useState<string | null>(null);
   const [insideViewWallPlaneId, setInsideViewWallPlaneId] = useState<string | null>(null);
+  const [engineeringObjects, setEngineeringObjects] = useState<EngineeringObject[]>([]);
+  const [selectedEngineeringObjectId, setSelectedEngineeringObjectId] = useState<string | null>(null);
+  const [objectPlacementMode, setObjectPlacementMode] = useState<EngineeringObjectPlacementMode>('none');
+  const [insideWallPreviewSize, setInsideWallPreviewSize] = useState({ width: 1, height: 1 });
   const [viewState, setViewState] = useState<CanvasV4ViewState>(() => getDefaultCanvasV4ViewState('plan'));
   const [roomTypeAssignments, setRoomTypeAssignments] = useState<Record<string, CanvasV4RoomType>>({});
   const [customRoomNames, setCustomRoomNames] = useState<Record<string, string>>({});
@@ -5503,6 +5642,9 @@ export const CanvasV4DevScreen = () => {
     setProjectValidationMessage(null);
     setLastValidationError(null);
     setSelectedRoomId(null);
+    setEngineeringObjects([]);
+    setSelectedEngineeringObjectId(null);
+    setObjectPlacementMode('none');
     setLastActionType('CREATE_PROJECT_ROOM_DETECTION_V1');
     setLineStartPoint(null);
     setPolylineLastPoint(null);
@@ -5603,6 +5745,11 @@ export const CanvasV4DevScreen = () => {
     setSelectedDoorId(null);
     setSelectedWindowId(null);
     setSelectedRoomId(null);
+    setInsideViewRoomId(null);
+    setInsideViewWallPlaneId(null);
+    setEngineeringObjects([]);
+    setSelectedEngineeringObjectId(null);
+    setObjectPlacementMode('none');
     setViewState(getDefaultCanvasV4ViewState('plan'));
     setRoomTypeAssignments({});
     setCustomRoomNames({});
@@ -5642,6 +5789,11 @@ export const CanvasV4DevScreen = () => {
     setSelectedDoorId(null);
     setSelectedWindowId(null);
     setSelectedRoomId(null);
+    setInsideViewRoomId(null);
+    setInsideViewWallPlaneId(null);
+    setEngineeringObjects([]);
+    setSelectedEngineeringObjectId(null);
+    setObjectPlacementMode('none');
     setWindowWidthInput(String(DEFAULT_WINDOW_WIDTH_MM));
     setCameraZoom(DEFAULT_ZOOM);
     setPan({ x: 0, y: 0 });
@@ -6300,6 +6452,10 @@ export const CanvasV4DevScreen = () => {
     () => projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries.find((summary) => summary.roomId === selectedRoomId) ?? null,
     [projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries, selectedRoomId],
   );
+  const wallPlaneById = useMemo(
+    () => new Map(projectInterpretation.topology.wallUnwrapGraph.wallPlanes.map((wallPlane) => [wallPlane.wallPlaneId, wallPlane])),
+    [projectInterpretation.topology.wallUnwrapGraph.wallPlanes],
+  );
   const wallPlanesByRoomId = useMemo(() => {
     const groups = new Map<string, WallPlane[]>();
 
@@ -6329,6 +6485,105 @@ export const CanvasV4DevScreen = () => {
     () => (selectedRoomId ? wallPlanesByRoomId.get(selectedRoomId) ?? [] : []),
     [selectedRoomId, wallPlanesByRoomId],
   );
+  const engineeringObjectGraph = useMemo(() => createEngineeringObjectGraph(engineeringObjects), [engineeringObjects]);
+  const selectedEngineeringObject = useMemo(
+    () => engineeringObjects.find((object) => object.objectId === selectedEngineeringObjectId) ?? null,
+    [engineeringObjects, selectedEngineeringObjectId],
+  );
+  const selectedEngineeringObjectWallPlane = selectedEngineeringObject
+    ? wallPlaneById.get(selectedEngineeringObject.wallPlaneId) ?? null
+    : null;
+  const selectedInsideWallPlaneObjects = selectedInsideWallPlane
+    ? engineeringObjectGraph.objectsByWallPlane[selectedInsideWallPlane.wallPlaneId] ?? []
+    : [];
+  const createEngineeringObjectOnWallPlane = useCallback((
+    objectType: EngineeringObjectType,
+    wallPlane: WallPlane,
+    localX = wallPlane.width / 2,
+    localY?: number,
+  ) => {
+    const defaults = ENGINEERING_OBJECT_DEFAULTS[objectType];
+    const requestedObject: EngineeringObject = {
+      objectId: `engineering-object-${Date.now()}-${engineeringObjects.length + 1}`,
+      objectType,
+      category: defaults.category,
+      roomId: wallPlane.roomId,
+      wallPlaneId: wallPlane.wallPlaneId,
+      localX,
+      localY: localY ?? (objectType === 'light' ? wallPlane.height - DEFAULT_LIGHT_CEILING_GAP_MM : defaults.defaultLocalY),
+      width: defaults.width,
+      height: defaults.height,
+      rotation: 0,
+      metadata: {
+        variant: 'foundation',
+        placementSystem: 'wall-plane-local',
+        ceilingObject: objectType === 'light',
+      },
+    };
+    const constrainedObject = constrainEngineeringObjectToWallPlane(requestedObject, wallPlane);
+
+    if (!constrainedObject) {
+      setLastActionType('ENGINEERING_OBJECT_PLACEMENT_BLOCKED');
+      return;
+    }
+
+    setEngineeringObjects((current) => [...current, constrainedObject]);
+    setSelectedEngineeringObjectId(constrainedObject.objectId);
+    setObjectPlacementMode('none');
+    setLastActionType(`PLACE_ENGINEERING_OBJECT_${objectType.toUpperCase()}`);
+  }, [engineeringObjects.length]);
+  const moveEngineeringObjectToLocalPoint = useCallback((objectId: string, localX: number, localY: number) => {
+    setEngineeringObjects((current) => current.map((object) => {
+      if (object.objectId !== objectId) {
+        return object;
+      }
+
+      const wallPlane = wallPlaneById.get(object.wallPlaneId);
+
+      if (!wallPlane) {
+        return object;
+      }
+
+      return constrainEngineeringObjectToWallPlane({ ...object, localX, localY }, wallPlane, object) ?? object;
+    }));
+    setLastActionType('MOVE_ENGINEERING_OBJECT');
+  }, [wallPlaneById]);
+  const moveEngineeringObjectByDelta = useCallback((objectId: string, deltaX: number, deltaY: number) => {
+    const object = engineeringObjects.find((candidate) => candidate.objectId === objectId);
+
+    if (!object) {
+      return;
+    }
+
+    moveEngineeringObjectToLocalPoint(objectId, object.localX + deltaX, object.localY + deltaY);
+  }, [engineeringObjects, moveEngineeringObjectToLocalPoint]);
+  const handleInsideWallPreviewPress = useCallback((event: GestureResponderEvent) => {
+    if (!selectedInsideWallPlane) {
+      return;
+    }
+
+    const previewWidth = Math.max(insideWallPreviewSize.width, 1);
+    const previewHeight = Math.max(insideWallPreviewSize.height, 1);
+    const localX = (event.nativeEvent.locationX / previewWidth) * selectedInsideWallPlane.width;
+    const localY = ((previewHeight - event.nativeEvent.locationY) / previewHeight) * selectedInsideWallPlane.height;
+
+    if (objectPlacementMode !== 'none') {
+      createEngineeringObjectOnWallPlane(objectPlacementMode, selectedInsideWallPlane, localX, localY);
+      return;
+    }
+
+    if (selectedEngineeringObject?.wallPlaneId === selectedInsideWallPlane.wallPlaneId) {
+      moveEngineeringObjectToLocalPoint(selectedEngineeringObject.objectId, localX, localY);
+    }
+  }, [
+    createEngineeringObjectOnWallPlane,
+    insideWallPreviewSize.height,
+    insideWallPreviewSize.width,
+    moveEngineeringObjectToLocalPoint,
+    objectPlacementMode,
+    selectedEngineeringObject,
+    selectedInsideWallPlane,
+  ]);
   const roomAssignmentPending = projectCreated && projectRooms.some((room) => !room.roomType);
   const selectedBoundingBox = useMemo(() => getEntitiesBoundingBox(selectedEntities), [selectedEntities]);
   const selectedSegment = selectedEntities.length === 1 ? selectedEntities[0] : null;
@@ -6383,6 +6638,9 @@ export const CanvasV4DevScreen = () => {
     if (!projectCreated) {
       setInsideViewRoomId(null);
       setInsideViewWallPlaneId(null);
+      setEngineeringObjects([]);
+      setSelectedEngineeringObjectId(null);
+      setObjectPlacementMode('none');
       return;
     }
 
@@ -6391,6 +6649,12 @@ export const CanvasV4DevScreen = () => {
       setInsideViewWallPlaneId(null);
     }
   }, [insideViewRoomId, projectCreated, projectRooms]);
+
+  useEffect(() => {
+    if (selectedEngineeringObjectId && !engineeringObjects.some((object) => object.objectId === selectedEngineeringObjectId)) {
+      setSelectedEngineeringObjectId(null);
+    }
+  }, [engineeringObjects, selectedEngineeringObjectId]);
 
   useEffect(() => {
     if (!isInsideViewMode || !projectCreated) {
@@ -6456,6 +6720,14 @@ export const CanvasV4DevScreen = () => {
   }, []);
 
   const deleteSelectedEntities = useCallback(() => {
+    if (selectedEngineeringObjectId) {
+      setEngineeringObjects((current) => current.filter((object) => object.objectId !== selectedEngineeringObjectId));
+      setSelectedEngineeringObjectId(null);
+      setObjectPlacementMode('none');
+      setLastActionType('DELETE_ENGINEERING_OBJECT');
+      return;
+    }
+
     if (selectedDoorId) {
       const doorIndex = doors.findIndex((door) => door.doorId === selectedDoorId);
       const door = doorIndex >= 0 ? doors[doorIndex] : null;
@@ -6529,7 +6801,7 @@ export const CanvasV4DevScreen = () => {
     setSelectedDoorId(null);
     setSelectedWindowId(null);
     setLastSelectedShapeAction(deletedEntities.some(({ entity }) => entity.shapeId) ? 'DELETE_SHAPE_GROUP' : 'null');
-  }, [doors, entities, pushHistoryAction, selectedDoorId, selectedEntityIds, selectedWindowId, shapeGroups, windows]);
+  }, [doors, entities, pushHistoryAction, selectedDoorId, selectedEngineeringObjectId, selectedEntityIds, selectedWindowId, shapeGroups, windows]);
 
   const applyHistoryUndo = useCallback((action: HistoryAction) => {
     if (action.type === 'CREATE_WALL_SEGMENT' || action.type === 'CREATE_POLYLINE_WALL_SEGMENT') {
@@ -7981,6 +8253,13 @@ export const CanvasV4DevScreen = () => {
       `insideViewRoomId: ${insideViewRoomIdResolved ?? 'null'}`,
       `insideViewWallPlaneId: ${selectedInsideWallPlane?.wallPlaneId ?? 'null'}`,
       `wallSequenceCount: ${projectInterpretation.topology.wallSequenceCount}`,
+      `engineeringObjectCount: ${engineeringObjectGraph.objectCount}`,
+      `selectedEngineeringObjectId: ${selectedEngineeringObject?.objectId ?? 'null'}`,
+      `objectPlacementMode: ${objectPlacementMode}`,
+      `selectedWallPlaneId: ${selectedInsideWallPlane?.wallPlaneId ?? selectedEngineeringObjectWallPlane?.wallPlaneId ?? 'null'}`,
+      `socketCount: ${engineeringObjectGraph.socketCount}`,
+      `switchCount: ${engineeringObjectGraph.switchCount}`,
+      `lightCount: ${engineeringObjectGraph.lightCount}`,
       `roomCandidatesCount: ${projectInterpretation.roomCandidates.length}`,
       `roomCount: ${projectRooms.length}`,
       `selectedRoomId: ${selectedRoom?.roomId ?? 'null'}`,
@@ -8134,6 +8413,7 @@ export const CanvasV4DevScreen = () => {
       doors.length,
       windows.length,
       entities.length,
+      engineeringObjectGraph,
       lastActionType,
       lastRedoAction,
       lastUndoAction,
@@ -8191,8 +8471,11 @@ export const CanvasV4DevScreen = () => {
       selectedBoundingBox,
       selectedLineLength,
       selectedDoor,
+      objectPlacementMode,
       selectedRoom,
       selectedInsideWallPlane,
+      selectedEngineeringObject,
+      selectedEngineeringObjectWallPlane,
       selectedWindow,
       selectedEntityIds,
       selectedSegment,
@@ -8212,8 +8495,9 @@ export const CanvasV4DevScreen = () => {
   );
 
   const canvasHeight = Math.max(Math.min(windowHeight * 0.66, 760), 460);
-  const hasSelection = selectedEntityIds.length > 0 || Boolean(selectedDoorId) || Boolean(selectedWindowId);
+  const hasSelection = selectedEntityIds.length > 0 || Boolean(selectedDoorId) || Boolean(selectedWindowId) || Boolean(selectedEngineeringObjectId);
   const toolControlsVisible = !projectCreated || viewState.currentViewMode === 'plan';
+  const activeObjectPlacementLabel = objectPlacementMode === 'none' ? null : ENGINEERING_OBJECT_DEFAULTS[objectPlacementMode].label;
   const drawingTools: Array<{ mode: ToolMode; icon: string; label: string }> = [
     { mode: 'rectangle', icon: '▭', label: 'Rectangle' },
     { mode: 'circle', icon: '○', label: 'Circle' },
@@ -8502,6 +8786,10 @@ export const CanvasV4DevScreen = () => {
                     <Text style={styles.projectDataStatValue}>{projectTopologyWarnings.length}</Text>
                     <Text style={styles.projectDataStatLabel}>warnings</Text>
                   </View>
+                  <View style={styles.projectDataStat}>
+                    <Text style={styles.projectDataStatValue}>{engineeringObjectGraph.objectCount}</Text>
+                    <Text style={styles.projectDataStatLabel}>objects</Text>
+                  </View>
                 </View>
 
                 <Text style={styles.projectDataSectionTitle}>Rooms</Text>
@@ -8518,6 +8806,7 @@ export const CanvasV4DevScreen = () => {
                         <Text style={styles.projectDataRoomMeta}>
                           {(room.roomType ? ROOM_TYPE_LABELS[room.roomType] : 'Тип не назначен')} · {formatRoomArea(room.area)} · {room.doorIds.length} дв. · {room.windowIds.length} ок.
                         </Text>
+                        <Text style={styles.projectDataRoomMeta}>Engineering objects: {engineeringObjectGraph.objectsByRoom[room.roomId]?.length ?? 0}</Text>
                         <Text style={styles.projectDataRoomMeta}>Периметр: {formatRoomPerimeter(room.perimeter)}</Text>
                         <Text style={styles.projectDataRoomMeta}>Высота: 2.70 м</Text>
                         <Text style={styles.projectDataRoomMeta}>Связи: {room.neighborRoomIds.length > 0 ? room.neighborRoomIds.map((roomId) => roomDisplayNameById.get(roomId) ?? roomId).join(', ') : 'нет'}</Text>
@@ -8592,6 +8881,12 @@ export const CanvasV4DevScreen = () => {
                             {wallPlane.wallOrderIndex + 1}. {wallPlane.directionLabel}: {formatLineLength(wallPlane.width)} x {formatLineLength(wallPlane.height)}
                           </Text>
                           <Text style={styles.projectDataRoomMeta}>Projected openings: {wallPlane.projectedOpenings.length}</Text>
+                          <Text style={styles.projectDataRoomMeta}>Placed objects: {engineeringObjectGraph.objectsByWallPlane[wallPlane.wallPlaneId]?.length ?? 0}</Text>
+                          {(engineeringObjectGraph.objectsByWallPlane[wallPlane.wallPlaneId] ?? []).map((object) => (
+                            <Text key={`project-data-object-${object.objectId}`} style={styles.projectDataRoomMeta}>
+                              {ENGINEERING_OBJECT_DEFAULTS[object.objectType].label}: X {formatLineLength(object.localX)}, Y {formatLineLength(object.localY)}
+                            </Text>
+                          ))}
                           <Text style={styles.projectDataRoomMeta}>Local origin: {wallPlane.localOrigin.x.toFixed(0)}, {wallPlane.localOrigin.y.toFixed(0)} мм</Text>
                         </View>
                       )) : (
@@ -8606,8 +8901,12 @@ export const CanvasV4DevScreen = () => {
                 )}
 
                 <Text style={styles.projectDataSectionTitle}>Engineering</Text>
-                <View style={styles.projectDataPlaceholderCard}>
-                  <Text style={styles.projectDataPlaceholderText}>Engineering layers foundation: электрические, сантехнические и route-слои пока не активированы.</Text>
+                <View style={styles.projectDataInfoCard}>
+                  <Text style={styles.projectDataRoomMeta}>Objects: {engineeringObjectGraph.objectCount}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Sockets: {engineeringObjectGraph.socketCount}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Switches: {engineeringObjectGraph.switchCount}</Text>
+                  <Text style={styles.projectDataRoomMeta}>Lights: {engineeringObjectGraph.lightCount}</Text>
+                  <Text style={styles.projectDataPlaceholderText}>Routing, rules and smart automation are not active in this foundation layer.</Text>
                 </View>
               </ScrollView>
             </View>
@@ -8639,6 +8938,7 @@ export const CanvasV4DevScreen = () => {
                           setInsideViewRoomId(room.roomId);
                           setInsideViewWallPlaneId(null);
                           setSelectedRoomId(room.roomId);
+                          setSelectedEngineeringObjectId(null);
                         }}
                         accessibilityLabel={room.displayName}
                       >
@@ -8659,7 +8959,10 @@ export const CanvasV4DevScreen = () => {
                       <Pressable
                         key={wallPlane.wallPlaneId}
                         style={[styles.insideViewChip, isActiveWall ? styles.insideViewChipActive : null]}
-                        onPress={() => setInsideViewWallPlaneId(wallPlane.wallPlaneId)}
+                        onPress={() => {
+                          setInsideViewWallPlaneId(wallPlane.wallPlaneId);
+                          setSelectedEngineeringObjectId(null);
+                        }}
                         accessibilityLabel={wallPlane.directionLabel}
                       >
                         <Text style={[styles.insideViewChipText, isActiveWall ? styles.insideViewChipTextActive : null]}>
@@ -8672,6 +8975,29 @@ export const CanvasV4DevScreen = () => {
                   )}
                 </View>
 
+                <Text style={styles.insideViewSectionTitle}>Object type</Text>
+                <View style={styles.insideViewChipRow}>
+                  {ENGINEERING_OBJECT_OPTIONS.map((objectType) => {
+                    const isActiveObjectType = objectPlacementMode === objectType;
+
+                    return (
+                      <Pressable
+                        key={`engineering-object-type-${objectType}`}
+                        style={[styles.insideViewChip, isActiveObjectType ? styles.insideViewChipActive : null]}
+                        onPress={() => setObjectPlacementMode((current) => (current === objectType ? 'none' : objectType))}
+                        accessibilityLabel={ENGINEERING_OBJECT_DEFAULTS[objectType].label}
+                      >
+                        <Text style={[styles.insideViewChipText, isActiveObjectType ? styles.insideViewChipTextActive : null]}>
+                          {ENGINEERING_OBJECT_DEFAULTS[objectType].label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Text style={styles.insideWallMeta}>
+                  {activeObjectPlacementLabel ? `Tap wall plane to place ${activeObjectPlacementLabel}.` : 'Select an object type, then tap the wall plane.'}
+                </Text>
+
                 {selectedInsideWallPlane ? (
                   <View style={styles.insideWallCard}>
                     <View style={styles.insideWallCardHeader}>
@@ -8680,7 +9006,15 @@ export const CanvasV4DevScreen = () => {
                         {formatLineLength(selectedInsideWallPlane.width)} × {formatLineLength(selectedInsideWallPlane.height)}
                       </Text>
                     </View>
-                    <View style={styles.insideWallPreview}>
+                    <Pressable
+                      style={styles.insideWallPreview}
+                      onLayout={(event) => setInsideWallPreviewSize({
+                        width: Math.max(event.nativeEvent.layout.width, 1),
+                        height: Math.max(event.nativeEvent.layout.height, 1),
+                      })}
+                      onPress={handleInsideWallPreviewPress}
+                      accessibilityLabel="Wall plane placement area"
+                    >
                       {selectedInsideWallPlane.projectedOpenings.map((opening) => {
                         const leftPercent = selectedInsideWallPlane.width > 0
                           ? ((opening.localX - opening.width / 2) / selectedInsideWallPlane.width) * 100
@@ -8711,8 +9045,75 @@ export const CanvasV4DevScreen = () => {
                           />
                         );
                       })}
-                    </View>
+                      {selectedInsideWallPlaneObjects.map((object) => {
+                        const leftPercent = selectedInsideWallPlane.width > 0
+                          ? ((object.localX - object.width / 2) / selectedInsideWallPlane.width) * 100
+                          : 0;
+                        const widthPercent = selectedInsideWallPlane.width > 0
+                          ? (object.width / selectedInsideWallPlane.width) * 100
+                          : 0;
+                        const bottomPercent = selectedInsideWallPlane.height > 0
+                          ? ((object.localY - object.height / 2) / selectedInsideWallPlane.height) * 100
+                          : 0;
+                        const heightPercent = selectedInsideWallPlane.height > 0
+                          ? (object.height / selectedInsideWallPlane.height) * 100
+                          : 0;
+                        const isSelectedObject = selectedEngineeringObjectId === object.objectId;
+
+                        return (
+                          <Pressable
+                            key={`engineering-object-${object.objectId}`}
+                            style={[
+                              styles.engineeringObjectMarker,
+                              object.objectType === 'socket' ? styles.engineeringObjectSocket : null,
+                              object.objectType === 'switch' ? styles.engineeringObjectSwitch : null,
+                              object.objectType === 'light' ? styles.engineeringObjectLight : null,
+                              isSelectedObject ? styles.engineeringObjectMarkerSelected : null,
+                              {
+                                left: formatPercentStyleValue(leftPercent),
+                                width: formatPercentStyleValue(widthPercent),
+                                bottom: formatPercentStyleValue(bottomPercent),
+                                height: formatPercentStyleValue(heightPercent),
+                              },
+                            ]}
+                            onPress={(event) => {
+                              event.stopPropagation();
+                              setSelectedEngineeringObjectId(object.objectId);
+                              setObjectPlacementMode('none');
+                            }}
+                            accessibilityLabel={ENGINEERING_OBJECT_DEFAULTS[object.objectType].label}
+                          >
+                            <Text style={styles.engineeringObjectMarkerText}>{ENGINEERING_OBJECT_DEFAULTS[object.objectType].symbol}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </Pressable>
                     <Text style={styles.insideWallMeta}>Local origin: {selectedInsideWallPlane.localOrigin.x.toFixed(0)}, {selectedInsideWallPlane.localOrigin.y.toFixed(0)} мм</Text>
+                    {selectedEngineeringObject && selectedEngineeringObject.wallPlaneId === selectedInsideWallPlane.wallPlaneId ? (
+                      <View style={styles.engineeringObjectInfoCard}>
+                        <Text style={styles.projectDataSurfaceWallTitle}>{ENGINEERING_OBJECT_DEFAULTS[selectedEngineeringObject.objectType].label}</Text>
+                        <Text style={styles.insideWallMeta}>Height: {formatLineLength(selectedEngineeringObject.localY)}</Text>
+                        <Text style={styles.insideWallMeta}>Left offset: {formatLineLength(Math.max(0, selectedEngineeringObject.localX - selectedEngineeringObject.width / 2))}</Text>
+                        <Text style={styles.insideWallMeta}>Nearest edge: {formatLineLength(Math.min(
+                          Math.max(0, selectedEngineeringObject.localX - selectedEngineeringObject.width / 2),
+                          Math.max(0, selectedInsideWallPlane.width - selectedEngineeringObject.localX - selectedEngineeringObject.width / 2),
+                        ))}</Text>
+                        <View style={styles.engineeringObjectMoveGrid}>
+                          <Pressable style={styles.engineeringObjectMoveButton} onPress={() => moveEngineeringObjectByDelta(selectedEngineeringObject.objectId, -ENGINEERING_OBJECT_MOVE_STEP_MM, 0)}>
+                            <Text style={styles.engineeringObjectMoveButtonText}>Left</Text>
+                          </Pressable>
+                          <Pressable style={styles.engineeringObjectMoveButton} onPress={() => moveEngineeringObjectByDelta(selectedEngineeringObject.objectId, ENGINEERING_OBJECT_MOVE_STEP_MM, 0)}>
+                            <Text style={styles.engineeringObjectMoveButtonText}>Right</Text>
+                          </Pressable>
+                          <Pressable style={styles.engineeringObjectMoveButton} onPress={() => moveEngineeringObjectByDelta(selectedEngineeringObject.objectId, 0, ENGINEERING_OBJECT_MOVE_STEP_MM)}>
+                            <Text style={styles.engineeringObjectMoveButtonText}>Up</Text>
+                          </Pressable>
+                          <Pressable style={styles.engineeringObjectMoveButton} onPress={() => moveEngineeringObjectByDelta(selectedEngineeringObject.objectId, 0, -ENGINEERING_OBJECT_MOVE_STEP_MM)}>
+                            <Text style={styles.engineeringObjectMoveButtonText}>Down</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : null}
                     <View style={styles.insideOpeningList}>
                       {selectedInsideWallPlane.projectedOpenings.length > 0 ? selectedInsideWallPlane.projectedOpenings.map((opening) => (
                         <Text key={`inside-opening-${opening.openingId}`} style={styles.insideWallMeta}>
@@ -10273,6 +10674,66 @@ const styles = StyleSheet.create({
   },
   insideOpeningList: {
     gap: 3,
+  },
+  engineeringObjectMarker: {
+    position: 'absolute',
+    minWidth: 12,
+    minHeight: 12,
+    borderWidth: 1,
+    borderRadius: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  engineeringObjectSocket: {
+    borderColor: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  engineeringObjectSwitch: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#F5F3FF',
+  },
+  engineeringObjectLight: {
+    borderColor: '#CA8A04',
+    backgroundColor: '#FEF9C3',
+    borderRadius: 999,
+  },
+  engineeringObjectMarkerSelected: {
+    borderColor: '#DC2626',
+    borderWidth: 2,
+  },
+  engineeringObjectMarkerText: {
+    color: '#0F172A',
+    fontSize: 8,
+    lineHeight: 10,
+    fontWeight: '900',
+  },
+  engineeringObjectInfoCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    padding: 9,
+    gap: 4,
+  },
+  engineeringObjectMoveGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  engineeringObjectMoveButton: {
+    minHeight: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+  },
+  engineeringObjectMoveButtonText: {
+    color: '#334155',
+    fontSize: 10,
+    fontWeight: '900',
   },
   drawingToolbar: {
     position: 'absolute',
