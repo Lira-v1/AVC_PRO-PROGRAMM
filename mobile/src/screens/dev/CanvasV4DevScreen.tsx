@@ -7,6 +7,7 @@ import {
   angularDistance,
   cloneBoundingBox,
   clonePoint,
+  clampToRange,
   doSegmentsIntersect,
   formatAngle,
   getDistanceToSegment,
@@ -24,6 +25,18 @@ import {
   scaleVector,
 } from './canvas-v4/canvasV4Geometry';
 import type { Point } from './canvas-v4/canvasV4Geometry';
+import { createCanvasV4SurfaceGraph } from './canvas-v4/canvasV4Surface';
+import type { CanvasV4SurfaceGraph as CanvasV4SurfaceGraphBase } from './canvas-v4/canvasV4Surface';
+import { createCanvasV4WallUnwrapGraph } from './canvas-v4/canvasV4WallUnwrap';
+import type { CanvasV4WallUnwrapGraph, WallPlane } from './canvas-v4/canvasV4WallUnwrap';
+import {
+  DEFAULT_LIGHT_CEILING_GAP_MM,
+  ENGINEERING_OBJECT_OPTIONS,
+  constrainEngineeringObjectToWallPlane,
+  createEngineeringObjectDefaults,
+  createEngineeringObjectGraph,
+} from './canvas-v4/canvasV4EngineeringObjects';
+import type { EngineeringObject, EngineeringObjectPlacementMode, EngineeringObjectType } from './canvas-v4/canvasV4EngineeringObjects';
 
 type ShapeToolMode = 'rectangle' | 'circle';
 type ShapeType = ShapeToolMode;
@@ -49,10 +62,6 @@ type RoomDetectionState = 'idle' | 'blocked' | 'detected';
 type RoomStatus = 'detected';
 type WallRole = 'external' | 'internal' | 'shared';
 type RoomSplitMode = 'none' | 'single-room' | 'multi-room';
-type SurfaceDirection = 'north' | 'south' | 'east' | 'west' | 'northeast' | 'northwest' | 'southeast' | 'southwest';
-type EngineeringObjectType = 'socket' | 'switch' | 'light';
-type EngineeringObjectCategory = 'electrical' | 'lighting';
-type EngineeringObjectPlacementMode = EngineeringObjectType | 'none';
 type CanvasV4RoomType =
   | 'kitchen'
   | 'living_room'
@@ -71,6 +80,7 @@ type CanvasV4RoomType =
   | 'server_room'
   | 'technical_room'
   | 'other';
+type CanvasV4SurfaceGraph = CanvasV4SurfaceGraphBase<CanvasV4RoomType>;
 type TopologyWarningSeverity = 'warning' | 'error';
 type TopologyWarningCode =
   | 'room-without-door'
@@ -364,120 +374,6 @@ type CanvasV4WindowConnection = {
   externalOnly: boolean;
 };
 
-type OpeningSurfaceRef = {
-  openingId: string;
-  type: 'door' | 'window';
-  segmentId: string;
-  topologyEdgeId: string;
-  positionOnSegment: number;
-  width: number;
-  height: number;
-  sillHeight: number;
-  area: number;
-};
-
-type WallSurface = {
-  surfaceId: string;
-  roomId: string;
-  topologyEdgeId: string;
-  wallSegmentIds: string[];
-  direction: SurfaceDirection;
-  directionLabel: string;
-  length: number;
-  height: number;
-  grossArea: number;
-  doorArea: number;
-  windowArea: number;
-  openingsArea: number;
-  netArea: number;
-  openings: OpeningSurfaceRef[];
-};
-
-type RoomSurfaceSummary = {
-  roomId: string;
-  roomName: string;
-  roomType?: CanvasV4RoomType;
-  floorArea: number;
-  ceilingArea: number;
-  perimeterGross: number;
-  perimeterNet: number;
-  wallSurfaces: WallSurface[];
-};
-
-type CanvasV4SurfaceGraph = {
-  roomSurfaceSummaries: RoomSurfaceSummary[];
-  warnings: CanvasV4TopologyWarning[];
-  defaultRoomHeightMm: number;
-  totalFloorArea: number;
-  totalCeilingArea: number;
-  totalGrossWallArea: number;
-  totalNetWallArea: number;
-  wallSurfaceCount: number;
-};
-
-type ProjectedOpening = {
-  openingId: string;
-  type: 'door' | 'window';
-  localX: number;
-  width: number;
-  height: number;
-  sillHeight: number;
-  topOffset: number;
-};
-
-type WallPlane = {
-  wallPlaneId: string;
-  roomId: string;
-  wallSurfaceId: string;
-  direction: SurfaceDirection;
-  directionLabel: string;
-  width: number;
-  height: number;
-  localOrigin: Point;
-  openings: OpeningSurfaceRef[];
-  projectedOpenings: ProjectedOpening[];
-  wallOrderIndex: number;
-};
-
-type RoomWallSequence = {
-  roomId: string;
-  wallPlaneIds: string[];
-  wallSurfaceIds: string[];
-  directions: SurfaceDirection[];
-};
-
-type CanvasV4WallUnwrapGraph = {
-  roomWallSequences: RoomWallSequence[];
-  wallPlanes: WallPlane[];
-  projectedOpeningCount: number;
-  wallPlaneCount: number;
-  wallSequenceCount: number;
-};
-
-type EngineeringObject = {
-  objectId: string;
-  objectType: EngineeringObjectType;
-  category: EngineeringObjectCategory;
-  roomId: string;
-  wallPlaneId: string;
-  localX: number;
-  localY: number;
-  width: number;
-  height: number;
-  rotation: number;
-  metadata: Record<string, string | number | boolean | null>;
-};
-
-type EngineeringObjectGraph = {
-  objects: EngineeringObject[];
-  objectCount: number;
-  objectsByRoom: Record<string, EngineeringObject[]>;
-  objectsByWallPlane: Record<string, EngineeringObject[]>;
-  socketCount: number;
-  switchCount: number;
-  lightCount: number;
-};
-
 type CanvasV4ConnectionGraph = {
   doorConnections: CanvasV4DoorConnection[];
   windowConnections: CanvasV4WindowConnection[];
@@ -750,14 +646,7 @@ const DEFAULT_DOOR_HEIGHT_MM = 2100;
 const DEFAULT_WINDOW_WIDTH_MM = 1200;
 const DEFAULT_WINDOW_HEIGHT_MM = 1400;
 const DEFAULT_WINDOW_BOTTOM_OFFSET_MM = 900;
-const DEFAULT_SOCKET_SIZE_MM = 80;
-const DEFAULT_SWITCH_SIZE_MM = 80;
-const DEFAULT_LIGHT_SIZE_MM = 120;
-const DEFAULT_SOCKET_LOCAL_Y_MM = 300;
-const DEFAULT_SWITCH_LOCAL_Y_MM = 900;
-const DEFAULT_LIGHT_CEILING_GAP_MM = 180;
 const ENGINEERING_OBJECT_MOVE_STEP_MM = 100;
-const ENGINEERING_OBJECT_OPENING_CLEARANCE_MM = 40;
 const MIN_WINDOW_WIDTH_MM = 100;
 const MIN_ROOM_AREA_MM2 = 500000;
 const ROOM_AREA_PRECISION = 2;
@@ -793,12 +682,7 @@ const APARTMENT_TEMPLATE_CARDS: ApartmentTemplateCard[] = [
   { id: 'two-room', title: '2-комнатная', areaLabel: '45-65 м²', roomsLabel: 'зал, спальня, кухня, санузел, коридор' },
   { id: 'three-room', title: '3-комнатная', areaLabel: '65-90 м²', roomsLabel: 'зал, две спальни, кухня, санузел, прихожая' },
 ];
-const ENGINEERING_OBJECT_DEFAULTS: Record<EngineeringObjectType, { category: EngineeringObjectCategory; width: number; height: number; defaultLocalY: number; label: string; symbol: string }> = {
-  socket: { category: 'electrical', width: DEFAULT_SOCKET_SIZE_MM, height: DEFAULT_SOCKET_SIZE_MM, defaultLocalY: DEFAULT_SOCKET_LOCAL_Y_MM, label: 'Socket', symbol: 'S' },
-  switch: { category: 'electrical', width: DEFAULT_SWITCH_SIZE_MM, height: DEFAULT_SWITCH_SIZE_MM, defaultLocalY: DEFAULT_SWITCH_LOCAL_Y_MM, label: 'Switch', symbol: 'I' },
-  light: { category: 'lighting', width: DEFAULT_LIGHT_SIZE_MM, height: DEFAULT_LIGHT_SIZE_MM, defaultLocalY: DEFAULT_ROOM_HEIGHT_MM - DEFAULT_LIGHT_CEILING_GAP_MM, label: 'Light', symbol: 'L' },
-};
-const ENGINEERING_OBJECT_OPTIONS: EngineeringObjectType[] = ['socket', 'switch', 'light'];
+const ENGINEERING_OBJECT_DEFAULTS = createEngineeringObjectDefaults(DEFAULT_ROOM_HEIGHT_MM);
 
 const CANVAS_V4_PLAN_VIEW_STATE: CanvasV4ViewState = {
   currentViewMode: 'plan',
@@ -3929,359 +3813,7 @@ const createWarning = (
   openingId: details.openingId,
 });
 
-const SURFACE_DIRECTION_LABELS: Record<SurfaceDirection, string> = {
-  north: 'Северная стена',
-  south: 'Южная стена',
-  east: 'Восточная стена',
-  west: 'Западная стена',
-  northeast: 'Северо-восточная стена',
-  northwest: 'Северо-западная стена',
-  southeast: 'Юго-восточная стена',
-  southwest: 'Юго-западная стена',
-};
-
-const getSurfaceDirectionFromRoomVector = (vector: Point, compassRotationDeg = 0): SurfaceDirection => {
-  if (Math.abs(vector.x) < 0.000001 && Math.abs(vector.y) < 0.000001) {
-    return 'north';
-  }
-
-  const screenAngle = normalizeAngle((Math.atan2(vector.y, vector.x) * 180) / Math.PI - compassRotationDeg);
-  const directionsByAngle: SurfaceDirection[] = ['east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north', 'northeast'];
-  const directionIndex = Math.round(screenAngle / 45) % directionsByAngle.length;
-
-  return directionsByAngle[directionIndex];
-};
-
-const clampToRange = (value: number, min: number, max: number) => {
-  if (max <= min) {
-    return min;
-  }
-
-  return Math.max(min, Math.min(max, value));
-};
-
 const formatPercentStyleValue = (value: number): DimensionValue => `${clampToRange(value, 0, 100).toFixed(3)}%` as DimensionValue;
-
-const getOpeningLocalXOnTopologyEdge = (opening: OpeningSurfaceRef, edge: CanvasV4PlanarEdge) => {
-  const edgeOffsets = edge.sourceOffsetsBySegmentId[opening.segmentId];
-  const topologyStartOffset = edgeOffsets?.startOffset ?? edge.startOffset ?? 0;
-  const rawLocalX = opening.positionOnSegment - topologyStartOffset;
-  const minimumLocalX = Math.min(opening.width / 2, edge.length / 2);
-  const maximumLocalX = Math.max(minimumLocalX, edge.length - minimumLocalX);
-
-  if (!Number.isFinite(rawLocalX)) {
-    return edge.length / 2;
-  }
-
-  return clampToRange(rawLocalX, minimumLocalX, maximumLocalX);
-};
-
-const createProjectedOpening = (opening: OpeningSurfaceRef, edge: CanvasV4PlanarEdge, wallHeight: number): ProjectedOpening => {
-  const sillHeight = opening.type === 'window' ? opening.sillHeight : 0;
-  const localX = getOpeningLocalXOnTopologyEdge(opening, edge);
-  const topOffset = Math.max(0, wallHeight - sillHeight - opening.height);
-
-  return {
-    openingId: opening.openingId,
-    type: opening.type,
-    localX,
-    width: Math.min(opening.width, edge.length),
-    height: opening.height,
-    sillHeight,
-    topOffset,
-  };
-};
-
-const createOpeningSurfaceRef = (
-  opening: CanvasV4Door | CanvasV4Window,
-  type: 'door' | 'window',
-  topologyEdgeId: string,
-): OpeningSurfaceRef => {
-  const height = type === 'door' ? DEFAULT_DOOR_HEIGHT_MM : ('height' in opening ? opening.height : DEFAULT_WINDOW_HEIGHT_MM);
-  const sillHeight = type === 'window' && 'bottomOffset' in opening ? opening.bottomOffset : 0;
-
-  return {
-    openingId: type === 'door' ? (opening as CanvasV4Door).doorId : (opening as CanvasV4Window).windowId,
-    type,
-    segmentId: opening.segmentId,
-    topologyEdgeId,
-    positionOnSegment: opening.positionOnSegment,
-    width: opening.width,
-    height,
-    sillHeight,
-    area: opening.width * height,
-  };
-};
-
-const createCanvasV4SurfaceGraph = (
-  rooms: CanvasV4RoomEntity[],
-  doors: CanvasV4Door[],
-  windows: CanvasV4Window[],
-  planarGraph: CanvasV4PlanarGraph,
-  connectionGraph: CanvasV4ConnectionGraph,
-  defaultRoomHeightMm = DEFAULT_ROOM_HEIGHT_MM,
-): CanvasV4SurfaceGraph => {
-  const topologyEdgeById = new Map(planarGraph.edges.map((edge) => [edge.edgeId, edge]));
-  const doorById = new Map(doors.map((door) => [door.doorId, door]));
-  const windowById = new Map(windows.map((window) => [window.windowId, window]));
-  const doorConnectionsByTopologyEdgeId = new Map<string, CanvasV4DoorConnection[]>();
-  const windowConnectionsByTopologyEdgeId = new Map<string, CanvasV4WindowConnection[]>();
-  const warnings: CanvasV4TopologyWarning[] = [];
-
-  connectionGraph.doorConnections.forEach((connection) => {
-    if (!connection.topologyEdgeId) {
-      warnings.push(createWarning('opening-without-wall-surface', 'Дверь не привязана к поверхности стены', { openingId: connection.doorId, segmentId: connection.segmentId }));
-      return;
-    }
-
-    doorConnectionsByTopologyEdgeId.set(connection.topologyEdgeId, [...(doorConnectionsByTopologyEdgeId.get(connection.topologyEdgeId) ?? []), connection]);
-  });
-
-  connectionGraph.windowConnections.forEach((connection) => {
-    if (!connection.topologyEdgeId) {
-      warnings.push(createWarning('opening-without-wall-surface', 'Окно не привязано к поверхности стены', { openingId: connection.windowId, segmentId: connection.segmentId }));
-      return;
-    }
-
-    windowConnectionsByTopologyEdgeId.set(connection.topologyEdgeId, [...(windowConnectionsByTopologyEdgeId.get(connection.topologyEdgeId) ?? []), connection]);
-  });
-
-  if (doors.length > 0) {
-    warnings.push(createWarning('missing-opening-height-default-used', 'Для дверей используется высота по умолчанию: 2.10 м'));
-  }
-
-  const roomSurfaceSummaries = rooms.map<RoomSurfaceSummary>((room) => {
-    const wallSurfaces = room.topologyEdgeIds
-      .map((topologyEdgeId) => {
-        const edge = topologyEdgeById.get(topologyEdgeId);
-
-        if (!edge) {
-          warnings.push(createWarning('wall-surface-without-room', 'Поверхность стены не найдена для помещения', { roomId: room.roomId }));
-          return null;
-        }
-
-        const midpoint = {
-          x: (edge.startPoint.x + edge.endPoint.x) / 2,
-          y: (edge.startPoint.y + edge.endPoint.y) / 2,
-        };
-        const direction = getSurfaceDirectionFromRoomVector({
-          x: midpoint.x - room.center.x,
-          y: midpoint.y - room.center.y,
-        });
-        const doorOpenings = (doorConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
-          .filter((connection) => connection.roomIds.includes(room.roomId))
-          .map((connection) => doorById.get(connection.doorId))
-          .filter((door): door is CanvasV4Door => Boolean(door))
-          .map((door) => createOpeningSurfaceRef(door, 'door', edge.edgeId));
-        const windowOpenings = (windowConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
-          .filter((connection) => connection.roomIds.includes(room.roomId))
-          .map((connection) => windowById.get(connection.windowId))
-          .filter((window): window is CanvasV4Window => Boolean(window))
-          .map((window) => createOpeningSurfaceRef(window, 'window', edge.edgeId));
-        const openings = [...doorOpenings, ...windowOpenings];
-        const doorArea = doorOpenings.reduce((sum, opening) => sum + opening.area, 0);
-        const windowArea = windowOpenings.reduce((sum, opening) => sum + opening.area, 0);
-        const openingsArea = doorArea + windowArea;
-        const grossArea = edge.length * defaultRoomHeightMm;
-        const rawNetArea = grossArea - openingsArea;
-        const netArea = Math.max(0, rawNetArea);
-
-        if (rawNetArea < 0) {
-          warnings.push(createWarning('negative-net-area-corrected', 'Чистая площадь стены скорректирована до 0', { roomId: room.roomId, segmentId: edge.segmentId }));
-        }
-
-        return {
-          surfaceId: `surface-${room.roomId}-${edge.edgeId}`,
-          roomId: room.roomId,
-          topologyEdgeId: edge.edgeId,
-          wallSegmentIds: [...edge.sourceSegmentIds],
-          direction,
-          directionLabel: SURFACE_DIRECTION_LABELS[direction],
-          length: edge.length,
-          height: defaultRoomHeightMm,
-          grossArea,
-          doorArea,
-          windowArea,
-          openingsArea,
-          netArea,
-          openings,
-        };
-      })
-      .filter((surface): surface is WallSurface => Boolean(surface));
-    const perimeterNet = Math.max(0, room.perimeter - wallSurfaces.reduce((sum, surface) => (
-      sum + surface.openings.reduce((openingSum, opening) => openingSum + opening.width, 0)
-    ), 0));
-
-    return {
-      roomId: room.roomId,
-      roomName: room.displayName,
-      roomType: room.roomType,
-      floorArea: room.area,
-      ceilingArea: room.area,
-      perimeterGross: room.perimeter,
-      perimeterNet,
-      wallSurfaces,
-    };
-  });
-
-  const uniqueWarnings = Array.from(new Map(warnings.map((warning) => [warning.id, warning])).values());
-
-  return {
-    roomSurfaceSummaries,
-    warnings: uniqueWarnings,
-    defaultRoomHeightMm,
-    totalFloorArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.floorArea, 0),
-    totalCeilingArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.ceilingArea, 0),
-    totalGrossWallArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.reduce((wallSum, surface) => wallSum + surface.grossArea, 0), 0),
-    totalNetWallArea: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.reduce((wallSum, surface) => wallSum + surface.netArea, 0), 0),
-    wallSurfaceCount: roomSurfaceSummaries.reduce((sum, summary) => sum + summary.wallSurfaces.length, 0),
-  };
-};
-
-const createCanvasV4WallUnwrapGraph = (
-  surfaceGraph: CanvasV4SurfaceGraph,
-  planarGraph: CanvasV4PlanarGraph,
-): CanvasV4WallUnwrapGraph => {
-  const topologyEdgeById = new Map(planarGraph.edges.map((edge) => [edge.edgeId, edge]));
-  const wallPlanes: WallPlane[] = [];
-  const roomWallSequences: RoomWallSequence[] = surfaceGraph.roomSurfaceSummaries.map((summary) => {
-    const sequenceWallPlanes = summary.wallSurfaces
-      .map((surface, wallOrderIndex) => {
-        const edge = topologyEdgeById.get(surface.topologyEdgeId);
-
-        if (!edge) {
-          return null;
-        }
-
-        const projectedOpenings = surface.openings.map((opening) => createProjectedOpening(opening, edge, surface.height));
-        const wallPlane: WallPlane = {
-          wallPlaneId: `wall-plane-${summary.roomId}-${surface.topologyEdgeId}`,
-          roomId: summary.roomId,
-          wallSurfaceId: surface.surfaceId,
-          direction: surface.direction,
-          directionLabel: surface.directionLabel,
-          width: surface.length,
-          height: surface.height,
-          localOrigin: clonePoint(edge.startPoint),
-          openings: surface.openings.map((opening) => ({ ...opening })),
-          projectedOpenings,
-          wallOrderIndex,
-        };
-
-        wallPlanes.push(wallPlane);
-        return wallPlane;
-      })
-      .filter((wallPlane): wallPlane is WallPlane => Boolean(wallPlane));
-
-    return {
-      roomId: summary.roomId,
-      wallPlaneIds: sequenceWallPlanes.map((wallPlane) => wallPlane.wallPlaneId),
-      wallSurfaceIds: sequenceWallPlanes.map((wallPlane) => wallPlane.wallSurfaceId),
-      directions: sequenceWallPlanes.map((wallPlane) => wallPlane.direction),
-    };
-  });
-
-  return {
-    roomWallSequences,
-    wallPlanes,
-    projectedOpeningCount: wallPlanes.reduce((sum, wallPlane) => sum + wallPlane.projectedOpenings.length, 0),
-    wallPlaneCount: wallPlanes.length,
-    wallSequenceCount: roomWallSequences.length,
-  };
-};
-
-const createEngineeringObjectGraph = (objects: EngineeringObject[]): EngineeringObjectGraph => {
-  const objectsByRoom: Record<string, EngineeringObject[]> = {};
-  const objectsByWallPlane: Record<string, EngineeringObject[]> = {};
-
-  objects.forEach((object) => {
-    objectsByRoom[object.roomId] = [...(objectsByRoom[object.roomId] ?? []), object];
-    objectsByWallPlane[object.wallPlaneId] = [...(objectsByWallPlane[object.wallPlaneId] ?? []), object];
-  });
-
-  return {
-    objects: objects.map((object) => ({ ...object, metadata: { ...object.metadata } })),
-    objectCount: objects.length,
-    objectsByRoom,
-    objectsByWallPlane,
-    socketCount: objects.filter((object) => object.objectType === 'socket').length,
-    switchCount: objects.filter((object) => object.objectType === 'switch').length,
-    lightCount: objects.filter((object) => object.objectType === 'light').length,
-  };
-};
-
-const getEngineeringObjectRect = (object: Pick<EngineeringObject, 'localX' | 'localY' | 'width' | 'height'>) => ({
-  left: object.localX - object.width / 2,
-  right: object.localX + object.width / 2,
-  bottom: object.localY - object.height / 2,
-  top: object.localY + object.height / 2,
-});
-
-const getProjectedOpeningRect = (opening: ProjectedOpening, clearance = 0) => ({
-  left: opening.localX - opening.width / 2 - clearance,
-  right: opening.localX + opening.width / 2 + clearance,
-  bottom: opening.sillHeight - clearance,
-  top: opening.sillHeight + opening.height + clearance,
-});
-
-const wallPlaneRectsOverlap = (
-  first: { left: number; right: number; bottom: number; top: number },
-  second: { left: number; right: number; bottom: number; top: number },
-) => first.left < second.right && first.right > second.left && first.bottom < second.top && first.top > second.bottom;
-
-const isEngineeringObjectInsideWallPlane = (object: EngineeringObject, wallPlane: WallPlane) => {
-  const rect = getEngineeringObjectRect(object);
-
-  return rect.left >= 0 && rect.right <= wallPlane.width && rect.bottom >= 0 && rect.top <= wallPlane.height;
-};
-
-const hasEngineeringObjectOpeningCollision = (object: EngineeringObject, wallPlane: WallPlane) => {
-  const objectRect = getEngineeringObjectRect(object);
-
-  return wallPlane.projectedOpenings.some((opening) => wallPlaneRectsOverlap(
-    objectRect,
-    getProjectedOpeningRect(opening, ENGINEERING_OBJECT_OPENING_CLEARANCE_MM),
-  ));
-};
-
-const constrainEngineeringObjectToWallPlane = (
-  object: EngineeringObject,
-  wallPlane: WallPlane,
-  fallbackObject?: EngineeringObject,
-) => {
-  const clampCandidate = (candidate: EngineeringObject): EngineeringObject => ({
-    ...candidate,
-    localX: clampToRange(candidate.localX, candidate.width / 2, Math.max(candidate.width / 2, wallPlane.width - candidate.width / 2)),
-    localY: clampToRange(candidate.localY, candidate.height / 2, Math.max(candidate.height / 2, wallPlane.height - candidate.height / 2)),
-  });
-  const baseCandidate = clampCandidate(object);
-  const candidates: EngineeringObject[] = [baseCandidate];
-
-  wallPlane.projectedOpenings.forEach((opening) => {
-    const openingRect = getProjectedOpeningRect(opening, ENGINEERING_OBJECT_OPENING_CLEARANCE_MM);
-
-    candidates.push(
-      clampCandidate({ ...baseCandidate, localX: openingRect.left - baseCandidate.width / 2 }),
-      clampCandidate({ ...baseCandidate, localX: openingRect.right + baseCandidate.width / 2 }),
-      clampCandidate({ ...baseCandidate, localY: openingRect.bottom - baseCandidate.height / 2 }),
-      clampCandidate({ ...baseCandidate, localY: openingRect.top + baseCandidate.height / 2 }),
-    );
-  });
-
-  const validCandidates = candidates.filter((candidate) => (
-    isEngineeringObjectInsideWallPlane(candidate, wallPlane) &&
-    !hasEngineeringObjectOpeningCollision(candidate, wallPlane)
-  ));
-
-  if (validCandidates.length === 0) {
-    return fallbackObject ?? null;
-  }
-
-  return validCandidates.sort((first, second) => (
-    Math.hypot(first.localX - object.localX, first.localY - object.localY) -
-    Math.hypot(second.localX - object.localX, second.localY - object.localY)
-  ))[0];
-};
 
 const validateOpeningPosition = (
   opening: { id: string; segmentId: string; positionOnSegment: number; width: number; kind: 'door' | 'window' },
@@ -4464,7 +3996,7 @@ const buildCanvasV4Topology = (
   const roomsWithSpatialMetadata = attachSpatialRoomMetadata(roomsWithOpenings, wallGraph, connectionGraph, roomConnectionGraph);
   const warnings = createTopologyWarnings(entities, roomsWithSpatialMetadata, doors, windows, connectionGraph, roomConnectionGraph, planarGraph);
   const rooms = attachWarningsToRooms(roomsWithSpatialMetadata, warnings);
-  const surfaceGraph = createCanvasV4SurfaceGraph(rooms, doors, windows, planarGraph, connectionGraph, DEFAULT_ROOM_HEIGHT_MM);
+  const surfaceGraph = createCanvasV4SurfaceGraph(rooms, doors, windows, planarGraph, connectionGraph, DEFAULT_ROOM_HEIGHT_MM, DEFAULT_DOOR_HEIGHT_MM, DEFAULT_WINDOW_HEIGHT_MM);
   const wallUnwrapGraph = createCanvasV4WallUnwrapGraph(surfaceGraph, planarGraph);
   const invalidDoorCount = new Set(warnings
     .filter((warning) => warning.code === 'invalid-door-placement' && warning.openingId)
