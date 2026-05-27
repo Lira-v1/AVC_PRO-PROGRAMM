@@ -54,23 +54,30 @@ export const createEngineeringObjectDefaults = (defaultRoomHeightMm: number): En
   light: { category: 'lighting', width: DEFAULT_LIGHT_SIZE_MM, height: DEFAULT_LIGHT_SIZE_MM, defaultLocalY: defaultRoomHeightMm - DEFAULT_LIGHT_CEILING_GAP_MM, label: 'Light', symbol: 'L' },
 });
 
-export const createEngineeringObjectGraph = (objects: EngineeringObject[]): EngineeringObjectGraph => {
+export const createEngineeringObjectGraph = (
+  objects: EngineeringObject[],
+  wallPlaneIdAliases: Record<string, string> = {},
+): EngineeringObjectGraph => {
   const objectsByRoom: Record<string, EngineeringObject[]> = {};
   const objectsByWallPlane: Record<string, EngineeringObject[]> = {};
+  const canonicalObjects = objects.map((object) => ({
+    ...object,
+    wallPlaneId: wallPlaneIdAliases[object.wallPlaneId] ?? object.wallPlaneId,
+  }));
 
-  objects.forEach((object) => {
+  canonicalObjects.forEach((object) => {
     objectsByRoom[object.roomId] = [...(objectsByRoom[object.roomId] ?? []), object];
     objectsByWallPlane[object.wallPlaneId] = [...(objectsByWallPlane[object.wallPlaneId] ?? []), object];
   });
 
   return {
-    objects: objects.map((object) => ({ ...object, metadata: { ...object.metadata } })),
-    objectCount: objects.length,
+    objects: canonicalObjects.map((object) => ({ ...object, metadata: { ...object.metadata } })),
+    objectCount: canonicalObjects.length,
     objectsByRoom,
     objectsByWallPlane,
-    socketCount: objects.filter((object) => object.objectType === 'socket').length,
-    switchCount: objects.filter((object) => object.objectType === 'switch').length,
-    lightCount: objects.filter((object) => object.objectType === 'light').length,
+    socketCount: canonicalObjects.filter((object) => object.objectType === 'socket').length,
+    switchCount: canonicalObjects.filter((object) => object.objectType === 'switch').length,
+    lightCount: canonicalObjects.filter((object) => object.objectType === 'light').length,
   };
 };
 
