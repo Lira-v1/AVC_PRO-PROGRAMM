@@ -1902,7 +1902,10 @@ const cloneSurfaceGraph = (surfaceGraph: CanvasV4SurfaceGraph): CanvasV4SurfaceG
     ...summary,
     wallSurfaces: summary.wallSurfaces.map((surface) => ({
       ...surface,
+      topologyEdgeIds: [...surface.topologyEdgeIds],
       wallSegmentIds: [...surface.wallSegmentIds],
+      startPoint: clonePoint(surface.startPoint),
+      endPoint: clonePoint(surface.endPoint),
       openings: surface.openings.map((opening) => ({ ...opening })),
     })),
   })),
@@ -1924,6 +1927,8 @@ const cloneWallUnwrapGraph = (wallUnwrapGraph: CanvasV4WallUnwrapGraph): CanvasV
   })),
   wallPlanes: wallUnwrapGraph.wallPlanes.map((wallPlane) => ({
     ...wallPlane,
+    topologyEdgeIds: [...wallPlane.topologyEdgeIds],
+    legacyWallPlaneIds: [...wallPlane.legacyWallPlaneIds],
     localOrigin: clonePoint(wallPlane.localOrigin),
     openings: wallPlane.openings.map((opening) => ({ ...opening })),
     projectedOpenings: wallPlane.projectedOpenings.map((opening) => ({ ...opening })),
@@ -5797,10 +5802,29 @@ export const CanvasV4DevScreen = () => {
     () => projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries.find((summary) => summary.roomId === selectedRoomId) ?? null,
     [projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries, selectedRoomId],
   );
-  const wallPlaneById = useMemo(
-    () => new Map(projectInterpretation.topology.wallUnwrapGraph.wallPlanes.map((wallPlane) => [wallPlane.wallPlaneId, wallPlane])),
-    [projectInterpretation.topology.wallUnwrapGraph.wallPlanes],
-  );
+  const wallPlaneIdAliases = useMemo(() => {
+    const aliases: Record<string, string> = {};
+
+    projectInterpretation.topology.wallUnwrapGraph.wallPlanes.forEach((wallPlane) => {
+      wallPlane.legacyWallPlaneIds.forEach((legacyWallPlaneId) => {
+        aliases[legacyWallPlaneId] = wallPlane.wallPlaneId;
+      });
+    });
+
+    return aliases;
+  }, [projectInterpretation.topology.wallUnwrapGraph.wallPlanes]);
+  const wallPlaneById = useMemo(() => {
+    const nextWallPlaneById = new Map<string, WallPlane>();
+
+    projectInterpretation.topology.wallUnwrapGraph.wallPlanes.forEach((wallPlane) => {
+      nextWallPlaneById.set(wallPlane.wallPlaneId, wallPlane);
+      wallPlane.legacyWallPlaneIds.forEach((legacyWallPlaneId) => {
+        nextWallPlaneById.set(legacyWallPlaneId, wallPlane);
+      });
+    });
+
+    return nextWallPlaneById;
+  }, [projectInterpretation.topology.wallUnwrapGraph.wallPlanes]);
   const wallPlanesByRoomId = useMemo(() => {
     const groups = new Map<string, WallPlane[]>();
 
@@ -5830,7 +5854,10 @@ export const CanvasV4DevScreen = () => {
     () => (selectedRoomId ? wallPlanesByRoomId.get(selectedRoomId) ?? [] : []),
     [selectedRoomId, wallPlanesByRoomId],
   );
-  const engineeringObjectGraph = useMemo(() => createEngineeringObjectGraph(engineeringObjects), [engineeringObjects]);
+  const engineeringObjectGraph = useMemo(
+    () => createEngineeringObjectGraph(engineeringObjects, wallPlaneIdAliases),
+    [engineeringObjects, wallPlaneIdAliases],
+  );
   const selectedEngineeringObject = useMemo(
     () => engineeringObjects.find((object) => object.objectId === selectedEngineeringObjectId) ?? null,
     [engineeringObjects, selectedEngineeringObjectId],
@@ -5917,7 +5944,7 @@ export const CanvasV4DevScreen = () => {
       return;
     }
 
-    if (selectedEngineeringObject?.wallPlaneId === selectedInsideWallPlane.wallPlaneId) {
+    if (selectedEngineeringObject && selectedEngineeringObjectWallPlane?.wallPlaneId === selectedInsideWallPlane.wallPlaneId) {
       moveEngineeringObjectToLocalPoint(selectedEngineeringObject.objectId, localX, localY);
     }
   }, [
@@ -5927,6 +5954,7 @@ export const CanvasV4DevScreen = () => {
     moveEngineeringObjectToLocalPoint,
     objectPlacementMode,
     selectedEngineeringObject,
+    selectedEngineeringObjectWallPlane,
     selectedInsideWallPlane,
   ]);
   const roomAssignmentPending = projectCreated && projectRooms.some((room) => !room.roomType);
@@ -8434,7 +8462,7 @@ export const CanvasV4DevScreen = () => {
                       })}
                     </Pressable>
                     <Text style={styles.insideWallMeta}>Local origin: {selectedInsideWallPlane.localOrigin.x.toFixed(0)}, {selectedInsideWallPlane.localOrigin.y.toFixed(0)} мм</Text>
-                    {selectedEngineeringObject && selectedEngineeringObject.wallPlaneId === selectedInsideWallPlane.wallPlaneId ? (
+                    {selectedEngineeringObject && selectedEngineeringObjectWallPlane?.wallPlaneId === selectedInsideWallPlane.wallPlaneId ? (
                       <View style={styles.engineeringObjectInfoCard}>
                         <Text style={styles.projectDataSurfaceWallTitle}>{ENGINEERING_OBJECT_DEFAULTS[selectedEngineeringObject.objectType].label}</Text>
                         <Text style={styles.insideWallMeta}>Height: {formatLineLength(selectedEngineeringObject.localY)}</Text>

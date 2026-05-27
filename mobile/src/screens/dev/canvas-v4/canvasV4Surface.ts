@@ -1,5 +1,6 @@
-import { SURFACE_DIRECTION_LABELS, getSurfaceDirectionFromRoomVector } from './canvasV4Directions';
+import { SURFACE_DIRECTION_LABELS, getLogicalWallOrientation, getSurfaceDirectionFromLogicalWall } from './canvasV4Directions';
 import type { SurfaceDirection } from './canvasV4Directions';
+import { angularDistance, clonePoint } from './canvasV4Geometry';
 import type { Point } from './canvasV4Geometry';
 
 type SurfaceWarningSeverity = 'warning' | 'error';
@@ -36,9 +37,12 @@ export type WallSurface = {
   surfaceId: string;
   roomId: string;
   topologyEdgeId: string;
+  topologyEdgeIds: string[];
   wallSegmentIds: string[];
   direction: SurfaceDirection;
   directionLabel: string;
+  startPoint: Point;
+  endPoint: Point;
   length: number;
   height: number;
   grossArea: number;
@@ -166,6 +170,243 @@ const createOpeningSurfaceRef = (
   };
 };
 
+const LOGICAL_WALL_MERGE_ANGLE_TOLERANCE_DEG = 2;
+const LOGICAL_WALL_MERGE_DISTANCE_TOLERANCE_MM = 8;
+const LOGICAL_WALL_MERGE_GAP_TOLERANCE_MM = 2;
+
+const getWallVector = (surface: Pick<WallSurface, 'startPoint' | 'endPoint'>): Point => ({
+  x: surface.endPoint.x - surface.startPoint.x,
+  y: surface.endPoint.y - surface.startPoint.y,
+});
+
+const getWallAngleDeg = (surface: Pick<WallSurface, 'startPoint' | 'endPoint'>) => {
+  const vector = getWallVector(surface);
+
+  return (Math.atan2(vector.y, vector.x) * 180) / Math.PI;
+};
+
+const getWallAxisAngleDistance = (
+  first: Pick<WallSurface, 'startPoint' | 'endPoint'>,
+  second: Pick<WallSurface, 'startPoint' | 'endPoint'>,
+) => Math.min(
+  angularDistance(getWallAngleDeg(first), getWallAngleDeg(second)),
+  angularDistance(getWallAngleDeg(first), getWallAngleDeg(second) + 180),
+);
+
+const getWallUnit = (surface: Pick<WallSurface, 'startPoint' | 'endPoint'>): Point => {
+  const vector = getWallVector(surface);
+  const length = Math.max(Math.hypot(vector.x, vector.y), 1);
+
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+  };
+};
+
+const getProjectionOnWallAxis = (point: Point, origin: Point, unit: Point) =>
+  (point.x - origin.x) * unit.x + (point.y - origin.y) * unit.y;
+
+const getWallProjectionRange = (
+  surface: Pick<WallSurface, 'startPoint' | 'endPoint'>,
+  origin: Point,
+  unit: Point,
+) => {
+  const startProjection = getProjectionOnWallAxis(surface.startPoint, origin, unit);
+  const endProjection = getProjectionOnWallAxis(surface.endPoint, origin, unit);
+
+  return {
+    min: Math.min(startProjection, endProjection),
+    max: Math.max(startProjection, endProjection),
+  };
+};
+
+const getProjectionRangeGap = (
+  first: { min: number; max: number },
+  second: { min: number; max: number },
+) => Math.max(0, Math.max(first.min, second.min) - Math.min(first.max, second.max));
+
+const getDistanceToInfiniteWallLine = (
+  point: Point,
+  wall: Pick<WallSurface, 'startPoint' | 'endPoint'>,
+) => {
+  const vector = getWallVector(wall);
+  const length = Math.max(Math.hypot(vector.x, vector.y), 1);
+
+  return Math.abs(
+    vector.x * (wall.startPoint.y - point.y) -
+    (wall.startPoint.x - point.x) * vector.y
+  ) / length;
+};
+
+const getTopologyEdgeSortValue = (topologyEdgeId: string) => {
+  const match = topologyEdgeId.match(/(\d+)$/);
+
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+};
+
+const getPrimaryTopologyEdgeId = (topologyEdgeIds: string[]) =>
+  [...topologyEdgeIds].sort((first, second) => (
+    getTopologyEdgeSortValue(first) - getTopologyEdgeSortValue(second) ||
+    first.localeCompare(second)
+  ))[0] ?? topologyEdgeIds[0];
+
+const canMergeWallSurfaces = (first: WallSurface, second: WallSurface) => {
+  const firstOrientation = getLogicalWallOrientation(getWallVector(first));
+  const secondOrientation = getLogicalWallOrientation(getWallVector(second));
+
+  if (firstOrientation !== secondOrientation || first.direction !== second.direction) {
+    return false;
+  }
+
+  if (getWallAxisAngleDistance(first, second) > LOGICAL_WALL_MERGE_ANGLE_TOLERANCE_DEG) {
+    return false;
+  }
+
+  if (
+    getDistanceToInfiniteWallLine(second.startPoint, first) > LOGICAL_WALL_MERGE_DISTANCE_TOLERANCE_MM ||
+    getDistanceToInfiniteWallLine(second.endPoint, first) > LOGICAL_WALL_MERGE_DISTANCE_TOLERANCE_MM
+  ) {
+    return false;
+  }
+
+  const origin = first.startPoint;
+  const unit = getWallUnit(first);
+  const gap = getProjectionRangeGap(
+    getWallProjectionRange(first, origin, unit),
+    getWallProjectionRange(second, origin, unit),
+  );
+
+  return gap <= LOGICAL_WALL_MERGE_GAP_TOLERANCE_MM;
+};
+
+const getMergedWallEndpoints = (surfaces: WallSurface[]) => {
+  const firstSurface = surfaces[0];
+
+  if (!firstSurface) {
+    return {
+      startPoint: { x: 0, y: 0 },
+      endPoint: { x: 0, y: 0 },
+      length: 0,
+    };
+  }
+
+  const origin = firstSurface.startPoint;
+  const unit = getWallUnit(firstSurface);
+  const range = surfaces.reduce(
+    (currentRange, surface) => {
+      const surfaceRange = getWallProjectionRange(surface, origin, unit);
+
+      return {
+        min: Math.min(currentRange.min, surfaceRange.min),
+        max: Math.max(currentRange.max, surfaceRange.max),
+      };
+    },
+    { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY },
+  );
+
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+    return {
+      startPoint: clonePoint(firstSurface.startPoint),
+      endPoint: clonePoint(firstSurface.endPoint),
+      length: firstSurface.length,
+    };
+  }
+
+  const startPoint = {
+    x: origin.x + unit.x * range.min,
+    y: origin.y + unit.y * range.min,
+  };
+  const endPoint = {
+    x: origin.x + unit.x * range.max,
+    y: origin.y + unit.y * range.max,
+  };
+
+  return {
+    startPoint,
+    endPoint,
+    length: Math.max(0, range.max - range.min),
+  };
+};
+
+const mergeWallSurfaceGroup = <RoomType extends string>(
+  room: SurfaceRoomLike<RoomType>,
+  surfaces: WallSurface[],
+): WallSurface | null => {
+  if (surfaces.length === 0) {
+    return null;
+  }
+
+  const topologyEdgeIds = surfaces.flatMap((surface) => surface.topologyEdgeIds);
+  const primaryTopologyEdgeId = getPrimaryTopologyEdgeId(topologyEdgeIds);
+  const wallSegmentIds = Array.from(new Set(surfaces.flatMap((surface) => surface.wallSegmentIds)));
+  const openings = surfaces.flatMap((surface) => surface.openings);
+  const { startPoint, endPoint, length } = getMergedWallEndpoints(surfaces);
+  const direction = getSurfaceDirectionFromLogicalWall(startPoint, endPoint, room.center);
+  const doorArea = openings.filter((opening) => opening.type === 'door').reduce((sum, opening) => sum + opening.area, 0);
+  const windowArea = openings.filter((opening) => opening.type === 'window').reduce((sum, opening) => sum + opening.area, 0);
+  const openingsArea = doorArea + windowArea;
+  const height = surfaces[0].height;
+  const grossArea = length * height;
+
+  return {
+    surfaceId: `surface-${room.roomId}-${primaryTopologyEdgeId}`,
+    roomId: room.roomId,
+    topologyEdgeId: primaryTopologyEdgeId,
+    topologyEdgeIds,
+    wallSegmentIds,
+    direction,
+    directionLabel: SURFACE_DIRECTION_LABELS[direction],
+    startPoint,
+    endPoint,
+    length,
+    height,
+    grossArea,
+    doorArea,
+    windowArea,
+    openingsArea,
+    netArea: Math.max(0, grossArea - openingsArea),
+    openings,
+  };
+};
+
+const mergeRoomLogicalWallSurfaces = <RoomType extends string>(
+  room: SurfaceRoomLike<RoomType>,
+  rawSurfaces: WallSurface[],
+) => {
+  if (rawSurfaces.length <= 1) {
+    return rawSurfaces;
+  }
+
+  const surfaceGroups = rawSurfaces.reduce<WallSurface[][]>((groups, surface) => {
+    const lastGroup = groups[groups.length - 1];
+    const lastSurface = lastGroup?.[lastGroup.length - 1];
+
+    if (lastGroup && lastSurface && canMergeWallSurfaces(lastSurface, surface)) {
+      lastGroup.push(surface);
+      return groups;
+    }
+
+    groups.push([surface]);
+    return groups;
+  }, []);
+
+  if (surfaceGroups.length > 1) {
+    const firstGroup = surfaceGroups[0];
+    const lastGroup = surfaceGroups[surfaceGroups.length - 1];
+    const firstSurface = firstGroup[0];
+    const lastSurface = lastGroup[lastGroup.length - 1];
+
+    if (firstSurface && lastSurface && canMergeWallSurfaces(lastSurface, firstSurface)) {
+      surfaceGroups[0] = [...lastGroup, ...firstGroup];
+      surfaceGroups.pop();
+    }
+  }
+
+  return surfaceGroups
+    .map((group) => mergeWallSurfaceGroup(room, group))
+    .filter((surface): surface is WallSurface => Boolean(surface));
+};
+
 export const createCanvasV4SurfaceGraph = <RoomType extends string = string>(
   rooms: Array<SurfaceRoomLike<RoomType>>,
   doors: SurfaceDoorLike[],
@@ -206,7 +447,7 @@ export const createCanvasV4SurfaceGraph = <RoomType extends string = string>(
   }
 
   const roomSurfaceSummaries = rooms.map<RoomSurfaceSummary<RoomType>>((room) => {
-    const wallSurfaces = room.topologyEdgeIds
+    const rawWallSurfaces = room.topologyEdgeIds
       .map((topologyEdgeId) => {
         const edge = topologyEdgeById.get(topologyEdgeId);
 
@@ -215,14 +456,7 @@ export const createCanvasV4SurfaceGraph = <RoomType extends string = string>(
           return null;
         }
 
-        const midpoint = {
-          x: (edge.startPoint.x + edge.endPoint.x) / 2,
-          y: (edge.startPoint.y + edge.endPoint.y) / 2,
-        };
-        const direction = getSurfaceDirectionFromRoomVector({
-          x: midpoint.x - room.center.x,
-          y: midpoint.y - room.center.y,
-        });
+        const direction = getSurfaceDirectionFromLogicalWall(edge.startPoint, edge.endPoint, room.center);
         const doorOpenings = (doorConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
           .filter((connection) => connection.roomIds.includes(room.roomId))
           .map((connection) => doorById.get(connection.doorId))
@@ -249,9 +483,12 @@ export const createCanvasV4SurfaceGraph = <RoomType extends string = string>(
           surfaceId: `surface-${room.roomId}-${edge.edgeId}`,
           roomId: room.roomId,
           topologyEdgeId: edge.edgeId,
+          topologyEdgeIds: [edge.edgeId],
           wallSegmentIds: [...edge.sourceSegmentIds],
           direction,
           directionLabel: SURFACE_DIRECTION_LABELS[direction],
+          startPoint: clonePoint(edge.startPoint),
+          endPoint: clonePoint(edge.endPoint),
           length: edge.length,
           height: defaultRoomHeightMm,
           grossArea,
@@ -263,6 +500,7 @@ export const createCanvasV4SurfaceGraph = <RoomType extends string = string>(
         };
       })
       .filter((surface): surface is WallSurface => Boolean(surface));
+    const wallSurfaces = mergeRoomLogicalWallSurfaces(room, rawWallSurfaces);
     const perimeterNet = Math.max(0, room.perimeter - wallSurfaces.reduce((sum, surface) => (
       sum + surface.openings.reduce((openingSum, opening) => openingSum + opening.width, 0)
     ), 0));
