@@ -41,6 +41,14 @@ export const angularDistance = (angleA: number, angleB: number) => {
   return Math.min(diff, 360 - diff);
 };
 
+export const clampToRange = (value: number, min: number, max: number) => {
+  if (max <= min) {
+    return min;
+  }
+
+  return Math.max(min, Math.min(max, value));
+};
+
 export const addPoints = (a: Point, b: Point): Point => ({ x: a.x + b.x, y: a.y + b.y });
 
 export const scaleVector = (vector: Point, scale: number): Point => ({ x: vector.x * scale, y: vector.y * scale });
