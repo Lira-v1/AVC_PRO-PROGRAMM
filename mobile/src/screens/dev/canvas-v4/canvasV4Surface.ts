@@ -26,6 +26,7 @@ export type OpeningSurfaceRef = {
   type: 'door' | 'window';
   segmentId: string;
   topologyEdgeId: string;
+  topologyEdgeIds: string[];
   positionOnSegment: number;
   width: number;
   height: number;
@@ -118,6 +119,7 @@ type SurfaceDoorConnectionLike = {
   doorId: string;
   segmentId: string;
   topologyEdgeId: string | null;
+  topologyEdgeIds?: string[];
   roomIds: string[];
 };
 
@@ -125,6 +127,7 @@ type SurfaceWindowConnectionLike = {
   windowId: string;
   segmentId: string;
   topologyEdgeId: string | null;
+  topologyEdgeIds?: string[];
   roomIds: string[];
 };
 
@@ -151,6 +154,7 @@ const createOpeningSurfaceRef = (
   opening: SurfaceDoorLike | SurfaceWindowLike,
   type: 'door' | 'window',
   topologyEdgeId: string,
+  topologyEdgeIds: string[],
   defaultDoorHeightMm: number,
   defaultWindowHeightMm: number,
 ): OpeningSurfaceRef => {
@@ -162,6 +166,7 @@ const createOpeningSurfaceRef = (
     type,
     segmentId: opening.segmentId,
     topologyEdgeId,
+    topologyEdgeIds,
     positionOnSegment: opening.positionOnSegment,
     width: opening.width,
     height,
@@ -459,14 +464,38 @@ export const createCanvasV4SurfaceGraph = <RoomType extends string = string>(
         const direction = getSurfaceDirectionFromLogicalWall(edge.startPoint, edge.endPoint, room.center);
         const doorOpenings = (doorConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
           .filter((connection) => connection.roomIds.includes(room.roomId))
-          .map((connection) => doorById.get(connection.doorId))
-          .filter((door): door is SurfaceDoorLike => Boolean(door))
-          .map((door) => createOpeningSurfaceRef(door, 'door', edge.edgeId, defaultDoorHeightMm, defaultWindowHeightMm));
+          .map((connection) => {
+            const door = doorById.get(connection.doorId);
+
+            return door
+              ? createOpeningSurfaceRef(
+                door,
+                'door',
+                edge.edgeId,
+                connection.topologyEdgeIds?.length ? connection.topologyEdgeIds : [edge.edgeId],
+                defaultDoorHeightMm,
+                defaultWindowHeightMm,
+              )
+              : null;
+          })
+          .filter((opening): opening is OpeningSurfaceRef => Boolean(opening));
         const windowOpenings = (windowConnectionsByTopologyEdgeId.get(edge.edgeId) ?? [])
           .filter((connection) => connection.roomIds.includes(room.roomId))
-          .map((connection) => windowById.get(connection.windowId))
-          .filter((window): window is SurfaceWindowLike => Boolean(window))
-          .map((window) => createOpeningSurfaceRef(window, 'window', edge.edgeId, defaultDoorHeightMm, defaultWindowHeightMm));
+          .map((connection) => {
+            const window = windowById.get(connection.windowId);
+
+            return window
+              ? createOpeningSurfaceRef(
+                window,
+                'window',
+                edge.edgeId,
+                connection.topologyEdgeIds?.length ? connection.topologyEdgeIds : [edge.edgeId],
+                defaultDoorHeightMm,
+                defaultWindowHeightMm,
+              )
+              : null;
+          })
+          .filter((opening): opening is OpeningSurfaceRef => Boolean(opening));
         const openings = [...doorOpenings, ...windowOpenings];
         const doorArea = doorOpenings.reduce((sum, opening) => sum + opening.area, 0);
         const windowArea = windowOpenings.reduce((sum, opening) => sum + opening.area, 0);

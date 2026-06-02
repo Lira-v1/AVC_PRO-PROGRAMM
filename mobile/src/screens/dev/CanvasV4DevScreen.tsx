@@ -356,6 +356,7 @@ type CanvasV4DoorConnection = {
   doorId: string;
   segmentId: string;
   topologyEdgeId: string | null;
+  topologyEdgeIds: string[];
   wallRole: WallRole | null;
   roomIds: string[];
   connectedRoomIds: string[];
@@ -368,6 +369,7 @@ type CanvasV4WindowConnection = {
   windowId: string;
   segmentId: string;
   topologyEdgeId: string | null;
+  topologyEdgeIds: string[];
   wallRole: WallRole | null;
   roomIds: string[];
   roomId: string | null;
@@ -1961,12 +1963,14 @@ const cloneCanvasV4Topology = (topology: CanvasV4Topology): CanvasV4Topology => 
   connectionGraph: {
     doorConnections: topology.connectionGraph.doorConnections.map((connection) => ({
       ...connection,
+      topologyEdgeIds: [...(connection.topologyEdgeIds ?? (connection.topologyEdgeId ? [connection.topologyEdgeId] : []))],
       roomIds: [...connection.roomIds],
       connectedRoomIds: [...connection.connectedRoomIds],
       connectsRoomIds: [...connection.connectsRoomIds],
     })),
     windowConnections: topology.connectionGraph.windowConnections.map((connection) => ({
       ...connection,
+      topologyEdgeIds: [...(connection.topologyEdgeIds ?? (connection.topologyEdgeId ? [connection.topologyEdgeId] : []))],
       roomIds: [...connection.roomIds],
     })),
   },
@@ -3624,18 +3628,118 @@ const createWallGraph = (
   };
 };
 
-const findTopologyEdgeForOpening = (
+const getOpeningRangeOnSegment = (opening: { positionOnSegment: number; width: number }) => ({
+  start: opening.positionOnSegment - opening.width / 2,
+  end: opening.positionOnSegment + opening.width / 2,
+});
+
+const getTopologyEdgeOffsetsForSegment = (edge: CanvasV4PlanarEdge, segmentId: string) => (
+  edge.sourceOffsetsBySegmentId[segmentId] ?? { startOffset: edge.startOffset, endOffset: edge.endOffset }
+);
+
+const getTopologyEdgeRoomKey = (edge: CanvasV4PlanarEdge) => [...edge.roomIds].sort().join('::');
+
+const areOpeningTopologyEdgesCompatible = (first: CanvasV4PlanarEdge, second: CanvasV4PlanarEdge) => (
+  first.wallRole === second.wallRole &&
+  getTopologyEdgeRoomKey(first) === getTopologyEdgeRoomKey(second)
+);
+
+const findTopologyEdgesForOpening = (
   opening: { segmentId: string; positionOnSegment: number; width: number },
   planarGraph: CanvasV4PlanarGraph,
-) => {
-  const openingStart = opening.positionOnSegment - opening.width / 2;
-  const openingEnd = opening.positionOnSegment + opening.width / 2;
-
-  return planarGraph.edges.find((edge) =>
+): CanvasV4PlanarEdge[] => {
+  const openingRange = getOpeningRangeOnSegment(opening);
+  const openingStart = openingRange.start;
+  const openingEnd = openingRange.end;
+  const singleEdge = planarGraph.edges.find((edge) =>
     edge.sourceSegmentIds.includes(opening.segmentId) &&
-    openingStart >= (edge.sourceOffsetsBySegmentId[opening.segmentId]?.startOffset ?? edge.startOffset) - TOPOLOGY_NODE_TOLERANCE_MM &&
-    openingEnd <= (edge.sourceOffsetsBySegmentId[opening.segmentId]?.endOffset ?? edge.endOffset) + TOPOLOGY_NODE_TOLERANCE_MM,
-  ) ?? null;
+    openingStart >= getTopologyEdgeOffsetsForSegment(edge, opening.segmentId).startOffset - TOPOLOGY_NODE_TOLERANCE_MM &&
+    openingEnd <= getTopologyEdgeOffsetsForSegment(edge, opening.segmentId).endOffset + TOPOLOGY_NODE_TOLERANCE_MM,
+  );
+
+  if (singleEdge) {
+    return [singleEdge];
+  }
+
+  const candidates = planarGraph.edges
+    .filter((edge) => {
+      if (!edge.sourceSegmentIds.includes(opening.segmentId)) {
+        return false;
+      }
+
+      const offsets = getTopologyEdgeOffsetsForSegment(edge, opening.segmentId);
+
+      return openingEnd >= offsets.startOffset - TOPOLOGY_NODE_TOLERANCE_MM &&
+        openingStart <= offsets.endOffset + TOPOLOGY_NODE_TOLERANCE_MM;
+    })
+    .sort((first, second) => (
+      getTopologyEdgeOffsetsForSegment(first, opening.segmentId).startOffset -
+      getTopologyEdgeOffsetsForSegment(second, opening.segmentId).startOffset
+    ));
+
+  if (candidates.length <= 1) {
+    return [];
+  }
+
+  const firstCandidate = candidates[0];
+  const coveredEdges: CanvasV4PlanarEdge[] = [];
+  let coveredEnd = openingStart;
+
+  for (const candidate of candidates) {
+    if (!areOpeningTopologyEdgesCompatible(firstCandidate, candidate)) {
+      return [];
+    }
+
+    const offsets = getTopologyEdgeOffsetsForSegment(candidate, opening.segmentId);
+
+    if (coveredEdges.length === 0 && offsets.startOffset > openingStart + TOPOLOGY_NODE_TOLERANCE_MM) {
+      return [];
+    }
+
+    if (coveredEdges.length > 0 && offsets.startOffset > coveredEnd + TOPOLOGY_NODE_TOLERANCE_MM) {
+      return [];
+    }
+
+    coveredEdges.push(candidate);
+    coveredEnd = Math.max(coveredEnd, offsets.endOffset);
+
+    if (coveredEnd >= openingEnd - TOPOLOGY_NODE_TOLERANCE_MM) {
+      return coveredEdges;
+    }
+  }
+
+  return [];
+};
+
+const getPrimaryTopologyEdgeForOpening = (
+  opening: { segmentId: string; positionOnSegment: number },
+  topologyEdges: CanvasV4PlanarEdge[],
+) => topologyEdges.find((edge) => {
+  const offsets = getTopologyEdgeOffsetsForSegment(edge, opening.segmentId);
+
+  return opening.positionOnSegment >= offsets.startOffset - TOPOLOGY_NODE_TOLERANCE_MM &&
+    opening.positionOnSegment <= offsets.endOffset + TOPOLOGY_NODE_TOLERANCE_MM;
+}) ?? topologyEdges[0] ?? null;
+
+const getOpeningTopologySpanOffsets = (
+  opening: { segmentId: string },
+  topologyEdges: CanvasV4PlanarEdge[],
+) => {
+  if (topologyEdges.length === 0) {
+    return null;
+  }
+
+  return topologyEdges.reduce(
+    (range, edge) => {
+      const offsets = getTopologyEdgeOffsetsForSegment(edge, opening.segmentId);
+
+      return {
+        startOffset: Math.min(range.startOffset, offsets.startOffset),
+        endOffset: Math.max(range.endOffset, offsets.endOffset),
+      };
+    },
+    { startOffset: Number.POSITIVE_INFINITY, endOffset: Number.NEGATIVE_INFINITY },
+  );
 };
 
 const createConnectionGraph = (
@@ -3644,7 +3748,9 @@ const createConnectionGraph = (
   planarGraph: CanvasV4PlanarGraph,
 ): CanvasV4ConnectionGraph => ({
   doorConnections: doors.map((door) => {
-    const topologyEdge = findTopologyEdgeForOpening(door, planarGraph);
+    const topologyEdges = findTopologyEdgesForOpening(door, planarGraph);
+    const topologyEdge = getPrimaryTopologyEdgeForOpening(door, topologyEdges);
+    const topologyEdgeIds = topologyEdges.map((edge) => edge.edgeId);
     const roomIds = topologyEdge?.roomIds ?? [];
     const connectedRoomIds = roomIds.length > 1 ? roomIds : [];
     const isEntryDoor = topologyEdge?.wallRole === 'external' && roomIds.length === 1;
@@ -3653,6 +3759,7 @@ const createConnectionGraph = (
       doorId: door.doorId,
       segmentId: door.segmentId,
       topologyEdgeId: topologyEdge?.edgeId ?? null,
+      topologyEdgeIds,
       wallRole: topologyEdge?.wallRole ?? null,
       roomIds,
       connectedRoomIds,
@@ -3662,7 +3769,9 @@ const createConnectionGraph = (
     };
   }),
   windowConnections: windows.map((window) => {
-    const topologyEdge = findTopologyEdgeForOpening(window, planarGraph);
+    const topologyEdges = findTopologyEdgesForOpening(window, planarGraph);
+    const topologyEdge = getPrimaryTopologyEdgeForOpening(window, topologyEdges);
+    const topologyEdgeIds = topologyEdges.map((edge) => edge.edgeId);
     const roomIds = topologyEdge?.roomIds ?? [];
     const externalOnly = topologyEdge?.wallRole === 'external' && roomIds.length === 1;
 
@@ -3670,6 +3779,7 @@ const createConnectionGraph = (
       windowId: window.windowId,
       segmentId: window.segmentId,
       topologyEdgeId: topologyEdge?.edgeId ?? null,
+      topologyEdgeIds,
       wallRole: topologyEdge?.wallRole ?? null,
       roomIds,
       roomId: roomIds[0] ?? null,
@@ -3824,10 +3934,11 @@ const formatPercentStyleValue = (value: number): DimensionValue => `${clampToRan
 const validateOpeningPosition = (
   opening: { id: string; segmentId: string; positionOnSegment: number; width: number; kind: 'door' | 'window' },
   segment: CanvasV4LineEntity | undefined,
-  topologyEdge: CanvasV4PlanarEdge | null,
+  topologyEdges: CanvasV4PlanarEdge[],
   allOpeningsOnSegment: Array<{ id: string; positionOnSegment: number; width: number }>,
 ): CanvasV4TopologyWarning[] => {
   const code: TopologyWarningCode = opening.kind === 'door' ? 'invalid-door-placement' : 'invalid-window-placement';
+  const topologyEdge = topologyEdges[0] ?? null;
   const label = opening.kind === 'door' ? 'Дверь' : 'Окно';
 
   if (!segment) {
@@ -3835,18 +3946,19 @@ const validateOpeningPosition = (
   }
 
   const warnings: CanvasV4TopologyWarning[] = [];
-  const startGap = opening.positionOnSegment - opening.width / 2;
-  const endGap = segment.length - (opening.positionOnSegment + opening.width / 2);
-  const openingStart = opening.positionOnSegment - opening.width / 2;
-  const openingEnd = opening.positionOnSegment + opening.width / 2;
-  const topologyEdgeOffsets = topologyEdge?.sourceOffsetsBySegmentId[opening.segmentId];
-  const topologyStartOffset = topologyEdgeOffsets?.startOffset ?? topologyEdge?.startOffset ?? 0;
-  const topologyEndOffset = topologyEdgeOffsets?.endOffset ?? topologyEdge?.endOffset ?? 0;
+  const openingRange = getOpeningRangeOnSegment(opening);
+  const startGap = openingRange.start;
+  const endGap = segment.length - openingRange.end;
+  const openingStart = openingRange.start;
+  const openingEnd = openingRange.end;
+  const topologySpanOffsets = getOpeningTopologySpanOffsets(opening, topologyEdges);
+  const topologyStartOffset = topologySpanOffsets?.startOffset ?? 0;
+  const topologyEndOffset = topologySpanOffsets?.endOffset ?? 0;
   const isOutsideSegment = startGap < -TOPOLOGY_NODE_TOLERANCE_MM || endGap < -TOPOLOGY_NODE_TOLERANCE_MM;
-  const isOutsideTopologyEdge = !topologyEdge ||
+  const isOutsideTopologyEdge = !topologySpanOffsets ||
     openingStart < topologyStartOffset - TOPOLOGY_NODE_TOLERANCE_MM ||
     openingEnd > topologyEndOffset + TOPOLOGY_NODE_TOLERANCE_MM;
-  const isNearJoint = !topologyEdge ||
+  const isNearJoint = !topologySpanOffsets ||
     openingStart < topologyStartOffset + ATTACHMENT_EDGE_CLEARANCE_MM ||
     openingEnd > topologyEndOffset - ATTACHMENT_EDGE_CLEARANCE_MM;
   const hasOverlap = allOpeningsOnSegment.some((candidate) =>
@@ -3885,6 +3997,17 @@ const createTopologyWarnings = (
   const doorConnectionById = new Map(connectionGraph.doorConnections.map((connection) => [connection.doorId, connection]));
   const windowConnectionById = new Map(connectionGraph.windowConnections.map((connection) => [connection.windowId, connection]));
   const openingsBySegmentId = new Map<string, Array<{ id: string; positionOnSegment: number; width: number }>>();
+  const getConnectionTopologyEdges = (connection: { topologyEdgeId: string | null; topologyEdgeIds: string[] } | undefined) => {
+    const topologyEdgeIds = connection?.topologyEdgeIds.length
+      ? connection.topologyEdgeIds
+      : connection?.topologyEdgeId
+        ? [connection.topologyEdgeId]
+        : [];
+
+    return topologyEdgeIds
+      .map((topologyEdgeId) => topologyEdgeById.get(topologyEdgeId))
+      .filter((edge): edge is CanvasV4PlanarEdge => Boolean(edge));
+  };
 
   [...doors.map((door) => ({ id: door.doorId, segmentId: door.segmentId, positionOnSegment: door.positionOnSegment, width: door.width })),
     ...windows.map((window) => ({ id: window.windowId, segmentId: window.segmentId, positionOnSegment: window.positionOnSegment, width: window.width }))].forEach((opening) => {
@@ -3957,7 +4080,7 @@ const createTopologyWarnings = (
     warnings.push(...validateOpeningPosition(
       { id: door.doorId, segmentId: door.segmentId, positionOnSegment: door.positionOnSegment, width: door.width, kind: 'door' },
       segmentById.get(door.segmentId),
-      topologyEdgeById.get(doorConnectionById.get(door.doorId)?.topologyEdgeId ?? '') ?? null,
+      getConnectionTopologyEdges(doorConnectionById.get(door.doorId)),
       openingsBySegmentId.get(door.segmentId) ?? [],
     ));
   });
@@ -3966,7 +4089,7 @@ const createTopologyWarnings = (
     warnings.push(...validateOpeningPosition(
       { id: window.windowId, segmentId: window.segmentId, positionOnSegment: window.positionOnSegment, width: window.width, kind: 'window' },
       segmentById.get(window.segmentId),
-      topologyEdgeById.get(windowConnectionById.get(window.windowId)?.topologyEdgeId ?? '') ?? null,
+      getConnectionTopologyEdges(windowConnectionById.get(window.windowId)),
       openingsBySegmentId.get(window.segmentId) ?? [],
     ));
   });
