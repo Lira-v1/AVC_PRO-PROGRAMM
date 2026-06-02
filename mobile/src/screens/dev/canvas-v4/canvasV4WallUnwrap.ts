@@ -13,12 +13,20 @@ export type ProjectedOpening = {
   topOffset: number;
 };
 
+export type LegacyWallPlaneCoordinateMapping = {
+  legacyWallPlaneId: string;
+  wallPlaneId: string;
+  localXOffset: number;
+  localXScale: number;
+};
+
 export type WallPlane = {
   wallPlaneId: string;
   roomId: string;
   wallSurfaceId: string;
   topologyEdgeIds: string[];
   legacyWallPlaneIds: string[];
+  legacyWallPlaneCoordinateMappings: LegacyWallPlaneCoordinateMapping[];
   direction: SurfaceDirection;
   directionLabel: string;
   width: number;
@@ -82,6 +90,31 @@ const getWallUnit = (startPoint: Point, endPoint: Point): Point => {
   };
 };
 
+const getLocalXOnWall = (point: Point, wallStartPoint: Point, wallEndPoint: Point) => {
+  const wallUnit = getWallUnit(wallStartPoint, wallEndPoint);
+
+  return (point.x - wallStartPoint.x) * wallUnit.x + (point.y - wallStartPoint.y) * wallUnit.y;
+};
+
+const createLegacyWallPlaneCoordinateMapping = (
+  roomId: string,
+  wallPlaneId: string,
+  edge: WallUnwrapPlanarEdgeLike,
+  wallStartPoint: Point,
+  wallEndPoint: Point,
+): LegacyWallPlaneCoordinateMapping => {
+  const wallUnit = getWallUnit(wallStartPoint, wallEndPoint);
+  const edgeUnit = getWallUnit(edge.startPoint, edge.endPoint);
+  const localXScale = edgeUnit.x * wallUnit.x + edgeUnit.y * wallUnit.y;
+
+  return {
+    legacyWallPlaneId: `wall-plane-${roomId}-${edge.edgeId}`,
+    wallPlaneId,
+    localXOffset: getLocalXOnWall(edge.startPoint, wallStartPoint, wallEndPoint),
+    localXScale: Math.abs(localXScale) > 0.000001 ? localXScale : 1,
+  };
+};
+
 const getOpeningLocalXOnWall = (
   opening: OpeningSurfaceRef,
   edge: WallUnwrapPlanarEdgeLike,
@@ -95,8 +128,7 @@ const getOpeningLocalXOnWall = (
     x: edge.startPoint.x + edgeUnit.x * rawLocalX,
     y: edge.startPoint.y + edgeUnit.y * rawLocalX,
   };
-  const wallUnit = getWallUnit(wallStartPoint, wallEndPoint);
-  const projectedLocalX = (openingPoint.x - wallStartPoint.x) * wallUnit.x + (openingPoint.y - wallStartPoint.y) * wallUnit.y;
+  const projectedLocalX = getLocalXOnWall(openingPoint, wallStartPoint, wallEndPoint);
   const minimumLocalX = Math.min(opening.width / 2, wallLength / 2);
   const maximumLocalX = Math.max(minimumLocalX, wallLength - minimumLocalX);
 
@@ -152,12 +184,20 @@ export const createCanvasV4WallUnwrapGraph = (
               : null;
           })
           .filter((opening): opening is ProjectedOpening => Boolean(opening));
+        const wallPlaneId = `wall-plane-${summary.roomId}-${surface.topologyEdgeId}`;
         const wallPlane: WallPlane = {
-          wallPlaneId: `wall-plane-${summary.roomId}-${surface.topologyEdgeId}`,
+          wallPlaneId,
           roomId: summary.roomId,
           wallSurfaceId: surface.surfaceId,
           topologyEdgeIds: [...surface.topologyEdgeIds],
           legacyWallPlaneIds: surface.topologyEdgeIds.map((topologyEdgeId) => `wall-plane-${summary.roomId}-${topologyEdgeId}`),
+          legacyWallPlaneCoordinateMappings: edges.map((edge) => createLegacyWallPlaneCoordinateMapping(
+            summary.roomId,
+            wallPlaneId,
+            edge,
+            surface.startPoint,
+            surface.endPoint,
+          )),
           direction: surface.direction,
           directionLabel: surface.directionLabel,
           width: surface.length,

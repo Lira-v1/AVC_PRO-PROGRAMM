@@ -36,7 +36,7 @@ import {
   createEngineeringObjectDefaults,
   createEngineeringObjectGraph,
 } from './canvas-v4/canvasV4EngineeringObjects';
-import type { EngineeringObject, EngineeringObjectPlacementMode, EngineeringObjectType } from './canvas-v4/canvasV4EngineeringObjects';
+import type { EngineeringObject, EngineeringObjectPlacementMode, EngineeringObjectType, EngineeringObjectWallPlaneMappings } from './canvas-v4/canvasV4EngineeringObjects';
 
 type ShapeToolMode = 'rectangle' | 'circle';
 type ShapeType = ShapeToolMode;
@@ -1929,6 +1929,7 @@ const cloneWallUnwrapGraph = (wallUnwrapGraph: CanvasV4WallUnwrapGraph): CanvasV
     ...wallPlane,
     topologyEdgeIds: [...wallPlane.topologyEdgeIds],
     legacyWallPlaneIds: [...wallPlane.legacyWallPlaneIds],
+    legacyWallPlaneCoordinateMappings: wallPlane.legacyWallPlaneCoordinateMappings.map((mapping) => ({ ...mapping })),
     localOrigin: clonePoint(wallPlane.localOrigin),
     openings: wallPlane.openings.map((opening) => ({ ...opening })),
     projectedOpenings: wallPlane.projectedOpenings.map((opening) => ({ ...opening })),
@@ -5803,11 +5804,18 @@ export const CanvasV4DevScreen = () => {
     [projectInterpretation.topology.surfaceGraph.roomSurfaceSummaries, selectedRoomId],
   );
   const wallPlaneIdAliases = useMemo(() => {
-    const aliases: Record<string, string> = {};
+    const aliases: EngineeringObjectWallPlaneMappings = {};
 
     projectInterpretation.topology.wallUnwrapGraph.wallPlanes.forEach((wallPlane) => {
       wallPlane.legacyWallPlaneIds.forEach((legacyWallPlaneId) => {
         aliases[legacyWallPlaneId] = wallPlane.wallPlaneId;
+      });
+      wallPlane.legacyWallPlaneCoordinateMappings.forEach((mapping) => {
+        aliases[mapping.legacyWallPlaneId] = {
+          wallPlaneId: mapping.wallPlaneId,
+          localXOffset: mapping.localXOffset,
+          localXScale: mapping.localXScale,
+        };
       });
     });
 
