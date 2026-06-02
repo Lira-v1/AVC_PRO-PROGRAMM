@@ -29,6 +29,14 @@ export type EngineeringObjectGraph = {
   lightCount: number;
 };
 
+export type EngineeringObjectWallPlaneCoordinateMapping = {
+  wallPlaneId: string;
+  localXOffset: number;
+  localXScale?: number;
+};
+
+export type EngineeringObjectWallPlaneMappings = Record<string, string | EngineeringObjectWallPlaneCoordinateMapping>;
+
 export type EngineeringObjectDefaults = Record<EngineeringObjectType, {
   category: EngineeringObjectCategory;
   width: number;
@@ -56,14 +64,30 @@ export const createEngineeringObjectDefaults = (defaultRoomHeightMm: number): En
 
 export const createEngineeringObjectGraph = (
   objects: EngineeringObject[],
-  wallPlaneIdAliases: Record<string, string> = {},
+  wallPlaneIdAliases: EngineeringObjectWallPlaneMappings = {},
 ): EngineeringObjectGraph => {
   const objectsByRoom: Record<string, EngineeringObject[]> = {};
   const objectsByWallPlane: Record<string, EngineeringObject[]> = {};
-  const canonicalObjects = objects.map((object) => ({
-    ...object,
-    wallPlaneId: wallPlaneIdAliases[object.wallPlaneId] ?? object.wallPlaneId,
-  }));
+  const canonicalObjects = objects.map((object) => {
+    const mapping = wallPlaneIdAliases[object.wallPlaneId];
+
+    if (!mapping) {
+      return { ...object };
+    }
+
+    if (typeof mapping === 'string') {
+      return {
+        ...object,
+        wallPlaneId: mapping,
+      };
+    }
+
+    return {
+      ...object,
+      wallPlaneId: mapping.wallPlaneId,
+      localX: object.localX * (mapping.localXScale ?? 1) + mapping.localXOffset,
+    };
+  });
 
   canonicalObjects.forEach((object) => {
     objectsByRoom[object.roomId] = [...(objectsByRoom[object.roomId] ?? []), object];
