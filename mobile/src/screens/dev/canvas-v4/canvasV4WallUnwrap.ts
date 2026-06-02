@@ -76,6 +76,10 @@ export const getOpeningLocalXOnTopologyEdge = (opening: OpeningSurfaceRef, edge:
     return edge.length / 2;
   }
 
+  if ((opening.topologyEdgeIds?.length ?? 1) > 1) {
+    return rawLocalX;
+  }
+
   return clampToRange(rawLocalX, minimumLocalX, maximumLocalX);
 };
 
